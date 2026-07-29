@@ -1038,6 +1038,11 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       );
     }
 
+    const rows: { left?: Photo; right?: Photo; rIdx: number }[] = [];
+    for (let i = 0; i < tabList.length; i += 2) {
+      rows.push({ left: tabList[i], right: tabList[i + 1], rIdx: i / 2 });
+    }
+
     const FlashListAny = FlashList as any;
 
     return (
@@ -1046,25 +1051,50 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           ref={(r: any) => {
             if (r) tabScrollRefs.current[norm] = r;
           }}
-          data={tabList}
-          numColumns={2}
-          estimatedItemSize={250}
-          renderItem={({ item, index }: { item: Photo; index: number }) => (
-            <View style={{ paddingHorizontal: 3, marginBottom: 6 }}>
-              <MasonryCard
-                img={item}
-                index={item.globalIndex ?? index}
-                isColumn0={index % 2 === 0}
-                onSelect={(bounds) => openLightbox(item, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            </View>
-          )}
+          data={rows}
+          estimatedItemSize={220}
+          renderItem={({ item }: { item: { left?: Photo; right?: Photo; rIdx: number } }) => {
+            const leftImg = item.left;
+            const rightImg = item.right;
+            const rIdx = item.rIdx;
+
+            return (
+              <View style={{ flexDirection: 'row', width: '100%', marginBottom: 6 }}>
+                <View style={{ flex: 1, paddingRight: 3 }}>
+                  {leftImg ? (
+                    <MasonryCard
+                      img={leftImg}
+                      index={leftImg.globalIndex ?? rIdx * 2}
+                      isColumn0={true}
+                      onSelect={(bounds) => openLightbox(leftImg, bounds)}
+                      onRegisterRef={(id, ref) => {
+                        if (id) cardRefs.current[id] = ref;
+                        const refId = leftImg.id ? String(leftImg.id) : (leftImg.r2Url || `photo-${rIdx * 2}`);
+                        if (refId) cardRefs.current[refId] = ref;
+                      }}
+                      onToggleLike={handleToggleLike}
+                    />
+                  ) : null}
+                </View>
+                <View style={{ flex: 1, paddingLeft: 3 }}>
+                  {rightImg ? (
+                    <MasonryCard
+                      img={rightImg}
+                      index={rightImg.globalIndex ?? rIdx * 2 + 1}
+                      isColumn0={false}
+                      onSelect={(bounds) => openLightbox(rightImg, bounds)}
+                      onRegisterRef={(id, ref) => {
+                        if (id) cardRefs.current[id] = ref;
+                        const refId = rightImg.id ? String(rightImg.id) : (rightImg.r2Url || `photo-${rIdx * 2 + 1}`);
+                        if (refId) cardRefs.current[refId] = ref;
+                      }}
+                      onToggleLike={handleToggleLike}
+                    />
+                  ) : null}
+                </View>
+              </View>
+            );
+          }}
           renderScrollComponent={Animated.ScrollView}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
