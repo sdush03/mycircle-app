@@ -1485,6 +1485,7 @@ const styles = StyleSheet.create({
   masonryGridContainer: {
     flexDirection: 'row',
     gap: 6,
+    marginBottom: 6,
     width: '100%',
     paddingHorizontal: 8,
   },
