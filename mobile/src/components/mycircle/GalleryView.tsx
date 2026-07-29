@@ -609,7 +609,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     categoryTranslateX.value = 0;
   }, [currentCategoryIndex]);
 
-  const changeTabWithScrollMemory = useCallback((newTab: string) => {
+  const changeTabWithScrollMemory = useCallback((newTab: string, isFromSwipe = false) => {
     const currentNorm = activeTab.toUpperCase();
     const newNorm = newTab.toUpperCase();
     if (newNorm === currentNorm) return;
@@ -624,11 +624,18 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
 
-    // 4. Smooth slide animation to new tab index
+    // 4. Shared index update
     const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
     if (newIdx >= 0) {
-      categoryTranslateX.value = 0;
-      activeCategorySharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
+      if (isFromSwipe) {
+        // Atomic instant sync post-swipe: gesture already completed movement
+        activeCategorySharedIndex.value = newIdx;
+        categoryTranslateX.value = 0;
+      } else {
+        // Smooth timing animation for pill taps
+        categoryTranslateX.value = 0;
+        activeCategorySharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
+      }
     }
   }, [activeTab, availableTabs, fetchTabPhotos]);
 
@@ -654,7 +661,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const currentIdx = activeCategorySharedIndex.value;
     if (currentIdx >= 0 && currentIdx < availableTabs.length - 1) {
       const nextTab = availableTabs[currentIdx + 1];
-      changeTabWithScrollMemory(nextTab);
+      changeTabWithScrollMemory(nextTab, true);
       Haptics.selectionAsync().catch(() => {});
     }
   }, [availableTabs, changeTabWithScrollMemory]);
@@ -663,7 +670,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const currentIdx = activeCategorySharedIndex.value;
     if (currentIdx > 0) {
       const prevTab = availableTabs[currentIdx - 1];
-      changeTabWithScrollMemory(prevTab);
+      changeTabWithScrollMemory(prevTab, true);
       Haptics.selectionAsync().catch(() => {});
     }
   }, [availableTabs, changeTabWithScrollMemory]);
