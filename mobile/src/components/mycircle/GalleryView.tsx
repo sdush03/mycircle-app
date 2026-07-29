@@ -674,7 +674,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX([10, 10])
+    .activeOffsetX(15)
     .failOffsetY([-25, 25])
     .onBegin((e) => {
       'worklet';
@@ -707,8 +707,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   // Mid-Screen Horizontal Category Tab Swipe Gesture
   const categorySwipeGesture = Gesture.Pan()
-    .activeOffsetX([-20, 20])
-    .failOffsetY([-10, 10])
+    .activeOffsetX([-30, 30])
+    .failOffsetY([-6, 6])
     .onUpdate((e) => {
       'worklet';
       if (isLightboxOpen.value) return;
@@ -754,8 +754,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const categoryAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: categoryTranslateX.value }],
   }));
-
-  const combinedGesture = Gesture.Simultaneous(edgeSwipeGesture, categorySwipeGesture);
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
@@ -1008,7 +1006,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       statusBarTranslucent={true}
     >
       <GestureHandlerRootView style={styles.container}>
-        <GestureDetector gesture={combinedGesture}>
+        <GestureDetector gesture={edgeSwipeGesture}>
           <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
@@ -1157,81 +1155,83 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
 
               {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
-              <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
-                {isLoading || isTabLoading ? (
-                  <View style={styles.masonryGridContainer}>
-                    <View style={styles.masonryColumn}>
-                      {[0.75, 0.67, 0.8].map((aspect, i) => (
-                        <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                      ))}
+              <GestureDetector gesture={categorySwipeGesture}>
+                <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
+                  {isLoading || isTabLoading ? (
+                    <View style={styles.masonryGridContainer}>
+                      <View style={styles.masonryColumn}>
+                        {[0.75, 0.67, 0.8].map((aspect, i) => (
+                          <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                        ))}
+                      </View>
+                      <View style={styles.masonryColumn}>
+                        {[0.67, 0.8, 0.75].map((aspect, i) => (
+                          <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                        ))}
+                      </View>
                     </View>
-                    <View style={styles.masonryColumn}>
-                      {[0.67, 0.8, 0.75].map((aspect, i) => (
-                        <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                      ))}
+                  ) : activeList.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                      <Text style={styles.emptyText}>
+                        {activeTab.toUpperCase() === 'MY PHOTOS'
+                          ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+                          : activeTab.toUpperCase() === 'MY FAVOURITES'
+                          ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+                          : `No photos found in ${activeTab}.`}
+                      </Text>
                     </View>
-                  </View>
-                ) : activeList.length === 0 ? (
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>
-                      {activeTab.toUpperCase() === 'MY PHOTOS'
-                        ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-                        : activeTab.toUpperCase() === 'MY FAVOURITES'
-                        ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-                        : `No photos found in ${activeTab}.`}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.masonryGridContainer}>
-                    <View style={styles.masonryColumn}>
-                      {interleavedRows.map((row, rIdx) => {
-                        if (!row.left) return null;
-                        const img = row.left;
-                        const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
-                        const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+                  ) : (
+                    <View style={styles.masonryGridContainer}>
+                      <View style={styles.masonryColumn}>
+                        {interleavedRows.map((row, rIdx) => {
+                          if (!row.left) return null;
+                          const img = row.left;
+                          const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
+                          const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
 
-                        return (
-                          <MasonryCard
-                            key={cardId}
-                            img={img}
-                            index={img.globalIndex ?? rIdx * 2}
-                            isColumn0={true}
-                            onSelect={(bounds) => openLightbox(img, bounds)}
-                            onRegisterRef={(id, ref) => {
-                              if (id) cardRefs.current[id] = ref;
-                              if (refId) cardRefs.current[refId] = ref;
-                            }}
-                            onToggleLike={handleToggleLike}
-                          />
-                        );
-                      })}
-                    </View>
-                    <View style={styles.masonryColumn}>
-                      {interleavedRows.map((row, rIdx) => {
-                        if (!row.right) return null;
-                        const img = row.right;
-                        const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
-                        const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+                          return (
+                            <MasonryCard
+                              key={cardId}
+                              img={img}
+                              index={img.globalIndex ?? rIdx * 2}
+                              isColumn0={true}
+                              onSelect={(bounds) => openLightbox(img, bounds)}
+                              onRegisterRef={(id, ref) => {
+                                if (id) cardRefs.current[id] = ref;
+                                if (refId) cardRefs.current[refId] = ref;
+                              }}
+                              onToggleLike={handleToggleLike}
+                            />
+                          );
+                        })}
+                      </View>
+                      <View style={styles.masonryColumn}>
+                        {interleavedRows.map((row, rIdx) => {
+                          if (!row.right) return null;
+                          const img = row.right;
+                          const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
+                          const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
 
-                        return (
-                          <MasonryCard
-                            key={cardId}
-                            img={img}
-                            index={img.globalIndex ?? rIdx * 2 + 1}
-                            isColumn0={false}
-                            onSelect={(bounds) => openLightbox(img, bounds)}
-                            onRegisterRef={(id, ref) => {
-                              if (id) cardRefs.current[id] = ref;
-                              if (refId) cardRefs.current[refId] = ref;
-                            }}
-                            onToggleLike={handleToggleLike}
-                          />
-                        );
-                      })}
+                          return (
+                            <MasonryCard
+                              key={cardId}
+                              img={img}
+                              index={img.globalIndex ?? rIdx * 2 + 1}
+                              isColumn0={false}
+                              onSelect={(bounds) => openLightbox(img, bounds)}
+                              onRegisterRef={(id, ref) => {
+                                if (id) cardRefs.current[id] = ref;
+                                if (refId) cardRefs.current[refId] = ref;
+                              }}
+                              onToggleLike={handleToggleLike}
+                            />
+                          );
+                        })}
+                      </View>
                     </View>
-                  </View>
-                )}
-              </Animated.View>
+                  )}
+                </Animated.View>
+              </GestureDetector>
 
               {/* Loading indicator when fetching next page */}
               {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
