@@ -320,6 +320,28 @@ export default function CollectionGridView({
     categoryTransitionOpacity.value = withTiming(1, { duration: 200 });
   }, [categoryTransitionTranslateX, categoryTransitionOpacity]);
 
+  const handleNextCategory = React.useCallback(() => {
+    if (activeStoryModalItem !== null) return;
+    const currentIndex = categories.findIndex(
+      (c) => c.toLowerCase() === selectedCategory.toLowerCase()
+    );
+    if (currentIndex >= 0 && currentIndex < categories.length - 1) {
+      const nextCategory = categories[currentIndex + 1];
+      selectCategoryWithPush(nextCategory);
+    }
+  }, [categories, selectedCategory, activeStoryModalItem, selectCategoryWithPush]);
+
+  const handlePrevCategory = React.useCallback(() => {
+    if (activeStoryModalItem !== null) return;
+    const currentIndex = categories.findIndex(
+      (c) => c.toLowerCase() === selectedCategory.toLowerCase()
+    );
+    if (currentIndex > 0) {
+      const prevCategory = categories[currentIndex - 1];
+      selectCategoryWithPush(prevCategory);
+    }
+  }, [categories, selectedCategory, activeStoryModalItem, selectCategoryWithPush]);
+
   const popToAllCategories = React.useCallback(() => {
     categoryTransitionTranslateX.value = withTiming(
       width * 0.35,
@@ -364,7 +386,7 @@ export default function CollectionGridView({
 
   const isCategoryViewActive = selectedCategory !== 'All' && !isDirectFromHomeRef.current;
 
-  // iOS native-feel Edge Swipe Back gesture (swipe right from left 65px edge)
+  // iOS native-feel Edge Swipe Back + Mid-Screen Horizontal Category Tab Swipe
   const edgeSwipeGesture = Gesture.Pan()
     .onBegin((e) => {
       'worklet';
@@ -375,7 +397,7 @@ export default function CollectionGridView({
         isSwipeFromEdge.value = false;
       }
     })
-    .activeOffsetX(5)
+    .activeOffsetX([-12, 12])
     .failOffsetY([-20, 20])
     .onUpdate((e) => {
       'worklet';
@@ -399,6 +421,14 @@ export default function CollectionGridView({
             translateX.value = withTiming(0, { duration: 180, easing: Easing.out(Easing.quad) });
           }
         }
+        return;
+      }
+
+      // Mid-Screen Horizontal Swipes: Switch Category Tabs
+      if (e.translationX < -70 || e.velocityX < -400) {
+        runOnJS(handleNextCategory)();
+      } else if (e.translationX > 70 || e.velocityX > 400) {
+        runOnJS(handlePrevCategory)();
       }
     });
 
