@@ -575,17 +575,32 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return list;
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
 
+  const changeTabWithScrollMemory = useCallback((newTab: string) => {
+    if (newTab.toUpperCase() === activeTab.toUpperCase()) return;
+
+    // 1. Save current scroll position for current tab
+    tabOffsetsRef.current[activeTab.toUpperCase()] = currentYRef.current;
+
+    // 2. Switch tab
+    setActiveTab(newTab);
+    fetchTabPhotos(newTab);
+
+    // 3. Restore scroll position for new tab (or 0 if unvisited)
+    const targetY = tabOffsetsRef.current[newTab.toUpperCase()] || 0;
+    currentYRef.current = targetY;
+    scrollTo(mainScrollRef, 0, targetY, false);
+  }, [activeTab, fetchTabPhotos, mainScrollRef]);
+
   const handleNextCategoryTab = useCallback(() => {
     const currentIndex = availableTabs.findIndex(
       (t) => t.toUpperCase() === activeTab.toUpperCase()
     );
     if (currentIndex >= 0 && currentIndex < availableTabs.length - 1) {
       const nextTab = availableTabs[currentIndex + 1];
-      setActiveTab(nextTab);
-      fetchTabPhotos(nextTab);
+      changeTabWithScrollMemory(nextTab);
       Haptics.selectionAsync().catch(() => {});
     }
-  }, [availableTabs, activeTab, fetchTabPhotos]);
+  }, [availableTabs, activeTab, changeTabWithScrollMemory]);
 
   const handlePrevCategoryTab = useCallback(() => {
     const currentIndex = availableTabs.findIndex(
@@ -593,11 +608,10 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     );
     if (currentIndex > 0) {
       const prevTab = availableTabs[currentIndex - 1];
-      setActiveTab(prevTab);
-      fetchTabPhotos(prevTab);
+      changeTabWithScrollMemory(prevTab);
       Haptics.selectionAsync().catch(() => {});
     }
-  }, [availableTabs, activeTab, fetchTabPhotos]);
+  }, [availableTabs, activeTab, changeTabWithScrollMemory]);
 
   // Left-Edge Pan Swipe Back + Mid-Screen Horizontal Category Tab Swipe
   const edgeSwipeGesture = Gesture.Pan()
@@ -1023,7 +1037,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                     return (
                       <TouchableOpacity
                         key={`tab-${tabName}-${tabIdx}`}
-                        onPress={() => setActiveTab(tabName)}
+                        onPress={() => changeTabWithScrollMemory(tabName)}
                         activeOpacity={0.7}
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         style={[styles.tabButton, isActive && styles.tabButtonActive]}

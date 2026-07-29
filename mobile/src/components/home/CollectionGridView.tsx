@@ -74,6 +74,9 @@ export default function CollectionGridView({
   const [activeStoryModalItem, setActiveStoryModalItem] = useState<any | null>(null);
   const isClickBusyRef = useRef(false);
   const storyDetailsCacheRef = useRef<Record<string, any>>({});
+  const gridScrollRef = useRef<ScrollView>(null);
+  const categoryScrollOffsetsRef = useRef<Record<string, number>>({});
+  const currentScrollYRef = useRef<number>(0);
 
   // Background pre-fetch story details into memory cache
   React.useEffect(() => {
@@ -306,6 +309,10 @@ export default function CollectionGridView({
 
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
+
+    // 1. Save scroll position of current category
+    categoryScrollOffsetsRef.current[selectedCategory] = currentScrollYRef.current;
+
     Haptics.selectionAsync().catch(() => {});
     isClickBusyRef.current = true;
     setTimeout(() => { isClickBusyRef.current = false; }, 400);
@@ -313,12 +320,20 @@ export default function CollectionGridView({
     categoryTransitionTranslateX.value = width * 0.35;
     categoryTransitionOpacity.value = 0.5;
     setSelectedCategory(catName);
+
+    // 2. Restore scroll position of target category (0 if unvisited)
+    const targetY = categoryScrollOffsetsRef.current[catName] || 0;
+    currentScrollYRef.current = targetY;
+    setTimeout(() => {
+      gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+    }, 16);
+
     categoryTransitionTranslateX.value = withTiming(0, {
       duration: 250,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     });
     categoryTransitionOpacity.value = withTiming(1, { duration: 200 });
-  }, [categoryTransitionTranslateX, categoryTransitionOpacity]);
+  }, [selectedCategory, categoryTransitionTranslateX, categoryTransitionOpacity]);
 
   const handleNextCategory = React.useCallback(() => {
     if (activeStoryModalItem !== null) return;
@@ -501,7 +516,15 @@ export default function CollectionGridView({
 
             {/* Main Content Area (Native iOS Push/Pop Animation) */}
             <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
-              <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                ref={gridScrollRef}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onScroll={(e) => {
+                  currentScrollYRef.current = e.nativeEvent.contentOffset.y;
+                }}
+              >
                 {/* Centered Editorial Title & Description Banner */}
                 <View style={styles.titleSection}>
                   <Text style={styles.bannerTitle}>{currentDisplayTitle}</Text>
