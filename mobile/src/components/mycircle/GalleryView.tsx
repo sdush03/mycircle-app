@@ -18,6 +18,7 @@ import {
 import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
@@ -749,6 +750,14 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const photoId = item.id;
     const currentlyLiked = !!item.isLiked;
     const nextLiked = !currentlyLiked;
+
+    try {
+      if (nextLiked) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch {}
 
     // Optimistically update allPhotos, photos, and tabCache state in GalleryView
     setAllPhotos((prev) =>

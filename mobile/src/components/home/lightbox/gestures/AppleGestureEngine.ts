@@ -274,11 +274,20 @@ export function useApplePhotosGesture({
     });
 
   // ── TAP GESTURES (Single tap toggles controls, Double tap focal zoom) ─────
+  const singleTapGesture = Gesture.Tap()
+    .numberOfTaps(1)
+    .maxDuration(300)
+    .maxDistance(25)
+    .onEnd(() => {
+      'worklet';
+      if (scale.value > 1.01) return;
+      runOnJS(onToggleControls)();
+    });
+
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .maxDelay(300)
-    .maxDuration(350)
-    .maxDistance(40)
+    .maxDelay(350)
+    .maxDistance(35)
     .onEnd((e) => {
       'worklet';
       if (scale.value > 1.01) {
@@ -300,16 +309,6 @@ export function useApplePhotosGesture({
         translateX.value = withTiming(target.translateX, { duration: 250, easing: Easing.out(Easing.quad) });
         translateY.value = withTiming(target.translateY, { duration: 250, easing: Easing.out(Easing.quad) });
       }
-    });
-
-  const singleTapGesture = Gesture.Tap()
-    .numberOfTaps(1)
-    .maxDuration(300)
-    .requireExternalGestureToFail(doubleTapGesture)
-    .onEnd(() => {
-      'worklet';
-      if (scale.value > 1.01) return;
-      runOnJS(onToggleControls)();
     });
 
   const tapGestures = Gesture.Exclusive(doubleTapGesture, singleTapGesture);
