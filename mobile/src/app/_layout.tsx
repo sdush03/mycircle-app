@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox } from 'react-native';
+import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox, Dimensions } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Tabs, router, useSegments } from 'expo-router';
@@ -10,7 +10,7 @@ import { useFonts } from 'expo-font';
 import { Jost_400Regular, Jost_500Medium, Jost_600SemiBold } from '@expo-google-fonts/jost';
 import { Montserrat_400Regular, Montserrat_300Light, Montserrat_500Medium, Montserrat_600SemiBold } from '@expo-google-fonts/montserrat';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, FadeIn, runOnJS } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, Easing, FadeIn, runOnJS } from 'react-native-reanimated';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { useAuthStore } from '../store/authStore';
 import api, { API_BASE_URL } from '../services/api';
@@ -224,23 +224,61 @@ function RootLayoutContent() {
     }
   }, [currentTab, eventSlug, showProfileModal]);
 
+  const { width } = Dimensions.get('window');
+  const tabTranslateX = useSharedValue(0);
+
   const mainTabSwipeGesture = Gesture.Pan()
-    .activeOffsetX([-25, 25])
-    .failOffsetY([-15, 15])
-    .onEnd((e) => {
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-18, 18])
+    .onUpdate((e) => {
       'worklet';
       if (eventSlug) return;
       if (e.x <= 40) return;
 
-      const isLeftSwipe = e.translationX < -55 || e.velocityX < -280;
-      const isRightSwipe = e.translationX > 55 || e.velocityX > 280;
+      const currentIndex = TAB_ORDER.indexOf(currentTab);
+      const isLeftSwipe = e.translationX < 0;
+      const isRightSwipe = e.translationX > 0;
 
-      if (isLeftSwipe) {
-        runOnJS(handleTabSwipeNext)();
-      } else if (isRightSwipe) {
-        runOnJS(handleTabSwipePrev)();
+      // Dampened boundary resistance on ends of tab list (Home tab left & Profile tab right)
+      if ((isRightSwipe && currentIndex === 0) || (isLeftSwipe && currentIndex === TAB_ORDER.length - 1)) {
+        tabTranslateX.value = e.translationX * 0.25;
+      } else {
+        tabTranslateX.value = e.translationX;
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      if (eventSlug) return;
+
+      const currentIndex = TAB_ORDER.indexOf(currentTab);
+      const isLeftSwipe = e.translationX < -45 || e.velocityX < -250;
+      const isRightSwipe = e.translationX > 45 || e.velocityX > 250;
+
+      if (isLeftSwipe && currentIndex < TAB_ORDER.length - 1) {
+        // Complete fluid slide left then route switch
+        tabTranslateX.value = withTiming(-width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
+          if (finished) {
+            tabTranslateX.value = 0;
+            runOnJS(handleTabSwipeNext)();
+          }
+        });
+      } else if (isRightSwipe && currentIndex > 0) {
+        // Complete fluid slide right then route switch
+        tabTranslateX.value = withTiming(width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
+          if (finished) {
+            tabTranslateX.value = 0;
+            runOnJS(handleTabSwipePrev)();
+          }
+        });
+      } else {
+        // Smooth spring snap-back when swipe is cancelled
+        tabTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
       }
     });
+
+  const mainTabAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tabTranslateX.value }],
+  }));
 
   // 1. Keep screen solid white matching native splash until fonts & stored auth are initialized (prevents black flicker)
   if (!isReady || isLoading || !fontsLoaded) {
@@ -286,7 +324,7 @@ function RootLayoutContent() {
         )}
 
         <GestureDetector gesture={mainTabSwipeGesture}>
-          <View style={{ flex: 1 }}>
+          <Animated.View style={[{ flex: 1 }, mainTabAnimatedStyle]}>
             <Tabs
               screenOptions={{
                 headerShown: false,
@@ -299,7 +337,7 @@ function RootLayoutContent() {
               <Tabs.Screen name="inspirations" />
               <Tabs.Screen name="profile" />
             </Tabs>
-          </View>
+          </Animated.View>
         </GestureDetector>
 
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
