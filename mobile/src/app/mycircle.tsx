@@ -26,6 +26,7 @@ export default function MyCircleScreen() {
     isLoading,
     eventSlug,
     passcode,
+    openedFrom,
     setEventDetails,
     logout,
   } = useAuthStore();
@@ -205,8 +206,8 @@ export default function MyCircleScreen() {
         />
       )}
 
-      {/* Gallery Overlay Modal when eventSlug is set */}
-      {eventSlug && (!eventRequiresPasscode || passcode) && (
+      {/* Gallery Overlay Modal when eventSlug is set and opened from My Circle */}
+      {eventSlug && openedFrom === 'mycircle' && (!eventRequiresPasscode || passcode) && (
         <GalleryView
           onLogout={handleLogout}
           onChangeEvent={handleCloseGallery}
