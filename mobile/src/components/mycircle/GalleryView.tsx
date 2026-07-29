@@ -752,7 +752,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     });
 
   const categoryAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: categoryTranslateX.value }],
+    transform: [{ translateX: -activeCategorySharedIndex.value * width + categoryTranslateX.value }],
   }));
 
   // Exact Landing Tab Rules:
@@ -971,6 +971,109 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   };
 
+  const renderCategoryGrid = (tabName: string) => {
+    const norm = tabName.trim().toUpperCase();
+    let tabList: Photo[] = [];
+    if (norm === 'MY PHOTOS') {
+      tabList = photos;
+    } else if (norm === 'MY FAVOURITES') {
+      tabList = tabCache['MY FAVOURITES'] || allPhotos.filter((p: any) => p.isLiked);
+    } else if (norm === 'ALL') {
+      tabList = allPhotos;
+    } else {
+      tabList = tabCache[norm] || allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm);
+    }
+
+    const isCurrentActive = norm === activeTab.toUpperCase();
+
+    if (isLoading || (isCurrentActive && isTabLoading)) {
+      return (
+        <View style={styles.masonryGridContainer}>
+          <View style={styles.masonryColumn}>
+            {[0.75, 0.67, 0.8].map((aspect, i) => (
+              <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+            ))}
+          </View>
+          <View style={styles.masonryColumn}>
+            {[0.67, 0.8, 0.75].map((aspect, i) => (
+              <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+            ))}
+          </View>
+        </View>
+      );
+    }
+
+    if (tabList.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>
+            {norm === 'MY PHOTOS'
+              ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+              : norm === 'MY FAVOURITES'
+              ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+              : `No photos found in ${tabName}.`}
+          </Text>
+        </View>
+      );
+    }
+
+    const rows: { left?: Photo; right?: Photo }[] = [];
+    for (let i = 0; i < tabList.length; i += 2) {
+      rows.push({ left: tabList[i], right: tabList[i + 1] });
+    }
+
+    return (
+      <View style={styles.masonryGridContainer}>
+        <View style={styles.masonryColumn}>
+          {rows.map((row, rIdx) => {
+            if (!row.left) return null;
+            const img = row.left;
+            const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
+            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+            return (
+              <MasonryCard
+                key={cardId}
+                img={img}
+                index={img.globalIndex ?? rIdx * 2}
+                isColumn0={true}
+                onSelect={(bounds) => openLightbox(img, bounds)}
+                onRegisterRef={(id, ref) => {
+                  if (id) cardRefs.current[id] = ref;
+                  if (refId) cardRefs.current[refId] = ref;
+                }}
+                onToggleLike={handleToggleLike}
+              />
+            );
+          })}
+        </View>
+        <View style={styles.masonryColumn}>
+          {rows.map((row, rIdx) => {
+            if (!row.right) return null;
+            const img = row.right;
+            const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
+            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+            return (
+              <MasonryCard
+                key={cardId}
+                img={img}
+                index={img.globalIndex ?? rIdx * 2 + 1}
+                isColumn0={false}
+                onSelect={(bounds) => openLightbox(img, bounds)}
+                onRegisterRef={(id, ref) => {
+                  if (id) cardRefs.current[id] = ref;
+                  if (refId) cardRefs.current[refId] = ref;
+                }}
+                onToggleLike={handleToggleLike}
+              />
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
+
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
 
@@ -1156,80 +1259,17 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
               {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
               <GestureDetector gesture={categorySwipeGesture}>
-                <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
-                  {isLoading || isTabLoading ? (
-                    <View style={styles.masonryGridContainer}>
-                      <View style={styles.masonryColumn}>
-                        {[0.75, 0.67, 0.8].map((aspect, i) => (
-                          <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                        ))}
-                      </View>
-                      <View style={styles.masonryColumn}>
-                        {[0.67, 0.8, 0.75].map((aspect, i) => (
-                          <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                        ))}
-                      </View>
+                <Animated.View
+                  style={[
+                    { flexDirection: 'row', width: width * availableTabs.length, flex: 1 },
+                    categoryAnimatedStyle,
+                  ]}
+                >
+                  {availableTabs.map((tabName) => (
+                    <View key={`tab-grid-${tabName}`} style={{ width, flex: 1 }}>
+                      {renderCategoryGrid(tabName)}
                     </View>
-                  ) : activeList.length === 0 ? (
-                    <View style={styles.emptyContainer}>
-                      <Text style={styles.emptyText}>
-                        {activeTab.toUpperCase() === 'MY PHOTOS'
-                          ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-                          : activeTab.toUpperCase() === 'MY FAVOURITES'
-                          ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-                          : `No photos found in ${activeTab}.`}
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.masonryGridContainer}>
-                      <View style={styles.masonryColumn}>
-                        {interleavedRows.map((row, rIdx) => {
-                          if (!row.left) return null;
-                          const img = row.left;
-                          const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
-                          const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-                          return (
-                            <MasonryCard
-                              key={cardId}
-                              img={img}
-                              index={img.globalIndex ?? rIdx * 2}
-                              isColumn0={true}
-                              onSelect={(bounds) => openLightbox(img, bounds)}
-                              onRegisterRef={(id, ref) => {
-                                if (id) cardRefs.current[id] = ref;
-                                if (refId) cardRefs.current[refId] = ref;
-                              }}
-                              onToggleLike={handleToggleLike}
-                            />
-                          );
-                        })}
-                      </View>
-                      <View style={styles.masonryColumn}>
-                        {interleavedRows.map((row, rIdx) => {
-                          if (!row.right) return null;
-                          const img = row.right;
-                          const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
-                          const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-                          return (
-                            <MasonryCard
-                              key={cardId}
-                              img={img}
-                              index={img.globalIndex ?? rIdx * 2 + 1}
-                              isColumn0={false}
-                              onSelect={(bounds) => openLightbox(img, bounds)}
-                              onRegisterRef={(id, ref) => {
-                                if (id) cardRefs.current[id] = ref;
-                                if (refId) cardRefs.current[refId] = ref;
-                              }}
-                              onToggleLike={handleToggleLike}
-                            />
-                          );
-                        })}
-                      </View>
-                    </View>
-                  )}
+                  ))}
                 </Animated.View>
               </GestureDetector>
 
