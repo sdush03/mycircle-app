@@ -580,7 +580,7 @@ export default function HomeScreen() {
           return next;
         });
       }
-      const coverUrl = targetEvent?.coverPhotoUrl || targetEvent?.coverPhotoSquareUrl || targetEvent?.coverPhotoMobileUrl || null;
+      const coverUrl = targetEvent?.coverPhotoMobileUrl || targetEvent?.cover_photo_mobile_url || targetEvent?.coverPhotoUrl || targetEvent?.coverPhotoSquareUrl || null;
       const title = targetEvent?.title || null;
       setEventDetails(card.eventSlug, null, coverUrl, title);
       router.replace('/mycircle');
@@ -588,7 +588,7 @@ export default function HomeScreen() {
   };
 
   const handleEventCardClick = (ev: any) => {
-    const coverUrl = ev.coverPhotoUrl || ev.coverPhotoSquareUrl || ev.coverPhotoMobileUrl || null;
+    const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
     setEventDetails(ev.slug, null, coverUrl, ev.title);
     router.replace('/mycircle');
   };
