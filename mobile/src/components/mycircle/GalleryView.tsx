@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -18,10 +18,9 @@ import {
 import { Image } from 'expo-image';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
@@ -73,24 +72,15 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const PAGE_SIZE = 60;
   const mainScrollRef = useAnimatedRef<Animated.ScrollView>();
   const currentYRef = useRef<number>(0);
-  const isTabSwitchingRef = useRef<boolean>(false);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
   const eventHeadersRef = useRef<Record<string, string>>({});
   const allPhotosOffsetRef = useRef<number>(0);
   const tabOffsetsRef = useRef<Record<string, number>>({});
-  const eventSlug = useAuthStore((state) => state.eventSlug);
-  const passcode = useAuthStore((state) => state.passcode);
-  const profile = useAuthStore((state) => state.profile);
-  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
-  const eventTitle = useAuthStore((state) => state.eventTitle);
-  const handleScroll = useScrollTabBarCollapse();
-
   const isFetchingMoreRef = useRef<boolean>(false);
   const lastScrollYRef = useRef<number>(0);
   const btnStateRef = useRef<'hidden' | 'dim' | 'bright'>('hidden');
 
-  const screenSwipeX = useSharedValue(width);
-  const isClosingRef = useRef(false);
+  const screenSwipeX = useSharedValue(0);
   const touchStartedOnLeftEdge = useSharedValue(false);
   const isLightboxOpen = useSharedValue(false);
   const backToTopOpacity = useSharedValue(0);
@@ -143,22 +133,17 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     isLightboxOpen.value = activeImageIndex !== null;
   }, [activeImageIndex]);
 
+  // Opening entrance animation: slide in from right on mount
   useEffect(() => {
-    if (eventSlug) {
-      isClosingRef.current = false;
-      screenSwipeX.value = width;
-      screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
-    }
-  }, [eventSlug]);
+    screenSwipeX.value = width;
+    screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
+  }, []);
 
   const handleBackAction = useCallback(() => {
     if (activeImageIndex !== null) {
       setActiveImageIndex(null);
       return;
     }
-    if (isClosingRef.current) return;
-    isClosingRef.current = true;
-
     screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
       'worklet';
       if (finished) {
@@ -177,11 +162,46 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return () => subscription.remove();
   }, [handleBackAction]);
 
-
+  // Left-Edge Pan Swipe Back Gesture (matching FeaturedStoryView)
+  const edgeSwipeGesture = Gesture.Pan()
+    .activeOffsetX(12)
+    .failOffsetY([-25, 25])
+    .onBegin((e) => {
+      'worklet';
+      touchStartedOnLeftEdge.value = e.x <= 40 && !isLightboxOpen.value;
+    })
+    .onUpdate((e) => {
+      'worklet';
+      if (!touchStartedOnLeftEdge.value) return;
+      if (e.translationX > 0) {
+        screenSwipeX.value = e.translationX;
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      if (!touchStartedOnLeftEdge.value) return;
+      if (e.translationX > width * 0.20 || e.velocityX > 250) {
+        screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+          if (finished) {
+            runOnJS(onChangeEvent)();
+          }
+        });
+      } else {
+        screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+      }
+      touchStartedOnLeftEdge.value = false;
+    });
 
   const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: screenSwipeX.value }],
   }));
+
+  const eventSlug = useAuthStore((state) => state.eventSlug);
+  const passcode = useAuthStore((state) => state.passcode);
+  const profile = useAuthStore((state) => state.profile);
+  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
+  const eventTitle = useAuthStore((state) => state.eventTitle);
+  const handleScroll = useScrollTabBarCollapse();
 
   const fetchPhotos = async () => {
     try {
@@ -461,25 +481,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
   const [isTabLoading, setIsTabLoading] = useState(false);
 
-  const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
-
-  useEffect(() => {
-    allPhotos.forEach((item) => {
-      const url = item.r2Url || item.url || item.fullUri || '';
-      if (url && !aspectMap[url]) {
-        RNImage.getSize(
-          url,
-          (w, h) => {
-            if (w > 0 && h > 0) {
-              setAspectMap((prev) => ({ ...prev, [url]: w / h }));
-            }
-          },
-          () => {}
-        );
-      }
-    });
-  }, [allPhotos]);
-
   const favoritesCount = React.useMemo(() => {
     if (tabCache['MY FAVOURITES']) {
       return tabCache['MY FAVOURITES'].length;
@@ -594,188 +595,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     return list;
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
-
-  const scrollToY = useCallback((targetY: number) => {
-    try {
-      if (mainScrollRef.current) {
-        if ('scrollTo' in mainScrollRef.current && typeof (mainScrollRef.current as any).scrollTo === 'function') {
-          (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
-        } else {
-          runOnUI((y: number) => {
-            'worklet';
-            scrollTo(mainScrollRef, 0, y, false);
-          })(targetY);
-        }
-      }
-    } catch (_e) {
-      runOnUI((y: number) => {
-        'worklet';
-        scrollTo(mainScrollRef, 0, y, false);
-      })(targetY);
-    }
-  }, [mainScrollRef]);
-
-  const activeCategorySharedIndex = useSharedValue(0);
-  const categoryTranslateX = useSharedValue(0);
-
-  const currentCategoryIndex = useMemo(() => {
-    const idx = availableTabs.findIndex((t) => t.toUpperCase() === activeTab.toUpperCase());
-    return idx >= 0 ? idx : 0;
-  }, [availableTabs, activeTab]);
-
-  useEffect(() => {
-    activeCategorySharedIndex.value = currentCategoryIndex;
-    categoryTranslateX.value = 0;
-  }, [currentCategoryIndex]);
-
-  const changeTabWithScrollMemory = useCallback((newTab: string, isFromSwipe = false) => {
-    const currentNorm = activeTab.toUpperCase();
-    const newNorm = newTab.toUpperCase();
-    if (newNorm === currentNorm) return;
-
-    // 1. Lock onScroll during tab transition so native height clamping doesn't erase saved scroll Y
-    isTabSwitchingRef.current = true;
-
-    // 2. Save exact scroll position of the tab we are leaving
-    tabOffsetsRef.current[currentNorm] = currentYRef.current;
-
-    // 3. Switch tab
-    setActiveTab(newTab);
-    fetchTabPhotos(newTab);
-
-    // 4. Shared index update
-    const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
-    if (newIdx >= 0) {
-      if (isFromSwipe) {
-        // Atomic instant sync post-swipe: gesture already completed movement
-        activeCategorySharedIndex.value = newIdx;
-        categoryTranslateX.value = 0;
-      } else {
-        // Smooth timing animation for pill taps
-        categoryTranslateX.value = 0;
-        activeCategorySharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
-      }
-    }
-  }, [activeTab, availableTabs, fetchTabPhotos]);
-
-  // Per-tab scroll restoration effect: triggers whenever activeTab or tab photo loading completes
-  useEffect(() => {
-    if (isLoading || isTabLoading) return;
-
-    const norm = activeTab.toUpperCase();
-    const targetY = tabOffsetsRef.current[norm] ?? 0;
-    currentYRef.current = targetY;
-
-    scrollToY(targetY);
-    requestAnimationFrame(() => {
-      scrollToY(targetY);
-      setTimeout(() => {
-        scrollToY(targetY);
-        isTabSwitchingRef.current = false;
-      }, 40);
-    });
-  }, [activeTab, isLoading, isTabLoading, scrollToY]);
-
-  const handleNextCategoryTab = useCallback(() => {
-    const currentIdx = activeCategorySharedIndex.value;
-    if (currentIdx >= 0 && currentIdx < availableTabs.length - 1) {
-      const nextTab = availableTabs[currentIdx + 1];
-      changeTabWithScrollMemory(nextTab, true);
-      Haptics.selectionAsync().catch(() => {});
-    }
-  }, [availableTabs, changeTabWithScrollMemory]);
-
-  const handlePrevCategoryTab = useCallback(() => {
-    const currentIdx = activeCategorySharedIndex.value;
-    if (currentIdx > 0) {
-      const prevTab = availableTabs[currentIdx - 1];
-      changeTabWithScrollMemory(prevTab, true);
-      Haptics.selectionAsync().catch(() => {});
-    }
-  }, [availableTabs, changeTabWithScrollMemory]);
-
-  // Left-Edge Pan Swipe Back Gesture
-  const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX(30)
-    .failOffsetY([-25, 25])
-    .onBegin((e) => {
-      'worklet';
-      touchStartedOnLeftEdge.value = e.x <= 45 && !isLightboxOpen.value;
-    })
-    .onUpdate((e) => {
-      'worklet';
-      if (!touchStartedOnLeftEdge.value) return;
-      if (e.translationX > 0) {
-        screenSwipeX.value = e.translationX;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
-
-      if (touchStartedOnLeftEdge.value) {
-        if (e.translationX > width * 0.20 || e.velocityX > 250) {
-          screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
-            if (finished) {
-              runOnJS(onChangeEvent)();
-            }
-          });
-        } else {
-          screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
-        }
-        touchStartedOnLeftEdge.value = false;
-      }
-    });
-
-  // Mid-Screen Horizontal Category Tab Swipe Gesture
-  const categorySwipeGesture = Gesture.Pan()
-    .activeOffsetX([-15, 15])
-    .failOffsetY([-10, 10])
-    .onUpdate((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
-      if (touchStartedOnLeftEdge.value) return;
-
-      const currentIndex = activeCategorySharedIndex.value;
-      const isLeftSwipe = e.translationX < 0;
-      const isRightSwipe = e.translationX > 0;
-
-      // Dampened boundary resistance on ends of availableTabs list
-      if ((isRightSwipe && currentIndex === 0) || (isLeftSwipe && currentIndex === availableTabs.length - 1)) {
-        categoryTranslateX.value = e.translationX * 0.25;
-      } else {
-        categoryTranslateX.value = e.translationX;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
-      if (touchStartedOnLeftEdge.value) return;
-
-      const currentIndex = activeCategorySharedIndex.value;
-      const isLeftSwipe = e.translationX < -45 || e.velocityX < -250;
-      const isRightSwipe = e.translationX > 45 || e.velocityX > 250;
-
-      if (isLeftSwipe && currentIndex < availableTabs.length - 1) {
-        categoryTranslateX.value = withTiming(-width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
-          if (finished) {
-            runOnJS(handleNextCategoryTab)();
-          }
-        });
-      } else if (isRightSwipe && currentIndex > 0) {
-        categoryTranslateX.value = withTiming(width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
-          if (finished) {
-            runOnJS(handlePrevCategoryTab)();
-          }
-        });
-      } else {
-        categoryTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
-      }
-    });
-
-  const categoryAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -activeCategorySharedIndex.value * width + categoryTranslateX.value }],
-  }));
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
@@ -931,14 +750,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const currentlyLiked = !!item.isLiked;
     const nextLiked = !currentlyLiked;
 
-    try {
-      if (nextLiked) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      } else {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-    } catch {}
-
     // Optimistically update allPhotos, photos, and tabCache state in GalleryView
     setAllPhotos((prev) =>
       prev.map((p) => (p.id === photoId ? { ...p, isLiked: nextLiked } : p))
@@ -993,142 +804,13 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   };
 
-  const renderCategoryGrid = (tabName: string) => {
-    const norm = tabName.trim().toUpperCase();
-    const tabIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === norm);
-    const activeIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === activeTab.toUpperCase());
-
-    // Optimization: Only mount heavy photo grids for active tab & immediate adjacent neighbor tabs
-    const isWithinWindow = tabIdx >= 0 && Math.abs(tabIdx - (activeIdx >= 0 ? activeIdx : 0)) <= 1;
-
-    if (!isWithinWindow) {
-      return <View style={{ flex: 1, minHeight: 400 }} />;
-    }
-
-    let tabList: Photo[] = [];
-    if (norm === 'MY PHOTOS') {
-      tabList = photos;
-    } else if (norm === 'MY FAVOURITES') {
-      tabList = tabCache['MY FAVOURITES'] || allPhotos.filter((p: any) => p.isLiked);
-    } else if (norm === 'ALL') {
-      tabList = allPhotos;
-    } else {
-      tabList = tabCache[norm] || allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm);
-    }
-
-    const isCurrentActive = norm === activeTab.toUpperCase();
-
-    if (isLoading || (isCurrentActive && isTabLoading)) {
-      return (
-        <View style={styles.masonryGridContainer}>
-          <View style={styles.masonryColumn}>
-            {[0.75, 0.67, 0.8].map((aspect, i) => (
-              <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-          <View style={styles.masonryColumn}>
-            {[0.67, 0.8, 0.75].map((aspect, i) => (
-              <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-        </View>
-      );
-    }
-
-    if (tabList.length === 0) {
-      return (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            {norm === 'MY PHOTOS'
-              ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-              : norm === 'MY FAVOURITES'
-              ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-              : `No photos found in ${tabName}.`}
-          </Text>
-        </View>
-      );
-    }
-
-    const cols: [Photo[], Photo[]] = [[], []];
-    const colHeights = [0, 0];
-
-    tabList.forEach((photo: Photo, index: number) => {
-      const photoUri = photo.r2Url || photo.url || photo.fullUri || '';
-      const realAspect =
-        photo.width && photo.height && Number(photo.height) > 0
-          ? Number(photo.width) / Number(photo.height)
-          : photo.aspectRatio || aspectMap[photoUri] || (index % 3 === 0 ? 0.75 : index % 3 === 1 ? 0.67 : 0.8);
-
-      const heightContribution = 1 / Math.max(0.4, Math.min(2.5, realAspect));
-      const shortestIdx = colHeights[0] <= colHeights[1] ? 0 : 1;
-
-      cols[shortestIdx].push({ ...photo, globalIndex: index });
-      colHeights[shortestIdx] += heightContribution;
-    });
-
-    const column0 = cols[0];
-    const column1 = cols[1];
-
-    return (
-      <View style={styles.masonryGridContainer}>
-        <View style={styles.masonryColumn}>
-          {column0.map((img, cIdx) => {
-            const cardId = img.id ? `c0-${norm}-${img.id}-${cIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${cIdx}` : `c0-${norm}-${cIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${cIdx}`);
-
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? cIdx * 2}
-                isColumn0={true}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-        <View style={styles.masonryColumn}>
-          {column1.map((img, cIdx) => {
-            const cardId = img.id ? `c1-${norm}-${img.id}-${cIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${cIdx}` : `c1-${norm}-${cIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${cIdx}`);
-
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? cIdx * 2 + 1}
-                isColumn0={false}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-      </View>
-    );
-  };
-
-  // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
-  const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
-
+  // Header Cover Metadata
   const coverUrl =
-    eventDetails?.coverPhotoMobileUrl ||
-    eventDetails?.cover_photo_mobile_url ||
-    eventDetails?.cover_photo_mobile ||
     eventCoverUrl ||
+    eventDetails?.coverPhotoMobileUrl ||
     eventDetails?.coverPhotoUrl ||
-    eventDetails?.cover_photo_url ||
-    eventDetails?.coverPhoto ||
-    firstPhotoUrl;
+    (activeList[0]?.r2Url) ||
+    null;
 
   const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
     .replace(/'s\s+Wedding/gi, '')
@@ -1142,9 +824,16 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     ? new Date(eventDetails.date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()
     : '';
 
+  const pathname = usePathname();
+  const isMyCircleActive = pathname ? pathname.includes('mycircle') : true;
+
+  if (!isMyCircleActive) {
+    return null;
+  }
+
   return (
     <Modal
-      visible={!!eventSlug}
+      visible={isMyCircleActive}
       animationType="none"
       transparent={true}
       presentationStyle="overFullScreen"
@@ -1177,9 +866,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               handleScroll(e);
               const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
               const currentY = contentOffset.y;
-              if (!isTabSwitchingRef.current) {
-                currentYRef.current = currentY;
-              }
+              currentYRef.current = currentY;
               const deltaY = currentY - lastScrollYRef.current;
               lastScrollYRef.current = currentY;
 
@@ -1286,7 +973,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                     return (
                       <TouchableOpacity
                         key={`tab-${tabName}-${tabIdx}`}
-                        onPress={() => changeTabWithScrollMemory(tabName)}
+                        onPress={() => setActiveTab(tabName)}
                         activeOpacity={0.7}
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         style={[styles.tabButton, isActive && styles.tabButtonActive]}
@@ -1301,31 +988,77 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
 
               {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
-              <GestureDetector gesture={categorySwipeGesture}>
-                <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
-                  <Animated.View
-                    style={[
-                      { flexDirection: 'row', width: width * availableTabs.length },
-                      categoryAnimatedStyle,
-                    ]}
-                  >
-                    {availableTabs.map((tabName) => {
-                      const isTabActive = tabName.toUpperCase() === activeTab.toUpperCase();
+              {isLoading || isTabLoading ? (
+                <View style={styles.masonryGridContainer}>
+                  <View style={styles.masonryColumn}>
+                    {[0.75, 0.67, 0.8].map((aspect, i) => (
+                      <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                    ))}
+                  </View>
+                  <View style={styles.masonryColumn}>
+                    {[0.67, 0.8, 0.75].map((aspect, i) => (
+                      <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                    ))}
+                  </View>
+                </View>
+              ) : activeList.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>
+                    {activeTab.toUpperCase() === 'MY PHOTOS'
+                      ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+                      : activeTab.toUpperCase() === 'MY FAVOURITES'
+                      ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+                      : `No photos found in ${activeTab}.`}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.masonryGridContainer}>
+                  <View style={styles.masonryColumn}>
+                    {interleavedRows.map((row, rIdx) => {
+                      if (!row.left) return null;
+                      const img = row.left;
+                      const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
+                      const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
                       return (
-                        <View
-                          key={`tab-grid-${tabName}`}
-                          style={[
-                            { width },
-                            !isTabActive && { height: 1, overflow: 'hidden' }
-                          ]}
-                        >
-                          {renderCategoryGrid(tabName)}
-                        </View>
+                        <MasonryCard
+                          key={cardId}
+                          img={img}
+                          index={img.globalIndex ?? rIdx * 2}
+                          isColumn0={true}
+                          onSelect={(bounds) => openLightbox(img, bounds)}
+                          onRegisterRef={(id, ref) => {
+                            if (id) cardRefs.current[id] = ref;
+                            if (refId) cardRefs.current[refId] = ref;
+                          }}
+                          onToggleLike={handleToggleLike}
+                        />
                       );
                     })}
-                  </Animated.View>
+                  </View>
+                  <View style={styles.masonryColumn}>
+                    {interleavedRows.map((row, rIdx) => {
+                      if (!row.right) return null;
+                      const img = row.right;
+                      const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
+                      const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+                      return (
+                        <MasonryCard
+                          key={cardId}
+                          img={img}
+                          index={img.globalIndex ?? rIdx * 2 + 1}
+                          isColumn0={false}
+                          onSelect={(bounds) => openLightbox(img, bounds)}
+                          onRegisterRef={(id, ref) => {
+                            if (id) cardRefs.current[id] = ref;
+                            if (refId) cardRefs.current[refId] = ref;
+                          }}
+                          onToggleLike={handleToggleLike}
+                        />
+                      );
+                    })}
+                  </View>
                 </View>
-              </GestureDetector>
+              )}
 
               {/* Loading indicator when fetching next page */}
               {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
@@ -1483,10 +1216,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   galleryContainer: {
+    paddingHorizontal: 8,
     paddingTop: 20,
   },
   tabsWrapper: {
-    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede8',
     marginBottom: 16,
@@ -1522,7 +1255,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     width: '100%',
-    paddingHorizontal: 8,
   },
   masonryColumn: {
     flex: 1,
