@@ -973,6 +973,16 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   const renderCategoryGrid = (tabName: string) => {
     const norm = tabName.trim().toUpperCase();
+    const tabIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === norm);
+    const activeIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === activeTab.toUpperCase());
+
+    // Optimization: Only mount heavy photo grids for active tab & immediate adjacent neighbor tabs
+    const isWithinWindow = tabIdx >= 0 && Math.abs(tabIdx - (activeIdx >= 0 ? activeIdx : 0)) <= 1;
+
+    if (!isWithinWindow) {
+      return <View style={{ flex: 1, minHeight: 400 }} />;
+    }
+
     let tabList: Photo[] = [];
     if (norm === 'MY PHOTOS') {
       tabList = photos;
