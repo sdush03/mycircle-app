@@ -9,7 +9,7 @@ import {
   Dimensions,
   StatusBar,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
@@ -39,6 +39,7 @@ interface JoinEventViewProps {
 }
 
 export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
+  const insets = useSafeAreaInsets();
   const [events, setEvents] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
@@ -99,33 +100,22 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
 
   // Helper for My Circle card status subtext (Editorial Lifecycle Presentation)
   const getMyCircleStatusCopy = (ev: any): string => {
+    const eventDate = new Date(ev.date);
     const today = new Date();
-    const eventDate = new Date(ev.date || Date.now());
-    const isToday =
-      eventDate.getFullYear() === today.getFullYear() &&
-      eventDate.getMonth() === today.getMonth() &&
-      eventDate.getDate() === today.getDate();
-
+    const isToday = eventDate.toDateString() === today.toDateString();
     const hasHighlightsPhotos = (ev.highlightsPhotoCount || 0) > 0;
+
     if ((ev.stage === 'HIGHLIGHTS' || ev.highlightsReady || ev.isHighlights) && hasHighlightsPhotos) {
       return 'Highlights ready';
     }
-
     if (ev.stage === 'LIVE' || isToday) {
-      return 'Happening today';
+      return 'Celebration today';
     }
-
     if (ev.stage === 'UPCOMING' || eventDate > today) {
-      const d1 = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-      const d2 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const days = Math.round((d1.getTime() - d2.getTime()) / 86400000);
-      if (days <= 0) return 'Happening today';
-      if (days === 1) return 'Wedding tomorrow';
-      return `In ${days} days`;
+      return 'Upcoming celebration';
     }
-
-    if (ev.stage === 'CURATING' || (eventDate < today && !isToday && (ev.matchedCount || 0) === 0 && ev.stage !== 'READY')) {
-      return 'Currently curating';
+    if (ev.stage === 'CURATING') {
+      return 'Curating memories';
     }
 
     return 'Gallery ready';
@@ -145,7 +135,7 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
       <StatusBar barStyle="dark-content" />
       
       {/* Editorial Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + 8, 20) }]}>
         <View style={styles.headerTitleRow}>
           <View>
             <Text style={styles.headerCategory}>MY CIRCLE</Text>
