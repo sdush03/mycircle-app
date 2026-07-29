@@ -225,16 +225,20 @@ function RootLayoutContent() {
   }, [currentTab, eventSlug, showProfileModal]);
 
   const mainTabSwipeGesture = Gesture.Pan()
-    .activeOffsetX([-20, 20])
-    .failOffsetY([-30, 30])
+    .activeOffsetX([-8, 8])
+    .failOffsetY([-18, 18])
+    .shouldCancelWhenOutside(true)
     .onEnd((e) => {
       'worklet';
       if (eventSlug) return;
       if (e.x <= 40) return;
 
-      if (e.translationX < -70 || e.velocityX < -450) {
+      const isLeftSwipe = e.translationX < -35 || e.velocityX < -180;
+      const isRightSwipe = e.translationX > 35 || e.velocityX > 180;
+
+      if (isLeftSwipe) {
         runOnJS(handleTabSwipeNext)();
-      } else if (e.translationX > 70 || e.velocityX > 450) {
+      } else if (isRightSwipe) {
         runOnJS(handleTabSwipePrev)();
       }
     });
