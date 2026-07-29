@@ -815,14 +815,14 @@ export default function HomeScreen() {
               snapToInterval={width * 0.85 + 16}
               decelerationRate="fast"
             >
-              {events.map((ev) => {
+              {events.slice(0, 3).map((ev) => {
                 const today = new Date();
                 const statusMsg = getMyCircleStatusCopy(ev, today);
-                const coverUrl = ev.coverPhotoUrl || ev.coverPhotoSquareUrl || ev.coverPhotoMobileUrl || null;
+                const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
 
                 return (
                   <Pressable 
-                    key={ev.id} 
+                    key={ev.id || ev.slug} 
                     style={styles.myCircleCard}
                     onPress={() => handleEventCardClick(ev)}
                   >
@@ -848,6 +848,22 @@ export default function HomeScreen() {
                   </Pressable>
                 );
               })}
+
+              {events.length > 3 && (
+                <Pressable
+                  style={styles.myCircleViewAllCard}
+                  onPress={() => router.replace('/mycircle')}
+                >
+                  <View style={styles.myCircleViewAllContent}>
+                    <Text style={styles.myCircleViewAllTag}>MY CIRCLE</Text>
+                    <Text style={styles.myCircleViewAllTitle}>View All Celebrations</Text>
+                    <Text style={styles.myCircleViewAllSubtitle}>{events.length} Celebrations Joined</Text>
+                    <View style={styles.myCircleViewAllBtn}>
+                      <Text style={styles.myCircleViewAllCtaText}>EXPLORE ALL →</Text>
+                    </View>
+                  </View>
+                </Pressable>
+              )}
             </ScrollView>
           </View>
         )}
@@ -1457,6 +1473,56 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     letterSpacing: 0.5,
     color: '#d0c8be',
+  },
+  myCircleViewAllCard: {
+    width: width * 0.85,
+    aspectRatio: 3 / 2,
+    marginRight: 16,
+    backgroundColor: '#181614',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  myCircleViewAllContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  myCircleViewAllTag: {
+    fontFamily: FONT_JOST_SEMIBOLD,
+    fontSize: 10,
+    letterSpacing: 2,
+    color: '#a07850',
+    marginBottom: 8,
+  },
+  myCircleViewAllTitle: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 20,
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  myCircleViewAllSubtitle: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.55)',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  myCircleViewAllBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 2,
+  },
+  myCircleViewAllCtaText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: '#ffffff',
   },
   featuredCard: {
     width: width * 0.7,
