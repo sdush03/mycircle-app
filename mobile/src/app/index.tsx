@@ -53,6 +53,7 @@ import ArticleView from '../components/home/ArticleView';
 import MoodboardsView from '../components/home/MoodboardsView';
 import InspirationsView from '../components/home/InspirationsView';
 import AllStoriesView from '../components/home/AllStoriesView';
+import GalleryView from '../components/mycircle/GalleryView';
 import { formatUniversalGalleryImages } from '@/utils/masonryHelper';
 import JoinCelebrationModal from '../components/JoinCelebrationModal';
 import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS } from '../lib/tabEvents';
@@ -71,7 +72,7 @@ const { width } = Dimensions.get('window');
 const VIBES = ['All', 'Luxury', 'Destination', 'Intimate', 'Traditional'];
 
 export default function HomeScreen() {
-  const { token, profile, setEventDetails, userEvents: events, setUserEvents: setEvents } = useAuthStore();
+  const { token, profile, setEventDetails, userEvents: events, setUserEvents: setEvents, eventSlug, openedFrom, logout } = useAuthStore();
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [selectedVibe, setSelectedVibe] = useState('All');
 
@@ -583,14 +584,12 @@ export default function HomeScreen() {
       const coverUrl = targetEvent?.coverPhotoMobileUrl || targetEvent?.cover_photo_mobile_url || targetEvent?.coverPhotoUrl || targetEvent?.coverPhotoSquareUrl || null;
       const title = targetEvent?.title || null;
       setEventDetails(card.eventSlug, null, coverUrl, title, 'home');
-      router.push('/mycircle');
     }
   };
 
   const handleEventCardClick = (ev: any) => {
-    const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
+    const coverUrl = ev.coverPhotoUrl || ev.cover_photo_url || ev.coverPhotoSquareUrl || ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || null;
     setEventDetails(ev.slug, null, coverUrl, ev.title, 'home');
-    router.push('/mycircle');
   };
 
   // Dynamic Vibe filters from website story categories (100% dynamic from DB)
@@ -1263,6 +1262,14 @@ export default function HomeScreen() {
           fetchUserEvents();
         }}
       />
+
+      {/* ── Gallery View Overlay when opened from Home ── */}
+      {eventSlug && openedFrom === 'home' && (
+        <GalleryView
+          onLogout={logout}
+          onChangeEvent={() => setEventDetails(null, null)}
+        />
+      )}
     </View>
   );
 }

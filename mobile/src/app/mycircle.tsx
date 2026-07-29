@@ -207,12 +207,15 @@ export default function MyCircleScreen() {
     );
   }
 
-  // 6. Access private photo gallery
+  // 6. Access private photo gallery (renders JoinEventView in background for smooth slide-dismiss)
   return (
-    <GalleryView
-      onLogout={handleLogout}
-      onChangeEvent={handleCloseGallery}
-    />
+    <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      <JoinEventView onSuccess={() => {}} />
+      <GalleryView
+        onLogout={handleLogout}
+        onChangeEvent={handleCloseGallery}
+      />
+    </View>
   );
 }
 

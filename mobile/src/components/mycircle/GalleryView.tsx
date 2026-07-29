@@ -838,16 +838,9 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     ? new Date(eventDetails.date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()
     : '';
 
-  const pathname = usePathname();
-  const isMyCircleActive = pathname ? pathname.includes('mycircle') : true;
-
-  if (!isMyCircleActive) {
-    return null;
-  }
-
   return (
     <Modal
-      visible={isMyCircleActive}
+      visible={!!eventSlug}
       animationType="none"
       transparent={true}
       presentationStyle="overFullScreen"
