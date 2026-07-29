@@ -176,46 +176,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return () => subscription.remove();
   }, [handleBackAction]);
 
-  // Left-Edge Pan Swipe Back + Mid-Screen Horizontal Category Tab Swipe
-  const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX([-15, 15])
-    .failOffsetY([-25, 25])
-    .onBegin((e) => {
-      'worklet';
-      touchStartedOnLeftEdge.value = e.x <= 45 && !isLightboxOpen.value;
-    })
-    .onUpdate((e) => {
-      'worklet';
-      if (!touchStartedOnLeftEdge.value) return;
-      if (e.translationX > 0) {
-        screenSwipeX.value = e.translationX;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
 
-      if (touchStartedOnLeftEdge.value) {
-        if (e.translationX > width * 0.20 || e.velocityX > 250) {
-          screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
-            if (finished) {
-              runOnJS(onChangeEvent)();
-            }
-          });
-        } else {
-          screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
-        }
-        touchStartedOnLeftEdge.value = false;
-        return;
-      }
-
-      // Mid-Screen Horizontal Swipes: Switch Category Tabs
-      if (e.translationX < -70 || e.velocityX < -400) {
-        runOnJS(handleNextCategoryTab)();
-      } else if (e.translationX > 70 || e.velocityX > 400) {
-        runOnJS(handlePrevCategoryTab)();
-      }
-    });
 
   const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: screenSwipeX.value }],
@@ -637,6 +598,47 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       Haptics.selectionAsync().catch(() => {});
     }
   }, [availableTabs, activeTab, fetchTabPhotos]);
+
+  // Left-Edge Pan Swipe Back + Mid-Screen Horizontal Category Tab Swipe
+  const edgeSwipeGesture = Gesture.Pan()
+    .activeOffsetX([-15, 15])
+    .failOffsetY([-25, 25])
+    .onBegin((e) => {
+      'worklet';
+      touchStartedOnLeftEdge.value = e.x <= 45 && !isLightboxOpen.value;
+    })
+    .onUpdate((e) => {
+      'worklet';
+      if (!touchStartedOnLeftEdge.value) return;
+      if (e.translationX > 0) {
+        screenSwipeX.value = e.translationX;
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      if (isLightboxOpen.value) return;
+
+      if (touchStartedOnLeftEdge.value) {
+        if (e.translationX > width * 0.20 || e.velocityX > 250) {
+          screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+            if (finished) {
+              runOnJS(onChangeEvent)();
+            }
+          });
+        } else {
+          screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+        }
+        touchStartedOnLeftEdge.value = false;
+        return;
+      }
+
+      // Mid-Screen Horizontal Swipes: Switch Category Tabs
+      if (e.translationX < -70 || e.velocityX < -400) {
+        runOnJS(handleNextCategoryTab)();
+      } else if (e.translationX > 70 || e.velocityX > 400) {
+        runOnJS(handlePrevCategoryTab)();
+      }
+    });
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
