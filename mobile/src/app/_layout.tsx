@@ -224,6 +224,7 @@ function RootLayoutContent() {
 
   const { width } = Dimensions.get('window');
   const tabTranslateX = useSharedValue(0);
+  const activeTabSharedIndex = useSharedValue(Math.max(0, TAB_ORDER.indexOf(currentTab)));
 
   const mainTabSwipeGesture = Gesture.Pan()
     .activeOffsetX([-20, 20])
@@ -272,17 +273,16 @@ function RootLayoutContent() {
       }
     });
 
-  const currentTabIndex = Math.max(0, TAB_ORDER.indexOf(currentTab));
-
-  // Seamless route transition: reset translation offset AFTER new route renders
+  // Atomic route transition: update shared active index & reset swipe offset simultaneously on UI thread
   React.useEffect(() => {
+    const idx = Math.max(0, TAB_ORDER.indexOf(currentTab));
+    activeTabSharedIndex.value = idx;
     tabTranslateX.value = 0;
   }, [currentTab]);
 
   const mainTabAnimatedStyle = useAnimatedStyle(() => {
-    const baseOffset = -currentTabIndex * width;
     return {
-      transform: [{ translateX: baseOffset + tabTranslateX.value }],
+      transform: [{ translateX: -activeTabSharedIndex.value * width + tabTranslateX.value }],
     };
   });
 
