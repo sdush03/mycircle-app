@@ -192,29 +192,26 @@ export default function MyCircleScreen() {
     return <CameraViewScreen onSuccess={() => {}} />;
   }
 
-  // 4. Select event (if not deep-linked or joined previously)
-  if (!eventSlug) {
-    return <JoinEventView onSuccess={() => {}} />;
-  }
-
-  // 5. Enter passcode if required and we don't have it
-  if (eventRequiresPasscode && !passcode) {
-    return (
-      <PasscodeView
-        onSuccess={() => {}}
-        onBack={() => setEventDetails(null, null)}
-      />
-    );
-  }
-
-  // 6. Access private photo gallery (renders JoinEventView in background for smooth slide-dismiss)
+  // 4. Base Screen: JoinEventView (All Celebrations screen) with overlays (matching FeaturedStoryView)
   return (
     <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
       <JoinEventView onSuccess={() => {}} />
-      <GalleryView
-        onLogout={handleLogout}
-        onChangeEvent={handleCloseGallery}
-      />
+
+      {/* Passcode Modal overlay if passcode is required */}
+      {eventSlug && eventRequiresPasscode && !passcode && (
+        <PasscodeView
+          onSuccess={() => {}}
+          onBack={() => setEventDetails(null, null)}
+        />
+      )}
+
+      {/* Gallery Overlay Modal when eventSlug is set */}
+      {eventSlug && (!eventRequiresPasscode || passcode) && (
+        <GalleryView
+          onLogout={handleLogout}
+          onChangeEvent={handleCloseGallery}
+        />
+      )}
     </View>
   );
 }
