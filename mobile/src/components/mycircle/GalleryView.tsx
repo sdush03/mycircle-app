@@ -134,11 +134,12 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     isLightboxOpen.value = activeImageIndex !== null;
   }, [activeImageIndex]);
 
-  // Opening entrance animation: slide in from right on mount
   useEffect(() => {
-    screenSwipeX.value = width;
-    screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
-  }, []);
+    if (eventSlug) {
+      screenSwipeX.value = width;
+      screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
+    }
+  }, [eventSlug]);
 
   const handleBackAction = useCallback(() => {
     if (activeImageIndex !== null) {

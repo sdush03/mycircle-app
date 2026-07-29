@@ -588,7 +588,7 @@ export default function HomeScreen() {
   };
 
   const handleEventCardClick = (ev: any) => {
-    const coverUrl = ev.coverPhotoUrl || ev.cover_photo_url || ev.coverPhotoSquareUrl || ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || null;
+    const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
     setEventDetails(ev.slug, null, coverUrl, ev.title, 'home');
   };
 
