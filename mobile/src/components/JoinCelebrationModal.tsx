@@ -150,7 +150,7 @@ export default function JoinCelebrationModal({
       const eventData = res.data;
 
       await saveEventToRecent(slug, eventData.title || slug);
-      setEventDetails(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title);
+      setEventDetails(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
       
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (onSuccess) {

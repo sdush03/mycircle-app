@@ -38,6 +38,7 @@ interface AuthState {
   passcode: string | null;
   eventCoverUrl: string | null;
   eventTitle: string | null;
+  openedFrom: 'home' | 'mycircle' | null;
   isTabBarCollapsed: boolean;
   galleryCache: Record<string, GalleryCacheEntry>;
   setTabBarCollapsed: (collapsed: boolean) => void;
@@ -47,7 +48,7 @@ interface AuthState {
   
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
   updateProfile: (profile: Partial<GuestProfile>) => Promise<void>;
-  setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null) => void;
+  setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null, openedFrom?: 'home' | 'mycircle' | null) => void;
   loadStoredAuth: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -61,6 +62,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   passcode: null,
   eventCoverUrl: null,
   eventTitle: null,
+  openedFrom: null,
   isTabBarCollapsed: false,
   galleryCache: {},
   
@@ -109,11 +111,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  setEventDetails: (eventSlug, passcode, eventCoverUrl = null, eventTitle = null) => {
+  setEventDetails: (eventSlug, passcode, eventCoverUrl = null, eventTitle = null, openedFrom = null) => {
     if (eventCoverUrl) {
       Image.prefetch(eventCoverUrl);
     }
-    set({ eventSlug, passcode, eventCoverUrl, eventTitle });
+    set({ eventSlug, passcode, eventCoverUrl, eventTitle, openedFrom });
     if (eventSlug) {
       import('../services/galleryPrefetch').then((m) => {
         m.prefetchEventGalleryData(eventSlug, passcode);

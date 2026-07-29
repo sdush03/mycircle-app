@@ -582,15 +582,15 @@ export default function HomeScreen() {
       }
       const coverUrl = targetEvent?.coverPhotoMobileUrl || targetEvent?.cover_photo_mobile_url || targetEvent?.coverPhotoUrl || targetEvent?.coverPhotoSquareUrl || null;
       const title = targetEvent?.title || null;
-      setEventDetails(card.eventSlug, null, coverUrl, title);
-      router.replace('/mycircle');
+      setEventDetails(card.eventSlug, null, coverUrl, title, 'home');
+      router.push('/mycircle');
     }
   };
 
   const handleEventCardClick = (ev: any) => {
     const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
-    setEventDetails(ev.slug, null, coverUrl, ev.title);
-    router.replace('/mycircle');
+    setEventDetails(ev.slug, null, coverUrl, ev.title, 'home');
+    router.push('/mycircle');
   };
 
   // Dynamic Vibe filters from website story categories (100% dynamic from DB)

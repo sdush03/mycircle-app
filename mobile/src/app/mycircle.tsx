@@ -3,6 +3,7 @@ import { StyleSheet, View, ActivityIndicator, Alert, BackHandler } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 
+import { router } from 'expo-router';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 
@@ -29,11 +30,19 @@ export default function MyCircleScreen() {
     logout,
   } = useAuthStore();
 
+  const handleCloseGallery = () => {
+    const from = useAuthStore.getState().openedFrom;
+    setEventDetails(null, null);
+    if (from === 'home') {
+      router.replace('/');
+    }
+  };
+
   // Handle Android system back swipe/button inside My Circle screens
   useEffect(() => {
     const onBackPress = () => {
       if (eventSlug) {
-        setEventDetails(null, null);
+        handleCloseGallery();
         return true;
       }
       return false;
@@ -202,7 +211,7 @@ export default function MyCircleScreen() {
   return (
     <GalleryView
       onLogout={handleLogout}
-      onChangeEvent={() => setEventDetails(null, null)}
+      onChangeEvent={handleCloseGallery}
     />
   );
 }

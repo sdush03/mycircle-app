@@ -136,7 +136,7 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
     const coverUrl = ev.coverPhotoMobileUrl || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
     const title = ev.title || slug;
     
-    setEventDetails(slug, ev.passcode || null, coverUrl, title);
+    setEventDetails(slug, ev.passcode || null, coverUrl, title, 'mycircle');
     onSuccess(slug, ev.passcode || null);
   };
 
