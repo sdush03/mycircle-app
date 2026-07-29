@@ -40,8 +40,10 @@ interface JoinEventViewProps {
 
 export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
   const insets = useSafeAreaInsets();
-  const [events, setEvents] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const userEvents = useAuthStore((state) => state.userEvents);
+  const setUserEvents = useAuthStore((state) => state.setUserEvents);
+  const events = userEvents;
+  const [isLoading, setIsLoading] = useState<boolean>(userEvents.length === 0);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
 
   const handleScroll = useScrollTabBarCollapse();
@@ -56,7 +58,9 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
 
   const fetchEvents = async () => {
     try {
-      setIsLoading(true);
+      if (userEvents.length === 0) {
+        setIsLoading(true);
+      }
       
       // 1. Fetch live events list from family endpoint
       const res = await api.get('/api/gallery/family/events');
@@ -66,7 +70,7 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
           const timeB = b.date ? new Date(b.date).getTime() : 0;
           return timeB - timeA;
         });
-        setEvents(sorted);
+        setUserEvents(sorted);
       } else {
         // Fallback to recent events from SecureStore
         loadRecentEvents();
@@ -90,7 +94,7 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
             const timeB = b.date ? new Date(b.date).getTime() : 0;
             return timeB - timeA;
           });
-          setEvents(sorted);
+          setUserEvents(sorted);
         }
       }
     } catch (e) {
