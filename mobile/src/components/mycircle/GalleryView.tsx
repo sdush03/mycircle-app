@@ -1441,10 +1441,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   galleryContainer: {
-    paddingHorizontal: 8,
     paddingTop: 20,
   },
   tabsWrapper: {
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede8',
     marginBottom: 16,
@@ -1480,6 +1480,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     width: '100%',
+    paddingHorizontal: 8,
   },
   masonryColumn: {
     flex: 1,
