@@ -708,55 +708,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       }
     });
 
-  // Mid-Screen Horizontal Category Tab Swipe Gesture
-  const categorySwipeGesture = Gesture.Pan()
-    .activeOffsetX([-15, 15])
-    .failOffsetY([-10, 10])
-    .onUpdate((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
-      if (touchStartedOnLeftEdge.value) return;
 
-      const currentIndex = activeCategorySharedIndex.value;
-      const isLeftSwipe = e.translationX < 0;
-      const isRightSwipe = e.translationX > 0;
-
-      // Dampened boundary resistance on ends of availableTabs list
-      if ((isRightSwipe && currentIndex === 0) || (isLeftSwipe && currentIndex === availableTabs.length - 1)) {
-        categoryTranslateX.value = e.translationX * 0.25;
-      } else {
-        categoryTranslateX.value = e.translationX;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (isLightboxOpen.value) return;
-      if (touchStartedOnLeftEdge.value) return;
-
-      const currentIndex = activeCategorySharedIndex.value;
-      const isLeftSwipe = e.translationX < -45 || e.velocityX < -250;
-      const isRightSwipe = e.translationX > 45 || e.velocityX > 250;
-
-      if (isLeftSwipe && currentIndex < availableTabs.length - 1) {
-        categoryTranslateX.value = withTiming(-width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
-          if (finished) {
-            runOnJS(handleNextCategoryTab)();
-          }
-        });
-      } else if (isRightSwipe && currentIndex > 0) {
-        categoryTranslateX.value = withTiming(width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
-          if (finished) {
-            runOnJS(handlePrevCategoryTab)();
-          }
-        });
-      } else {
-        categoryTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
-      }
-    });
-
-  const categoryAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -activeCategorySharedIndex.value * width + categoryTranslateX.value }],
-  }));
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
@@ -1270,32 +1222,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                 </ScrollView>
               </View>
 
-              {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
-              <GestureDetector gesture={categorySwipeGesture}>
-                <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
-                  <Animated.View
-                    style={[
-                      { flexDirection: 'row', width: width * availableTabs.length },
-                      categoryAnimatedStyle,
-                    ]}
-                  >
-                    {availableTabs.map((tabName) => {
-                      const isTabActive = tabName.toUpperCase() === activeTab.toUpperCase();
-                      return (
-                        <View
-                          key={`tab-grid-${tabName}`}
-                          style={[
-                            { width },
-                            !isTabActive && { height: 1, overflow: 'hidden' }
-                          ]}
-                        >
-                          {renderCategoryGrid(tabName)}
-                        </View>
-                      );
-                    })}
-                  </Animated.View>
-                </View>
-              </GestureDetector>
+              {/* ── 3. 2-Column Balanced Masonry Grid ── */}
+              {renderCategoryGrid(activeTab)}
 
               {/* Loading indicator when fetching next page */}
               {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
