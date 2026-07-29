@@ -752,7 +752,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const totalHeaderHeight = heroHeight + categoryTabsHeight;
 
   const headerAnimatedStyle = useAnimatedStyle(() => {
-    const maxScrollUp = Math.max(0, heroHeight - (insets.top + 50));
+    const maxScrollUp = Math.max(0, heroHeight - (insets.top + 14));
     const translateY = Math.max(-maxScrollUp, -scrollY.value);
     return {
       transform: [{ translateY }],
@@ -1398,13 +1398,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   galleryContainer: {
-    paddingTop: 20,
+    paddingTop: 14,
+    backgroundColor: '#ffffff',
+    zIndex: 90,
   },
   tabsWrapper: {
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede8',
-    marginBottom: 16,
+    backgroundColor: '#ffffff',
   },
   tabsScrollContent: {
     flexDirection: 'row',
