@@ -1036,54 +1036,48 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
 
     return (
-      <View style={styles.masonryGridContainer}>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.left) return null;
-            const img = row.left;
-            const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2}
-                isColumn0={true}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.right) return null;
-            const img = row.right;
-            const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2 + 1}
-                isColumn0={false}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-      </View>
+      <FlashList
+        data={rows}
+        keyExtractor={(_item, rIdx) => `row-${norm}-${rIdx}`}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={false}
+        renderItem={({ item: row, index: rIdx }) => (
+          <View style={styles.masonryGridContainer}>
+            <View style={styles.masonryColumn}>
+              {row.left && (
+                <MasonryCard
+                  key={row.left.id ? `c0-${norm}-${row.left.id}-${rIdx}` : `c0-${norm}-${rIdx}`}
+                  img={row.left}
+                  index={row.left.globalIndex ?? rIdx * 2}
+                  isColumn0={true}
+                  onSelect={(bounds) => openLightbox(row.left!, bounds)}
+                  onRegisterRef={(id, ref) => {
+                    if (id) cardRefs.current[id] = ref;
+                    if (row.left?.id) cardRefs.current[String(row.left.id)] = ref;
+                  }}
+                  onToggleLike={handleToggleLike}
+                />
+              )}
+            </View>
+            <View style={styles.masonryColumn}>
+              {row.right && (
+                <MasonryCard
+                  key={row.right.id ? `c1-${norm}-${row.right.id}-${rIdx}` : `c1-${norm}-${rIdx}`}
+                  img={row.right}
+                  index={row.right.globalIndex ?? rIdx * 2 + 1}
+                  isColumn0={false}
+                  onSelect={(bounds) => openLightbox(row.right!, bounds)}
+                  onRegisterRef={(id, ref) => {
+                    if (id) cardRefs.current[id] = ref;
+                    if (row.right?.id) cardRefs.current[String(row.right.id)] = ref;
+                  }}
+                  onToggleLike={handleToggleLike}
+                />
+              )}
+            </View>
+          </View>
+        )}
+      />
     );
   };
 
