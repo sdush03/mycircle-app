@@ -1068,7 +1068,16 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           renderScrollComponent={Animated.ScrollView}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
-          onScroll={isCurrentActive ? scrollHandler : undefined}
+          onScroll={isCurrentActive ? (e: any) => {
+            const currentY = e.nativeEvent.contentOffset.y;
+            scrollY.value = currentY;
+            const contentHeight = e.nativeEvent.contentSize.height;
+            const layoutHeight = e.nativeEvent.layoutMeasurement.height;
+
+            if (layoutHeight + currentY >= contentHeight - 4500) {
+              handleLoadMoreTrigger();
+            }
+          } : undefined}
           contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingHorizontal: 5, paddingBottom: 40 }}
         />
       </View>
