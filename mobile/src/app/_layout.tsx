@@ -278,14 +278,19 @@ function RootLayoutContent() {
       }
     });
 
+  const currentTabIndex = Math.max(0, TAB_ORDER.indexOf(currentTab));
+
   // Seamless route transition: reset translation offset AFTER new route renders
   React.useEffect(() => {
     tabTranslateX.value = 0;
   }, [currentTab]);
 
-  const mainTabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tabTranslateX.value }],
-  }));
+  const mainTabAnimatedStyle = useAnimatedStyle(() => {
+    const baseOffset = -currentTabIndex * width;
+    return {
+      transform: [{ translateX: baseOffset + tabTranslateX.value }],
+    };
+  });
 
   // 1. Keep screen solid white matching native splash until fonts & stored auth are initialized (prevents black flicker)
   if (!isReady || isLoading || !fontsLoaded) {
@@ -301,36 +306,6 @@ function RootLayoutContent() {
   if (!profile?.phoneNumber || !profile?.hasSelfie) {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
-
-  const adjacentRightTab: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null =
-    currentTab === 'index' ? 'mycircle' :
-    currentTab === 'mycircle' ? 'inspirations' :
-    currentTab === 'inspirations' ? 'moodboard' :
-    currentTab === 'moodboard' ? 'profile' : null;
-
-  const adjacentLeftTab: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null =
-    currentTab === 'profile' ? 'moodboard' :
-    currentTab === 'moodboard' ? 'inspirations' :
-    currentTab === 'inspirations' ? 'mycircle' :
-    currentTab === 'mycircle' ? 'index' : null;
-
-  const renderTabPreview = (tabKey: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null) => {
-    if (!tabKey) return null;
-    switch (tabKey) {
-      case 'index':
-        return <HomeScreen />;
-      case 'mycircle':
-        return <JoinEventView onSuccess={() => {}} />;
-      case 'inspirations':
-        return <InspirationsScreen />;
-      case 'moodboard':
-        return <MoodboardScreen />;
-      case 'profile':
-        return <ProfileView visible={true} onClose={() => {}} profile={profile} onLogout={() => {}} />;
-      default:
-        return null;
-    }
-  };
 
   const isHeaderHidden = false;
 
@@ -361,34 +336,25 @@ function RootLayoutContent() {
         )}
 
         <GestureDetector gesture={mainTabSwipeGesture}>
-          <Animated.View style={[{ flex: 1 }, mainTabAnimatedStyle]}>
-            <Tabs
-              screenOptions={{
-                headerShown: false,
-                tabBarStyle: { display: 'none' },
-              }}
-            >
-              <Tabs.Screen name="index" />
-              <Tabs.Screen name="mycircle" />
-              <Tabs.Screen name="moodboard" />
-              <Tabs.Screen name="inspirations" />
-              <Tabs.Screen name="profile" />
-            </Tabs>
-
-            {/* ── Adjacent Right Screen Preview (Zero Gap Incoming Screen) ── */}
-            {adjacentRightTab && (
-              <View style={{ position: 'absolute', top: 0, bottom: 0, left: width, width, backgroundColor: '#ffffff' }}>
-                {renderTabPreview(adjacentRightTab)}
+          <View style={{ flex: 1, overflow: 'hidden' }}>
+            <Animated.View style={[{ flexDirection: 'row', width: width * 5, flex: 1 }, mainTabAnimatedStyle]}>
+              <View style={{ width, flex: 1 }}>
+                <HomeScreen />
               </View>
-            )}
-
-            {/* ── Adjacent Left Screen Preview (Zero Gap Incoming Screen) ── */}
-            {adjacentLeftTab && (
-              <View style={{ position: 'absolute', top: 0, bottom: 0, left: -width, width, backgroundColor: '#ffffff' }}>
-                {renderTabPreview(adjacentLeftTab)}
+              <View style={{ width, flex: 1 }}>
+                <JoinEventView onSuccess={() => {}} />
               </View>
-            )}
-          </Animated.View>
+              <View style={{ width, flex: 1 }}>
+                <InspirationsScreen />
+              </View>
+              <View style={{ width, flex: 1 }}>
+                <MoodboardScreen />
+              </View>
+              <View style={{ width, flex: 1 }}>
+                <ProfileView visible={true} onClose={() => {}} profile={profile} onLogout={logout} />
+              </View>
+            </Animated.View>
+          </View>
         </GestureDetector>
 
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
