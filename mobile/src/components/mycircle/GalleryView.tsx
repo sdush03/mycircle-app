@@ -1275,20 +1275,18 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                 <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
                   <Animated.View
                     style={[
-                      { width: width * availableTabs.length, minHeight: 300 },
+                      { flexDirection: 'row', width: width * availableTabs.length },
                       categoryAnimatedStyle,
                     ]}
                   >
-                    {availableTabs.map((tabName, tabIdx) => {
+                    {availableTabs.map((tabName) => {
                       const isTabActive = tabName.toUpperCase() === activeTab.toUpperCase();
                       return (
                         <View
                           key={`tab-grid-${tabName}`}
                           style={[
                             { width },
-                            isTabActive
-                              ? { position: 'relative' }
-                              : { position: 'absolute', left: tabIdx * width, top: 0 }
+                            !isTabActive && { height: 1, overflow: 'hidden' }
                           ]}
                         >
                           {renderCategoryGrid(tabName)}
