@@ -16,6 +16,7 @@ import { useAuthStore } from '../store/authStore';
 import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
 import JoinEventView from '../components/mycircle/JoinEventView';
+import GalleryView from '../components/mycircle/GalleryView';
 import HomeScreen from './index';
 import InspirationsScreen from './inspirations';
 import MoodboardScreen from './moodboard';
@@ -354,6 +355,18 @@ function RootLayoutContent() {
             </Animated.View>
           </View>
         </GestureDetector>
+
+        {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
+        {eventSlug && (
+          <GalleryView
+            onLogout={() => {
+              Haptics.selectionAsync().catch(() => {});
+            }}
+            onChangeEvent={() => {
+              useAuthStore.getState().setEventDetails(null, null);
+            }}
+          />
+        )}
 
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
         <CustomFloatingTabBar
