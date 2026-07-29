@@ -77,6 +77,13 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const eventHeadersRef = useRef<Record<string, string>>({});
   const allPhotosOffsetRef = useRef<number>(0);
   const tabOffsetsRef = useRef<Record<string, number>>({});
+  const eventSlug = useAuthStore((state) => state.eventSlug);
+  const passcode = useAuthStore((state) => state.passcode);
+  const profile = useAuthStore((state) => state.profile);
+  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
+  const eventTitle = useAuthStore((state) => state.eventTitle);
+  const handleScroll = useScrollTabBarCollapse();
+
   const isFetchingMoreRef = useRef<boolean>(false);
   const lastScrollYRef = useRef<number>(0);
   const btnStateRef = useRef<'hidden' | 'dim' | 'bright'>('hidden');
@@ -213,13 +220,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: screenSwipeX.value }],
   }));
-
-  const eventSlug = useAuthStore((state) => state.eventSlug);
-  const passcode = useAuthStore((state) => state.passcode);
-  const profile = useAuthStore((state) => state.profile);
-  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
-  const eventTitle = useAuthStore((state) => state.eventTitle);
-  const handleScroll = useScrollTabBarCollapse();
 
   const fetchPhotos = async () => {
     try {
