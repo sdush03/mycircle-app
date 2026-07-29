@@ -77,6 +77,7 @@ export default function CollectionGridView({
   const gridScrollRef = useRef<ScrollView>(null);
   const categoryScrollOffsetsRef = useRef<Record<string, number>>({});
   const currentScrollYRef = useRef<number>(0);
+  const isCategorySwitchingRef = useRef<boolean>(false);
 
   // Background pre-fetch story details into memory cache
   React.useEffect(() => {
@@ -310,7 +311,10 @@ export default function CollectionGridView({
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
 
-    // 1. Save scroll position of current category
+    // 1. Lock onScroll during category transition
+    isCategorySwitchingRef.current = true;
+
+    // 2. Save scroll position of current category
     categoryScrollOffsetsRef.current[selectedCategory] = currentScrollYRef.current;
 
     Haptics.selectionAsync().catch(() => {});
@@ -321,12 +325,18 @@ export default function CollectionGridView({
     categoryTransitionOpacity.value = 0.5;
     setSelectedCategory(catName);
 
-    // 2. Restore scroll position of target category (0 if unvisited)
+    // 3. Retrieve target scroll position (default 0)
     const targetY = categoryScrollOffsetsRef.current[catName] || 0;
     currentScrollYRef.current = targetY;
-    setTimeout(() => {
+
+    // 4. Restore scroll position after React layout update
+    requestAnimationFrame(() => {
       gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
-    }, 16);
+      setTimeout(() => {
+        gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+        isCategorySwitchingRef.current = false;
+      }, 50);
+    });
 
     categoryTransitionTranslateX.value = withTiming(0, {
       duration: 250,
@@ -522,7 +532,9 @@ export default function CollectionGridView({
                 showsVerticalScrollIndicator={false}
                 scrollEventThrottle={16}
                 onScroll={(e) => {
-                  currentScrollYRef.current = e.nativeEvent.contentOffset.y;
+                  if (!isCategorySwitchingRef.current) {
+                    currentScrollYRef.current = e.nativeEvent.contentOffset.y;
+                  }
                 }}
               >
                 {/* Centered Editorial Title & Description Banner */}

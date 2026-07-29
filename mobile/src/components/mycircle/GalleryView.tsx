@@ -73,6 +73,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const PAGE_SIZE = 60;
   const mainScrollRef = useAnimatedRef<Animated.ScrollView>();
   const currentYRef = useRef<number>(0);
+  const isTabSwitchingRef = useRef<boolean>(false);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
   const eventHeadersRef = useRef<Record<string, string>>({});
   const allPhotosOffsetRef = useRef<number>(0);
@@ -576,19 +577,32 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
 
   const changeTabWithScrollMemory = useCallback((newTab: string) => {
-    if (newTab.toUpperCase() === activeTab.toUpperCase()) return;
+    const currentNorm = activeTab.toUpperCase();
+    const newNorm = newTab.toUpperCase();
+    if (newNorm === currentNorm) return;
 
-    // 1. Save current scroll position for current tab
-    tabOffsetsRef.current[activeTab.toUpperCase()] = currentYRef.current;
+    // 1. Lock onScroll during tab transition so native height clamping doesn't erase saved scroll Y
+    isTabSwitchingRef.current = true;
 
-    // 2. Switch tab
+    // 2. Save exact scroll position of the tab we are leaving
+    tabOffsetsRef.current[currentNorm] = currentYRef.current;
+
+    // 3. Switch tab
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
 
-    // 3. Restore scroll position for new tab (or 0 if unvisited)
-    const targetY = tabOffsetsRef.current[newTab.toUpperCase()] || 0;
+    // 4. Retrieve saved scroll position of new tab (default 0)
+    const targetY = tabOffsetsRef.current[newNorm] || 0;
     currentYRef.current = targetY;
-    scrollTo(mainScrollRef, 0, targetY, false);
+
+    // 5. Perform scroll restoration after React renders the new tab's layout
+    requestAnimationFrame(() => {
+      scrollTo(mainScrollRef, 0, targetY, false);
+      setTimeout(() => {
+        scrollTo(mainScrollRef, 0, targetY, false);
+        isTabSwitchingRef.current = false;
+      }, 50);
+    });
   }, [activeTab, fetchTabPhotos, mainScrollRef]);
 
   const handleNextCategoryTab = useCallback(() => {
@@ -930,7 +944,9 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               handleScroll(e);
               const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
               const currentY = contentOffset.y;
-              currentYRef.current = currentY;
+              if (!isTabSwitchingRef.current) {
+                currentYRef.current = currentY;
+              }
               const deltaY = currentY - lastScrollYRef.current;
               lastScrollYRef.current = currentY;
 
