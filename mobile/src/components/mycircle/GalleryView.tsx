@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing, useAnimatedScrollHandler } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
@@ -576,17 +576,25 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return list;
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
 
-  const tabScrollRefs = useRef<{ [key: string]: any }>({});
-
   const scrollToY = useCallback((targetY: number) => {
-    const norm = activeTab.toUpperCase();
-    const currentScrollRef = tabScrollRefs.current[norm];
-    if (currentScrollRef && typeof currentScrollRef.scrollTo === 'function') {
-      try {
-        currentScrollRef.scrollTo({ y: targetY, animated: false });
-      } catch (_e) {}
+    try {
+      if (mainScrollRef.current) {
+        if ('scrollTo' in mainScrollRef.current && typeof (mainScrollRef.current as any).scrollTo === 'function') {
+          (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+        } else {
+          runOnUI((y: number) => {
+            'worklet';
+            scrollTo(mainScrollRef, 0, y, false);
+          })(targetY);
+        }
+      }
+    } catch (_e) {
+      runOnUI((y: number) => {
+        'worklet';
+        scrollTo(mainScrollRef, 0, y, false);
+      })(targetY);
     }
-  }, [activeTab]);
+  }, [mainScrollRef]);
 
   const activeCategorySharedIndex = useSharedValue(0);
   const categoryTranslateX = useSharedValue(0);
@@ -746,40 +754,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       }
     });
 
-  const scrollY = useSharedValue(0);
-  const heroHeight = Math.round(screenHeight * 0.70);
-  const categoryTabsHeight = 54;
-  const totalHeaderHeight = heroHeight + categoryTabsHeight;
-
-  const headerAnimatedStyle = useAnimatedStyle(() => {
-    const maxScrollUp = Math.max(0, heroHeight - (insets.top + 14));
-    const translateY = Math.max(-maxScrollUp, -scrollY.value);
-    return {
-      transform: [{ translateY }],
-    };
-  });
-
-  const handleLoadMoreTrigger = useCallback(() => {
-    if (activeTab.toUpperCase() === 'ALL' && hasMorePhotos && !isLoadingMore) {
-      loadMorePhotos();
-    }
-  }, [activeTab, hasMorePhotos, isLoadingMore, loadMorePhotos]);
-
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (e) => {
-      'worklet';
-      scrollY.value = e.contentOffset.y;
-
-      const currentY = e.contentOffset.y;
-      const contentHeight = e.contentSize.height;
-      const layoutHeight = e.layoutMeasurement.height;
-
-      if (layoutHeight + currentY >= contentHeight - 4500) {
-        runOnJS(handleLoadMoreTrigger)();
-      }
-    },
-  });
-
   const categoryAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: -activeCategorySharedIndex.value * width + categoryTranslateX.value }],
   }));
@@ -899,10 +873,28 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const cardId = item.id ? String(item.id) : (item.r2Url || `photo-${idx}`);
     const targetCard = cardRefs.current[cardId];
 
-    if (targetCard && typeof targetCard.measureInWindow === 'function') {
+    if (targetCard) {
       targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
         if (cardWidth > 0 && cardHeight > 0) {
-          callback({ x, y, width: cardWidth, height: cardHeight });
+          if (y < 80 || y + cardHeight > Dimensions.get('screen').height - 60) {
+            targetCard.measureLayout(
+              mainScrollRef.current as any,
+              (left, top, w, h) => {
+                const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
+                mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
+                requestAnimationFrame(() => {
+                  targetCard.measureInWindow((nx, ny, nw, nh) => {
+                    if (nw > 0 && nh > 0) {
+                      callback({ x: nx, y: ny, width: nw, height: nh });
+                    }
+                  });
+                });
+              },
+              () => {}
+            );
+          } else {
+            callback({ x, y, width: cardWidth, height: cardHeight });
+          }
         }
       });
     }
@@ -991,7 +983,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const isWithinWindow = tabIdx >= 0 && Math.abs(tabIdx - (activeIdx >= 0 ? activeIdx : 0)) <= 1;
 
     if (!isWithinWindow) {
-      return <View style={{ flex: 1, width, minHeight: screenHeight }} />;
+      return <View style={{ flex: 1, minHeight: 400 }} />;
     }
 
     let tabList: Photo[] = [];
@@ -1009,7 +1001,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     if (isLoading || (isCurrentActive && isTabLoading)) {
       return (
-        <View style={[{ width, flex: 1, paddingTop: totalHeaderHeight + 10 }, styles.masonryGridContainer]}>
+        <View style={styles.masonryGridContainer}>
           <View style={styles.masonryColumn}>
             {[0.75, 0.67, 0.8].map((aspect, i) => (
               <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
@@ -1026,7 +1018,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     if (tabList.length === 0) {
       return (
-        <View style={[{ width, flex: 1, paddingTop: totalHeaderHeight + 10 }, styles.emptyContainer]}>
+        <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>
             {norm === 'MY PHOTOS'
               ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
@@ -1038,78 +1030,60 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       );
     }
 
-    const col0: Photo[] = [];
-    const col1: Photo[] = [];
-    tabList.forEach((p, idx) => {
-      if (idx % 2 === 0) col0.push(p);
-      else col1.push(p);
-    });
+    const rows: { left?: Photo; right?: Photo }[] = [];
+    for (let i = 0; i < tabList.length; i += 2) {
+      rows.push({ left: tabList[i], right: tabList[i + 1] });
+    }
 
     return (
-      <Animated.ScrollView
-        ref={(r) => {
-          if (r) tabScrollRefs.current[norm] = r;
-        }}
-        style={{ width, flex: 1 }}
-        contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-        scrollEventThrottle={16}
-        onScroll={isCurrentActive ? (e: any) => {
-          const currentY = e.nativeEvent.contentOffset.y;
-          scrollY.value = currentY;
-          const contentHeight = e.nativeEvent.contentSize.height;
-          const layoutHeight = e.nativeEvent.layoutMeasurement.height;
+      <View style={styles.masonryGridContainer}>
+        <View style={styles.masonryColumn}>
+          {rows.map((row, rIdx) => {
+            if (!row.left) return null;
+            const img = row.left;
+            const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
+            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
 
-          if (layoutHeight + currentY >= contentHeight - 4500) {
-            handleLoadMoreTrigger();
-          }
-        } : undefined}
-      >
-        <View style={styles.masonryGridContainer}>
-          <View style={styles.masonryColumn}>
-            {col0.map((img, idx) => {
-              const cardId = img.id ? `c0-${norm}-${img.id}` : `c0-${norm}-${idx}`;
-              const refId = img.id ? String(img.id) : (img.r2Url || `photo-${idx * 2}`);
-
-              return (
-                <MasonryCard
-                  key={cardId}
-                  img={img}
-                  index={img.globalIndex ?? idx * 2}
-                  isColumn0={true}
-                  onSelect={(bounds) => openLightbox(img, bounds)}
-                  onRegisterRef={(id, ref) => {
-                    if (id) cardRefs.current[id] = ref;
-                    if (refId) cardRefs.current[refId] = ref;
-                  }}
-                  onToggleLike={handleToggleLike}
-                />
-              );
-            })}
-          </View>
-          <View style={styles.masonryColumn}>
-            {col1.map((img, idx) => {
-              const cardId = img.id ? `c1-${norm}-${img.id}` : `c1-${norm}-${idx}`;
-              const refId = img.id ? String(img.id) : (img.r2Url || `photo-${idx * 2 + 1}`);
-
-              return (
-                <MasonryCard
-                  key={cardId}
-                  img={img}
-                  index={img.globalIndex ?? idx * 2 + 1}
-                  isColumn0={false}
-                  onSelect={(bounds) => openLightbox(img, bounds)}
-                  onRegisterRef={(id, ref) => {
-                    if (id) cardRefs.current[id] = ref;
-                    if (refId) cardRefs.current[refId] = ref;
-                  }}
-                  onToggleLike={handleToggleLike}
-                />
-              );
-            })}
-          </View>
+            return (
+              <MasonryCard
+                key={cardId}
+                img={img}
+                index={img.globalIndex ?? rIdx * 2}
+                isColumn0={true}
+                onSelect={(bounds) => openLightbox(img, bounds)}
+                onRegisterRef={(id, ref) => {
+                  if (id) cardRefs.current[id] = ref;
+                  if (refId) cardRefs.current[refId] = ref;
+                }}
+                onToggleLike={handleToggleLike}
+              />
+            );
+          })}
         </View>
-      </Animated.ScrollView>
+        <View style={styles.masonryColumn}>
+          {rows.map((row, rIdx) => {
+            if (!row.right) return null;
+            const img = row.right;
+            const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
+            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+            return (
+              <MasonryCard
+                key={cardId}
+                img={img}
+                index={img.globalIndex ?? rIdx * 2 + 1}
+                isColumn0={false}
+                onSelect={(bounds) => openLightbox(img, bounds)}
+                onRegisterRef={(id, ref) => {
+                  if (id) cardRefs.current[id] = ref;
+                  if (refId) cardRefs.current[refId] = ref;
+                }}
+                onToggleLike={handleToggleLike}
+              />
+            );
+          })}
+        </View>
+      </View>
     );
   };
 
@@ -1161,21 +1135,59 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             <Text style={styles.editorialBackText}>← BACK</Text>
           </Pressable>
 
-          {/* ── Floating Sticky Collapsible Header (Hero Cover + Category Tab Bar) ── */}
-          <Animated.View
-            style={[
-              {
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                zIndex: 80,
-                backgroundColor: '#ffffff',
-              },
-              headerAnimatedStyle,
-            ]}
+          <Animated.ScrollView
+            ref={mainScrollRef}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={true}
+            scrollEventThrottle={32}
+            removeClippedSubviews={true}
+            onScroll={(e) => {
+              if (isSmoothScrollingToTop.value) return; // 120 FPS Lock: Bypass JS re-renders during active smooth scroll to top animation
+              handleScroll(e);
+              const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+              const currentY = contentOffset.y;
+              if (!isTabSwitchingRef.current) {
+                currentYRef.current = currentY;
+              }
+              const deltaY = currentY - lastScrollYRef.current;
+              lastScrollYRef.current = currentY;
+
+              // Appears after scrolling past 60 photos (~4200px scroll depth)
+              const past60 = currentY > 4200;
+              if (past60) {
+                if (deltaY < -20) {
+                  if (btnStateRef.current !== 'bright') {
+                    btnStateRef.current = 'bright';
+                    if (!isPast60Photos) setIsPast60Photos(true);
+                    backToTopOpacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
+                  }
+                } else if (deltaY > 20) {
+                  if (btnStateRef.current !== 'dim') {
+                    btnStateRef.current = 'dim';
+                    if (!isPast60Photos) setIsPast60Photos(true);
+                    backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
+                  }
+                } else if (btnStateRef.current === 'hidden') {
+                  btnStateRef.current = 'dim';
+                  if (!isPast60Photos) setIsPast60Photos(true);
+                  backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
+                }
+              } else {
+                if (btnStateRef.current !== 'hidden') {
+                  btnStateRef.current = 'hidden';
+                  if (isPast60Photos) setIsPast60Photos(false);
+                  backToTopOpacity.value = withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) });
+                }
+              }
+
+              const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 4500;
+              if (isNearBottom && hasMorePhotos) {
+                loadMorePhotos();
+              }
+            }}
           >
-            {/* 1. Hero Cover Banner (Exact Featured Story Style) */}
+            {/* ── 1. Hero Cover Banner (Exact Featured Story Style) ── */}
             <View style={styles.heroContainer}>
               {coverUrl ? (
                 <Image
@@ -1216,7 +1228,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
             </View>
 
-            {/* 2. Category Tabs (Dynamic website parity) */}
+            {/* ── 2. Category Tabs (Dynamic website parity) ── */}
             <View style={styles.galleryContainer}>
               <View style={styles.tabsWrapper}>
                 <ScrollView
@@ -1257,26 +1269,42 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                   })}
                 </ScrollView>
               </View>
-            </View>
-          </Animated.View>
 
-          {/* ── 3. Horizontal ViewPager Container (Independent Tab ScrollViews) ── */}
-          <GestureDetector gesture={categorySwipeGesture}>
-            <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
-              <Animated.View
-                style={[
-                  { flexDirection: 'row', width: width * availableTabs.length, flex: 1 },
-                  categoryAnimatedStyle,
-                ]}
-              >
-                {availableTabs.map((tabName) => (
-                  <View key={`tab-grid-${tabName}`} style={{ width, flex: 1 }}>
-                    {renderCategoryGrid(tabName)}
-                  </View>
-                ))}
-              </Animated.View>
+              {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
+              <GestureDetector gesture={categorySwipeGesture}>
+                <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
+                  <Animated.View
+                    style={[
+                      { flexDirection: 'row', width: width * availableTabs.length },
+                      categoryAnimatedStyle,
+                    ]}
+                  >
+                    {availableTabs.map((tabName) => {
+                      const isTabActive = tabName.toUpperCase() === activeTab.toUpperCase();
+                      return (
+                        <View
+                          key={`tab-grid-${tabName}`}
+                          style={[
+                            { width },
+                            !isTabActive && { height: 1, overflow: 'hidden' }
+                          ]}
+                        >
+                          {renderCategoryGrid(tabName)}
+                        </View>
+                      );
+                    })}
+                  </Animated.View>
+                </View>
+              </GestureDetector>
+
+              {/* Loading indicator when fetching next page */}
+              {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#8c867e" />
+                </View>
+              ) : null}
             </View>
-          </GestureDetector>
+          </Animated.ScrollView>
 
           {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
           <Animated.View
@@ -1425,15 +1453,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   galleryContainer: {
-    paddingTop: 14,
-    backgroundColor: '#ffffff',
-    zIndex: 90,
+    paddingTop: 20,
   },
   tabsWrapper: {
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede8',
-    backgroundColor: '#ffffff',
+    marginBottom: 16,
   },
   tabsScrollContent: {
     flexDirection: 'row',
@@ -1464,14 +1490,14 @@ const styles = StyleSheet.create({
   },
   masonryGridContainer: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     width: '100%',
     paddingHorizontal: 8,
   },
   masonryColumn: {
     flex: 1,
     flexDirection: 'column',
-    gap: 8,
+    gap: 6,
   },
   masonryCard: {
     width: '100%',
