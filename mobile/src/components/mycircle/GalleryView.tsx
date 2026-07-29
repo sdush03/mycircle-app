@@ -759,9 +759,24 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     };
   });
 
+  const handleLoadMoreTrigger = useCallback(() => {
+    if (activeTab.toUpperCase() === 'ALL' && hasMorePhotos && !isLoadingMore) {
+      loadMorePhotos();
+    }
+  }, [activeTab, hasMorePhotos, isLoadingMore, loadMorePhotos]);
+
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (e) => {
+      'worklet';
       scrollY.value = e.contentOffset.y;
+
+      const currentY = e.contentOffset.y;
+      const contentHeight = e.contentSize.height;
+      const layoutHeight = e.layoutMeasurement.height;
+
+      if (layoutHeight + currentY >= contentHeight - 4500) {
+        runOnJS(handleLoadMoreTrigger)();
+      }
     },
   });
 
