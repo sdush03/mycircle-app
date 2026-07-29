@@ -186,21 +186,6 @@ function RootLayoutContent() {
   const topInset = insets.top;
   const headerHeight = 52 + topInset;
 
-  // 1. Keep screen solid white matching native splash until fonts & stored auth are initialized (prevents black flicker)
-  if (!isReady || isLoading || !fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: '#ffffff' }} />;
-  }
-
-  // 2. Render LoginView directly when unauthenticated (prevents underlying Home screen from mounting/glimpsing)
-  if (!token) {
-    return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
-  }
-
-  // 3. Enforce mandatory onboarding — catches users with saved sessions who haven't completed profile
-  if (!profile?.phoneNumber || !profile?.hasSelfie) {
-    return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
-  }
-
   const TAB_ORDER: ('index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile')[] = [
     'index',
     'mycircle',
@@ -251,6 +236,21 @@ function RootLayoutContent() {
         runOnJS(handleTabSwipePrev)();
       }
     });
+
+  // 1. Keep screen solid white matching native splash until fonts & stored auth are initialized (prevents black flicker)
+  if (!isReady || isLoading || !fontsLoaded) {
+    return <View style={{ flex: 1, backgroundColor: '#ffffff' }} />;
+  }
+
+  // 2. Render LoginView directly when unauthenticated (prevents underlying Home screen from mounting/glimpsing)
+  if (!token) {
+    return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
+  }
+
+  // 3. Enforce mandatory onboarding — catches users with saved sessions who haven't completed profile
+  if (!profile?.phoneNumber || !profile?.hasSelfie) {
+    return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
+  }
 
   const isHeaderHidden = false;
 
