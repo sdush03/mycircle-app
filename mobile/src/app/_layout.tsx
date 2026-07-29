@@ -83,6 +83,7 @@ function RootLayoutContent() {
     'Futura-Bold': require('../../assets/fonts/Futura-Bold.ttf'),
   });
 
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
   const isCollapsed = useAuthStore((state) => state.isTabBarCollapsed);
   const token = useAuthStore((state) => state.token);
   const profile = useAuthStore((state) => state.profile);
@@ -204,23 +205,25 @@ function RootLayoutContent() {
 
   const handleTabSwipeNext = React.useCallback(() => {
     if (eventSlug) return;
-    const currentIndex = TAB_ORDER.indexOf(currentTab);
-    if (currentIndex >= 0 && currentIndex < TAB_ORDER.length - 1) {
-      const nextTab = TAB_ORDER[currentIndex + 1];
+    if (activeTabIndex < TAB_ORDER.length - 1) {
+      const nextIdx = activeTabIndex + 1;
+      setActiveTabIndex(nextIdx);
+      activeTabSharedIndex.value = nextIdx;
+      tabTranslateX.value = 0;
       Haptics.selectionAsync().catch(() => {});
-      router.replace(TAB_ROUTES[nextTab] as any);
     }
-  }, [currentTab, eventSlug]);
+  }, [activeTabIndex, eventSlug]);
 
   const handleTabSwipePrev = React.useCallback(() => {
     if (eventSlug) return;
-    const currentIndex = TAB_ORDER.indexOf(currentTab);
-    if (currentIndex > 0) {
-      const prevTab = TAB_ORDER[currentIndex - 1];
+    if (activeTabIndex > 0) {
+      const prevIdx = activeTabIndex - 1;
+      setActiveTabIndex(prevIdx);
+      activeTabSharedIndex.value = prevIdx;
+      tabTranslateX.value = 0;
       Haptics.selectionAsync().catch(() => {});
-      router.replace(TAB_ROUTES[prevTab] as any);
     }
-  }, [currentTab, eventSlug]);
+  }, [activeTabIndex, eventSlug]);
 
   const { width } = Dimensions.get('window');
   const tabTranslateX = useSharedValue(0);
@@ -353,13 +356,18 @@ function RootLayoutContent() {
 
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
         <CustomFloatingTabBar
-          activeTab={currentTab}
+          activeTab={TAB_ORDER[activeTabIndex]}
           isCollapsed={isCollapsed}
           bottomInset={insets.bottom}
           profile={profile}
-          onOpenProfile={() => {
-            Haptics.selectionAsync().catch(() => {});
-            router.replace('/profile');
+          onSelectTab={(tabName) => {
+            const newIdx = TAB_ORDER.indexOf(tabName);
+            if (newIdx >= 0 && newIdx !== activeTabIndex) {
+              Haptics.selectionAsync().catch(() => {});
+              setActiveTabIndex(newIdx);
+              tabTranslateX.value = 0;
+              activeTabSharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
+            }
           }}
         />
       </Animated.View>
@@ -372,7 +380,7 @@ interface CustomTabBarProps {
   isCollapsed: boolean;
   bottomInset: number;
   profile: any;
-  onOpenProfile: () => void;
+  onSelectTab: (tabName: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile') => void;
 }
 
 // ── Icon components ────────────────────────────────────────────────────────
@@ -395,7 +403,7 @@ function IconProfile({ active, profile }: { active: boolean; profile: any }) {
 }
 
 // ── Floating tab bar ────────────────────────────────────────────────────────
-function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, onOpenProfile }: CustomTabBarProps) {
+function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, onSelectTab }: CustomTabBarProps) {
   const targetWidth  = isCollapsed ? 180 : 310;
   const targetHeight = isCollapsed ? 48  : 64;
   const widthVal  = useSharedValue(310);
@@ -418,17 +426,7 @@ function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, on
   const handleTabPress = (tabName: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile') => {
     Haptics.selectionAsync().catch(() => {});
     setTabBarCollapsed(false);
-    if (tabName === 'index') {
-      router.replace('/');
-    } else if (tabName === 'mycircle') {
-      router.replace('/mycircle');
-    } else if (tabName === 'moodboard') {
-      router.replace('/moodboard');
-    } else if (tabName === 'inspirations') {
-      router.replace('/inspirations');
-    } else if (tabName === 'profile') {
-      router.replace('/profile');
-    }
+    onSelectTab(tabName);
   };
 
   const MoodboardMasonryIcon = ({ active, size = 22, color }: { active: boolean; size?: number; color: string }) => {
