@@ -1038,79 +1038,72 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       );
     }
 
-    const rows: { left?: Photo; right?: Photo; rIdx: number }[] = [];
-    for (let i = 0; i < tabList.length; i += 2) {
-      rows.push({ left: tabList[i], right: tabList[i + 1], rIdx: i / 2 });
-    }
-
-    const FlashListAny = FlashList as any;
+    const col0: Photo[] = [];
+    const col1: Photo[] = [];
+    tabList.forEach((p, idx) => {
+      if (idx % 2 === 0) col0.push(p);
+      else col1.push(p);
+    });
 
     return (
-      <View style={{ width, flex: 1 }}>
-        <FlashListAny
-          ref={(r: any) => {
-            if (r) tabScrollRefs.current[norm] = r;
-          }}
-          data={rows}
-          estimatedItemSize={220}
-          renderItem={({ item }: { item: { left?: Photo; right?: Photo; rIdx: number } }) => {
-            const leftImg = item.left;
-            const rightImg = item.right;
-            const rIdx = item.rIdx;
+      <Animated.ScrollView
+        ref={(r) => {
+          if (r) tabScrollRefs.current[norm] = r;
+        }}
+        style={{ width, flex: 1 }}
+        contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingHorizontal: 5, paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={isCurrentActive ? (e: any) => {
+          const currentY = e.nativeEvent.contentOffset.y;
+          scrollY.value = currentY;
+          const contentHeight = e.nativeEvent.contentSize.height;
+          const layoutHeight = e.nativeEvent.layoutMeasurement.height;
 
-            return (
-              <View style={{ flexDirection: 'row', width: '100%', marginBottom: 6 }}>
-                <View style={{ flex: 1, paddingRight: 3 }}>
-                  {leftImg ? (
-                    <MasonryCard
-                      img={leftImg}
-                      index={leftImg.globalIndex ?? rIdx * 2}
-                      isColumn0={true}
-                      onSelect={(bounds) => openLightbox(leftImg, bounds)}
-                      onRegisterRef={(id, ref) => {
-                        if (id) cardRefs.current[id] = ref;
-                        const refId = leftImg.id ? String(leftImg.id) : (leftImg.r2Url || `photo-${rIdx * 2}`);
-                        if (refId) cardRefs.current[refId] = ref;
-                      }}
-                      onToggleLike={handleToggleLike}
-                    />
-                  ) : null}
-                </View>
-                <View style={{ flex: 1, paddingLeft: 3 }}>
-                  {rightImg ? (
-                    <MasonryCard
-                      img={rightImg}
-                      index={rightImg.globalIndex ?? rIdx * 2 + 1}
-                      isColumn0={false}
-                      onSelect={(bounds) => openLightbox(rightImg, bounds)}
-                      onRegisterRef={(id, ref) => {
-                        if (id) cardRefs.current[id] = ref;
-                        const refId = rightImg.id ? String(rightImg.id) : (rightImg.r2Url || `photo-${rIdx * 2 + 1}`);
-                        if (refId) cardRefs.current[refId] = ref;
-                      }}
-                      onToggleLike={handleToggleLike}
-                    />
-                  ) : null}
-                </View>
+          if (layoutHeight + currentY >= contentHeight - 4500) {
+            handleLoadMoreTrigger();
+          }
+        } : undefined}
+      >
+        <View style={styles.masonryGridContainer}>
+          <View style={styles.masonryColumn}>
+            {col0.map((img, idx) => (
+              <View key={img.id ? `c0-${norm}-${img.id}` : `c0-${norm}-${idx}`} style={{ marginBottom: 6 }}>
+                <MasonryCard
+                  img={img}
+                  index={img.globalIndex ?? idx * 2}
+                  isColumn0={true}
+                  onSelect={(bounds) => openLightbox(img, bounds)}
+                  onRegisterRef={(id, ref) => {
+                    if (id) cardRefs.current[id] = ref;
+                    const refId = img.id ? String(img.id) : (img.r2Url || `photo-${idx * 2}`);
+                    if (refId) cardRefs.current[refId] = ref;
+                  }}
+                  onToggleLike={handleToggleLike}
+                />
               </View>
-            );
-          }}
-          renderScrollComponent={Animated.ScrollView}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScroll={isCurrentActive ? (e: any) => {
-            const currentY = e.nativeEvent.contentOffset.y;
-            scrollY.value = currentY;
-            const contentHeight = e.nativeEvent.contentSize.height;
-            const layoutHeight = e.nativeEvent.layoutMeasurement.height;
-
-            if (layoutHeight + currentY >= contentHeight - 4500) {
-              handleLoadMoreTrigger();
-            }
-          } : undefined}
-          contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingHorizontal: 5, paddingBottom: 40 }}
-        />
-      </View>
+            ))}
+          </View>
+          <View style={styles.masonryColumn}>
+            {col1.map((img, idx) => (
+              <View key={img.id ? `c1-${norm}-${img.id}` : `c1-${norm}-${idx}`} style={{ marginBottom: 6 }}>
+                <MasonryCard
+                  img={img}
+                  index={img.globalIndex ?? idx * 2 + 1}
+                  isColumn0={false}
+                  onSelect={(bounds) => openLightbox(img, bounds)}
+                  onRegisterRef={(id, ref) => {
+                    if (id) cardRefs.current[id] = ref;
+                    const refId = img.id ? String(img.id) : (img.r2Url || `photo-${idx * 2 + 1}`);
+                    if (refId) cardRefs.current[refId] = ref;
+                  }}
+                  onToggleLike={handleToggleLike}
+                />
+              </View>
+            ))}
+          </View>
+        </View>
+      </Animated.ScrollView>
     );
   };
 
