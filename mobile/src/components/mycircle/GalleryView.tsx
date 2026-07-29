@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -596,6 +596,19 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   }, [mainScrollRef]);
 
+  const activeCategorySharedIndex = useSharedValue(0);
+  const categoryTranslateX = useSharedValue(0);
+
+  const currentCategoryIndex = useMemo(() => {
+    const idx = availableTabs.findIndex((t) => t.toUpperCase() === activeTab.toUpperCase());
+    return idx >= 0 ? idx : 0;
+  }, [availableTabs, activeTab]);
+
+  useEffect(() => {
+    activeCategorySharedIndex.value = currentCategoryIndex;
+    categoryTranslateX.value = 0;
+  }, [currentCategoryIndex]);
+
   const changeTabWithScrollMemory = useCallback((newTab: string) => {
     const currentNorm = activeTab.toUpperCase();
     const newNorm = newTab.toUpperCase();
@@ -610,7 +623,14 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     // 3. Switch tab
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
-  }, [activeTab, fetchTabPhotos]);
+
+    // 4. Atomic shared index update
+    const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
+    if (newIdx >= 0) {
+      activeCategorySharedIndex.value = newIdx;
+      categoryTranslateX.value = 0;
+    }
+  }, [activeTab, availableTabs, fetchTabPhotos]);
 
   // Per-tab scroll restoration effect: triggers whenever activeTab or tab photo loading completes
   useEffect(() => {
@@ -652,9 +672,9 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   }, [availableTabs, activeTab, changeTabWithScrollMemory]);
 
-  // Left-Edge Pan Swipe Back + Mid-Screen Horizontal Category Tab Swipe
+  // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX([-15, 15])
+    .activeOffsetX([10, 10])
     .failOffsetY([-25, 25])
     .onBegin((e) => {
       'worklet';
@@ -682,16 +702,56 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
         }
         touchStartedOnLeftEdge.value = false;
-        return;
-      }
-
-      // Mid-Screen Horizontal Swipes: Switch Category Tabs
-      if (e.translationX < -70 || e.velocityX < -400) {
-        runOnJS(handleNextCategoryTab)();
-      } else if (e.translationX > 70 || e.velocityX > 400) {
-        runOnJS(handlePrevCategoryTab)();
       }
     });
+
+  // Mid-Screen Horizontal Category Tab Swipe Gesture
+  const categorySwipeGesture = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-18, 18])
+    .onUpdate((e) => {
+      'worklet';
+      if (isLightboxOpen.value) return;
+      if (touchStartedOnLeftEdge.value) return;
+
+      const currentIndex = activeCategorySharedIndex.value;
+      const isLeftSwipe = e.translationX < 0;
+      const isRightSwipe = e.translationX > 0;
+
+      // Dampened boundary resistance on ends of availableTabs list
+      if ((isRightSwipe && currentIndex === 0) || (isLeftSwipe && currentIndex === availableTabs.length - 1)) {
+        categoryTranslateX.value = e.translationX * 0.25;
+      } else {
+        categoryTranslateX.value = e.translationX;
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      if (isLightboxOpen.value) return;
+      if (touchStartedOnLeftEdge.value) return;
+
+      const currentIndex = activeCategorySharedIndex.value;
+      const isLeftSwipe = e.translationX < -45 || e.velocityX < -250;
+      const isRightSwipe = e.translationX > 45 || e.velocityX > 250;
+
+      if (isLeftSwipe && currentIndex < availableTabs.length - 1) {
+        categoryTranslateX.value = withTiming(-width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
+          if (finished) {
+            runOnJS(handleNextCategoryTab)();
+          }
+        });
+      } else if (isRightSwipe && currentIndex > 0) {
+        categoryTranslateX.value = withTiming(width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
+          if (finished) {
+            runOnJS(handlePrevCategoryTab)();
+          }
+        });
+      } else {
+        categoryTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
+      }
+    });
+
+  const combinedGesture = Gesture.Simultaneous(edgeSwipeGesture, categorySwipeGesture);
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
@@ -944,7 +1004,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       statusBarTranslucent={true}
     >
       <GestureHandlerRootView style={styles.container}>
-        <GestureDetector gesture={edgeSwipeGesture}>
+        <GestureDetector gesture={combinedGesture}>
           <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
