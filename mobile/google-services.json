@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "1051090030242",
+    "project_id": "mistyvisuals-mycircle-auth",
+    "storage_bucket": "mistyvisuals-mycircle-auth.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1051090030242:android:54b60c3967b3117bcb91fb",
+        "android_client_info": {
+          "package_name": "com.mistyvisuals.mycircle"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1051090030242-gt0sabaj6d27ksjbqskash6etga6p9vf.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mistyvisuals.mycircle",
+            "certificate_hash": "ad89203ef526f832fa1cd2ea1cc0fc97e8114e25"
+          }
+        },
+        {
+          "client_id": "1051090030242-hlqbvt1kceta8t2lc2vujtqom78dmgfq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mistyvisuals.mycircle",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "1051090030242-du725l33veu6vl637lo1jpgpka1ilujj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWlx1fyT3NXRGScRIw7tKSqlO475td6QA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1051090030242-du725l33veu6vl637lo1jpgpka1ilujj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

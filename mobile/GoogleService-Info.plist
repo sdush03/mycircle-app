@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>1051090030242-gt0sabaj6d27ksjbqskash6etga6p9vf.apps.googleusercontent.com</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDgheOhRXoj_YmgldHSVauhjvxVs7U66FM</string>
+	<key>GCM_SENDER_ID</key>
+	<string>1051090030242</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.mistyvisuals.mycircle</string>
+	<key>PROJECT_ID</key>
+	<string>mistyvisuals-mycircle-auth</string>
+	<key>STORAGE_BUCKET</key>
+	<string>mistyvisuals-mycircle-auth.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:1051090030242:ios:405449cef2928e0ccb91fb</string>
+</dict>
+</plist>

@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Expo & Build artifacts
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+*.aab
+*.apk
+*.ipa
+
+# OS & Editor files
+.DS_Store
+.vscode/
+.claude/
+*.pem
+
+# Local Environment files
+.env*.local
