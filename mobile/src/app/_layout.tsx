@@ -237,7 +237,7 @@ function RootLayoutContent() {
       if (eventSlug) return;
       if (e.x <= 40) return;
 
-      const currentIndex = TAB_ORDER.indexOf(currentTab);
+      const currentIndex = activeTabSharedIndex.value;
       const isLeftSwipe = e.translationX < 0;
       const isRightSwipe = e.translationX > 0;
 
@@ -252,7 +252,7 @@ function RootLayoutContent() {
       'worklet';
       if (eventSlug) return;
 
-      const currentIndex = TAB_ORDER.indexOf(currentTab);
+      const currentIndex = activeTabSharedIndex.value;
       const isLeftSwipe = e.translationX < -45 || e.velocityX < -250;
       const isRightSwipe = e.translationX > 45 || e.velocityX > 250;
 
