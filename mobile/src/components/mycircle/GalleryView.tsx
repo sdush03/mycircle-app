@@ -813,13 +813,18 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   };
 
-  // Header Cover Metadata
+  // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
+  const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
+
   const coverUrl =
-    eventCoverUrl ||
     eventDetails?.coverPhotoMobileUrl ||
+    eventDetails?.cover_photo_mobile_url ||
+    eventDetails?.cover_photo_mobile ||
+    eventCoverUrl ||
     eventDetails?.coverPhotoUrl ||
-    (activeList[0]?.r2Url) ||
-    null;
+    eventDetails?.cover_photo_url ||
+    eventDetails?.coverPhoto ||
+    firstPhotoUrl;
 
   const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
     .replace(/'s\s+Wedding/gi, '')
