@@ -16,10 +16,10 @@ import { useAuthStore } from '../store/authStore';
 import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
 import JoinEventView from '../components/mycircle/JoinEventView';
-import { ProfileView } from '../components/profile/ProfileView';
 import HomeScreen from './index';
 import InspirationsScreen from './inspirations';
 import MoodboardScreen from './moodboard';
+import ProfileScreen from './profile';
 import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS } from '../lib/tabEvents';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -83,8 +83,6 @@ function RootLayoutContent() {
     'Futura-Bold': require('../../assets/fonts/Futura-Bold.ttf'),
   });
 
-  const [showProfileModal, setShowProfileModal] = useState(false);
-
   const isCollapsed = useAuthStore((state) => state.isTabBarCollapsed);
   const token = useAuthStore((state) => state.token);
   const profile = useAuthStore((state) => state.profile);
@@ -124,15 +122,11 @@ function RootLayoutContent() {
   // Handle Android back button & swipe back gestures globally
   useEffect(() => {
     const onBackPress = () => {
-      if (showProfileModal) {
-        setShowProfileModal(false);
-        return true;
-      }
       if (!token) {
         BackHandler.exitApp();
         return true;
       }
-      if (segments[0] === 'mycircle') {
+      if (segments[0] === 'mycircle' || segments[0] === 'profile' || segments[0] === 'inspirations' || segments[0] === 'moodboard') {
         router.replace('/');
         return true;
       }
@@ -141,7 +135,7 @@ function RootLayoutContent() {
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
-  }, [showProfileModal, token, segments]);
+  }, [token, segments]);
 
   // Fetch selfie once per session when authenticated.
   // Uses a ref flag so it never reruns due to profile state changes.
@@ -209,24 +203,24 @@ function RootLayoutContent() {
   };
 
   const handleTabSwipeNext = React.useCallback(() => {
-    if (eventSlug || showProfileModal) return;
+    if (eventSlug) return;
     const currentIndex = TAB_ORDER.indexOf(currentTab);
     if (currentIndex >= 0 && currentIndex < TAB_ORDER.length - 1) {
       const nextTab = TAB_ORDER[currentIndex + 1];
       Haptics.selectionAsync().catch(() => {});
       router.replace(TAB_ROUTES[nextTab] as any);
     }
-  }, [currentTab, eventSlug, showProfileModal]);
+  }, [currentTab, eventSlug]);
 
   const handleTabSwipePrev = React.useCallback(() => {
-    if (eventSlug || showProfileModal) return;
+    if (eventSlug) return;
     const currentIndex = TAB_ORDER.indexOf(currentTab);
     if (currentIndex > 0) {
       const prevTab = TAB_ORDER[currentIndex - 1];
       Haptics.selectionAsync().catch(() => {});
       router.replace(TAB_ROUTES[prevTab] as any);
     }
-  }, [currentTab, eventSlug, showProfileModal]);
+  }, [currentTab, eventSlug]);
 
   const { width } = Dimensions.get('window');
   const tabTranslateX = useSharedValue(0);
@@ -351,7 +345,7 @@ function RootLayoutContent() {
                 <MoodboardScreen />
               </View>
               <View style={{ width, flex: 1 }}>
-                <ProfileView visible={true} onClose={() => {}} profile={profile} onLogout={logout} />
+                <ProfileScreen />
               </View>
             </Animated.View>
           </View>
@@ -363,17 +357,9 @@ function RootLayoutContent() {
           isCollapsed={isCollapsed}
           bottomInset={insets.bottom}
           profile={profile}
-          onOpenProfile={() => setShowProfileModal(true)}
-        />
-
-        {/* ── Profile & Moodboard Saves Modal ── */}
-        <ProfileView
-          visible={showProfileModal}
-          onClose={() => setShowProfileModal(false)}
-          profile={profile}
-          onLogout={async () => {
-            setShowProfileModal(false);
-            await logout();
+          onOpenProfile={() => {
+            Haptics.selectionAsync().catch(() => {});
+            router.replace('/profile');
           }}
         />
       </Animated.View>
