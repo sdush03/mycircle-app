@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing, useAnimatedScrollHandler } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
@@ -752,10 +752,17 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const totalHeaderHeight = heroHeight + categoryTabsHeight;
 
   const headerAnimatedStyle = useAnimatedStyle(() => {
-    const translateY = Math.max(-heroHeight, -scrollY.value);
+    const maxScrollUp = Math.max(0, heroHeight - (insets.top + 50));
+    const translateY = Math.max(-maxScrollUp, -scrollY.value);
     return {
       transform: [{ translateY }],
     };
+  });
+
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
   });
 
   const categoryAnimatedStyle = useAnimatedStyle(() => ({
@@ -1000,28 +1007,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
         showsVerticalScrollIndicator={false}
         bounces={true}
         scrollEventThrottle={16}
-        onScroll={(e) => {
-          if (isCurrentActive) {
-            const currentY = e.nativeEvent.contentOffset.y;
-            scrollY.value = currentY;
-            if (!isTabSwitchingRef.current) {
-              currentYRef.current = currentY;
-            }
-            const past60 = currentY > 4200;
-            if (past60) {
-              if (!isPast60Photos) setIsPast60Photos(true);
-              backToTopOpacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
-            } else {
-              if (isPast60Photos) setIsPast60Photos(false);
-              backToTopOpacity.value = withTiming(0, { duration: 250, easing: Easing.in(Easing.quad) });
-            }
-
-            const isNearBottom = e.nativeEvent.layoutMeasurement.height + currentY >= e.nativeEvent.contentSize.height - 4500;
-            if (isNearBottom && hasMorePhotos && norm === 'ALL') {
-              loadMorePhotos();
-            }
-          }
-        }}
+        onScroll={isCurrentActive ? scrollHandler : undefined}
       >
         {isLoading || (isCurrentActive && isTabLoading) ? (
           <View style={styles.masonryGridContainer}>
