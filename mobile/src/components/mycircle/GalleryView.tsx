@@ -81,7 +81,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const lastScrollYRef = useRef<number>(0);
   const btnStateRef = useRef<'hidden' | 'dim' | 'bright'>('hidden');
 
-  const screenSwipeX = useSharedValue(0);
+  const screenSwipeX = useSharedValue(width);
+  const isClosingRef = useRef(false);
   const touchStartedOnLeftEdge = useSharedValue(false);
   const isLightboxOpen = useSharedValue(false);
   const backToTopOpacity = useSharedValue(0);
@@ -136,6 +137,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   useEffect(() => {
     if (eventSlug) {
+      isClosingRef.current = false;
       screenSwipeX.value = width;
       screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
     }
@@ -146,6 +148,9 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       setActiveImageIndex(null);
       return;
     }
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
     screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
       'worklet';
       if (finished) {
