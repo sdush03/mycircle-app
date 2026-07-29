@@ -1259,18 +1259,20 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
               {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
               <GestureDetector gesture={categorySwipeGesture}>
-                <Animated.View
-                  style={[
-                    { flexDirection: 'row', width: width * availableTabs.length, flex: 1 },
-                    categoryAnimatedStyle,
-                  ]}
-                >
-                  {availableTabs.map((tabName) => (
-                    <View key={`tab-grid-${tabName}`} style={{ width, flex: 1 }}>
-                      {renderCategoryGrid(tabName)}
-                    </View>
-                  ))}
-                </Animated.View>
+                <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
+                  <Animated.View
+                    style={[
+                      { flexDirection: 'row', width: width * availableTabs.length, flex: 1 },
+                      categoryAnimatedStyle,
+                    ]}
+                  >
+                    {availableTabs.map((tabName) => (
+                      <View key={`tab-grid-${tabName}`} style={{ width, flex: 1 }}>
+                        {renderCategoryGrid(tabName)}
+                      </View>
+                    ))}
+                  </Animated.View>
+                </View>
               </GestureDetector>
 
               {/* Loading indicator when fetching next page */}
