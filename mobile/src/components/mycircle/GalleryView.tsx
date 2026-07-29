@@ -708,7 +708,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   // Mid-Screen Horizontal Category Tab Swipe Gesture
   const categorySwipeGesture = Gesture.Pan()
     .activeOffsetX([-20, 20])
-    .failOffsetY([-18, 18])
+    .failOffsetY([-10, 10])
     .onUpdate((e) => {
       'worklet';
       if (isLightboxOpen.value) return;
@@ -750,6 +750,10 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
         categoryTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
       }
     });
+
+  const categoryAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: categoryTranslateX.value }],
+  }));
 
   const combinedGesture = Gesture.Simultaneous(edgeSwipeGesture, categorySwipeGesture);
 
@@ -1153,77 +1157,81 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
 
               {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
-              {isLoading || isTabLoading ? (
-                <View style={styles.masonryGridContainer}>
-                  <View style={styles.masonryColumn}>
-                    {[0.75, 0.67, 0.8].map((aspect, i) => (
-                      <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                    ))}
+              <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
+                {isLoading || isTabLoading ? (
+                  <View style={styles.masonryGridContainer}>
+                    <View style={styles.masonryColumn}>
+                      {[0.75, 0.67, 0.8].map((aspect, i) => (
+                        <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                      ))}
+                    </View>
+                    <View style={styles.masonryColumn}>
+                      {[0.67, 0.8, 0.75].map((aspect, i) => (
+                        <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+                      ))}
+                    </View>
                   </View>
-                  <View style={styles.masonryColumn}>
-                    {[0.67, 0.8, 0.75].map((aspect, i) => (
-                      <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                    ))}
+                ) : activeList.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>
+                      {activeTab.toUpperCase() === 'MY PHOTOS'
+                        ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+                        : activeTab.toUpperCase() === 'MY FAVOURITES'
+                        ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+                        : `No photos found in ${activeTab}.`}
+                    </Text>
                   </View>
-                </View>
-              ) : activeList.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>
-                    {activeTab.toUpperCase() === 'MY PHOTOS'
-                      ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-                      : activeTab.toUpperCase() === 'MY FAVOURITES'
-                      ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-                      : `No photos found in ${activeTab}.`}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.masonryGridContainer}>
-                  <View style={styles.masonryColumn}>
-                    {interleavedRows.map((row, rIdx) => {
-                      if (!row.left) return null;
-                      const img = row.left;
-                      const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
-                      const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-                      return (
-                        <MasonryCard
-                          key={cardId}
-                          img={img}
-                          index={img.globalIndex ?? rIdx * 2}
-                          isColumn0={true}
-                          onSelect={(bounds) => openLightbox(img, bounds)}
-                          onRegisterRef={(id, ref) => {
-                            if (id) cardRefs.current[id] = ref;
-                            if (refId) cardRefs.current[refId] = ref;
-                          }}
-                          onToggleLike={handleToggleLike}
-                        />
-                      );
-                    })}
+                ) : (
+                  <View style={styles.masonryGridContainer}>
+                    <View style={styles.masonryColumn}>
+                      {interleavedRows.map((row, rIdx) => {
+                        if (!row.left) return null;
+                        const img = row.left;
+                        const cardId = img.id ? `c0-${img.id}-${rIdx}` : (img.r2Url ? `c0-${img.r2Url}-${rIdx}` : `c0-${rIdx}`);
+                        const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+                        return (
+                          <MasonryCard
+                            key={cardId}
+                            img={img}
+                            index={img.globalIndex ?? rIdx * 2}
+                            isColumn0={true}
+                            onSelect={(bounds) => openLightbox(img, bounds)}
+                            onRegisterRef={(id, ref) => {
+                              if (id) cardRefs.current[id] = ref;
+                              if (refId) cardRefs.current[refId] = ref;
+                            }}
+                            onToggleLike={handleToggleLike}
+                          />
+                        );
+                      })}
+                    </View>
+                    <View style={styles.masonryColumn}>
+                      {interleavedRows.map((row, rIdx) => {
+                        if (!row.right) return null;
+                        const img = row.right;
+                        const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
+                        const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+                        return (
+                          <MasonryCard
+                            key={cardId}
+                            img={img}
+                            index={img.globalIndex ?? rIdx * 2 + 1}
+                            isColumn0={false}
+                            onSelect={(bounds) => openLightbox(img, bounds)}
+                            onRegisterRef={(id, ref) => {
+                              if (id) cardRefs.current[id] = ref;
+                              if (refId) cardRefs.current[refId] = ref;
+                            }}
+                            onToggleLike={handleToggleLike}
+                          />
+                        );
+                      })}
+                    </View>
                   </View>
-                  <View style={styles.masonryColumn}>
-                    {interleavedRows.map((row, rIdx) => {
-                      if (!row.right) return null;
-                      const img = row.right;
-                      const cardId = img.id ? `c1-${img.id}-${rIdx}` : (img.r2Url ? `c1-${img.r2Url}-${rIdx}` : `c1-${rIdx}`);
-                      const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-                      return (
-                        <MasonryCard
-                          key={cardId}
-                          img={img}
-                          index={img.globalIndex ?? rIdx * 2 + 1}
-                          isColumn0={false}
-                          onSelect={(bounds) => openLightbox(img, bounds)}
-                          onRegisterRef={(id, ref) => {
-                            if (id) cardRefs.current[id] = ref;
-                            if (refId) cardRefs.current[refId] = ref;
-                          }}
-                          onToggleLike={handleToggleLike}
-                        />
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
+                )}
+              </Animated.View>
 
               {/* Loading indicator when fetching next page */}
               {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
