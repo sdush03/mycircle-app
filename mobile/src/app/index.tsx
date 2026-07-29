@@ -818,7 +818,7 @@ export default function HomeScreen() {
               {events.slice(0, 3).map((ev) => {
                 const today = new Date();
                 const statusMsg = getMyCircleStatusCopy(ev, today);
-                const coverUrl = ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || ev.coverPhotoUrl || ev.coverPhotoSquareUrl || null;
+                const coverUrl = ev.coverPhotoUrl || ev.cover_photo_url || ev.coverPhotoSquareUrl || ev.coverPhotoMobileUrl || ev.cover_photo_mobile_url || null;
 
                 return (
                   <Pressable 
