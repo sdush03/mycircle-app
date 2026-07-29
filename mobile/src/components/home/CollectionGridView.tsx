@@ -74,10 +74,6 @@ export default function CollectionGridView({
   const [activeStoryModalItem, setActiveStoryModalItem] = useState<any | null>(null);
   const isClickBusyRef = useRef(false);
   const storyDetailsCacheRef = useRef<Record<string, any>>({});
-  const gridScrollRef = useRef<ScrollView>(null);
-  const categoryScrollOffsetsRef = useRef<Record<string, number>>({});
-  const currentScrollYRef = useRef<number>(0);
-  const isCategorySwitchingRef = useRef<boolean>(false);
 
   // Background pre-fetch story details into memory cache
   React.useEffect(() => {
@@ -308,23 +304,8 @@ export default function CollectionGridView({
     opacity: categoryTransitionOpacity.value,
   }));
 
-  const scrollToY = React.useCallback((targetY: number) => {
-    try {
-      if (gridScrollRef.current) {
-        gridScrollRef.current.scrollTo({ y: targetY, animated: false });
-      }
-    } catch (_e) {}
-  }, []);
-
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
-
-    // 1. Lock onScroll during category transition
-    isCategorySwitchingRef.current = true;
-
-    // 2. Save scroll position of current category
-    categoryScrollOffsetsRef.current[selectedCategory] = currentScrollYRef.current;
-
     Haptics.selectionAsync().catch(() => {});
     isClickBusyRef.current = true;
     setTimeout(() => { isClickBusyRef.current = false; }, 400);
@@ -332,52 +313,12 @@ export default function CollectionGridView({
     categoryTransitionTranslateX.value = width * 0.35;
     categoryTransitionOpacity.value = 0.5;
     setSelectedCategory(catName);
-
     categoryTransitionTranslateX.value = withTiming(0, {
       duration: 250,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     });
     categoryTransitionOpacity.value = withTiming(1, { duration: 200 });
-  }, [selectedCategory, categoryTransitionTranslateX, categoryTransitionOpacity]);
-
-  // Per-category scroll restoration effect: triggers whenever selectedCategory or modal open state updates
-  React.useEffect(() => {
-    if (!isOpen) return;
-
-    const targetY = categoryScrollOffsetsRef.current[selectedCategory] ?? 0;
-    currentScrollYRef.current = targetY;
-
-    scrollToY(targetY);
-    requestAnimationFrame(() => {
-      scrollToY(targetY);
-      setTimeout(() => {
-        scrollToY(targetY);
-        isCategorySwitchingRef.current = false;
-      }, 40);
-    });
-  }, [selectedCategory, isOpen, scrollToY]);
-
-  const handleNextCategory = React.useCallback(() => {
-    if (activeStoryModalItem !== null) return;
-    const currentIndex = categories.findIndex(
-      (c) => c.toLowerCase() === selectedCategory.toLowerCase()
-    );
-    if (currentIndex >= 0 && currentIndex < categories.length - 1) {
-      const nextCategory = categories[currentIndex + 1];
-      selectCategoryWithPush(nextCategory);
-    }
-  }, [categories, selectedCategory, activeStoryModalItem, selectCategoryWithPush]);
-
-  const handlePrevCategory = React.useCallback(() => {
-    if (activeStoryModalItem !== null) return;
-    const currentIndex = categories.findIndex(
-      (c) => c.toLowerCase() === selectedCategory.toLowerCase()
-    );
-    if (currentIndex > 0) {
-      const prevCategory = categories[currentIndex - 1];
-      selectCategoryWithPush(prevCategory);
-    }
-  }, [categories, selectedCategory, activeStoryModalItem, selectCategoryWithPush]);
+  }, [categoryTransitionTranslateX, categoryTransitionOpacity]);
 
   const popToAllCategories = React.useCallback(() => {
     categoryTransitionTranslateX.value = withTiming(
@@ -423,7 +364,7 @@ export default function CollectionGridView({
 
   const isCategoryViewActive = selectedCategory !== 'All' && !isDirectFromHomeRef.current;
 
-  // iOS native-feel Edge Swipe Back + Mid-Screen Horizontal Category Tab Swipe
+  // iOS native-feel Edge Swipe Back gesture (swipe right from left 65px edge)
   const edgeSwipeGesture = Gesture.Pan()
     .onBegin((e) => {
       'worklet';
@@ -434,7 +375,7 @@ export default function CollectionGridView({
         isSwipeFromEdge.value = false;
       }
     })
-    .activeOffsetX([-12, 12])
+    .activeOffsetX(5)
     .failOffsetY([-20, 20])
     .onUpdate((e) => {
       'worklet';
@@ -458,14 +399,6 @@ export default function CollectionGridView({
             translateX.value = withTiming(0, { duration: 180, easing: Easing.out(Easing.quad) });
           }
         }
-        return;
-      }
-
-      // Mid-Screen Horizontal Swipes: Switch Category Tabs
-      if (e.translationX < -70 || e.velocityX < -400) {
-        runOnJS(handleNextCategory)();
-      } else if (e.translationX > 70 || e.velocityX > 400) {
-        runOnJS(handlePrevCategory)();
       }
     });
 
@@ -538,17 +471,7 @@ export default function CollectionGridView({
 
             {/* Main Content Area (Native iOS Push/Pop Animation) */}
             <Animated.View style={[{ flex: 1 }, categoryAnimatedStyle]}>
-              <ScrollView
-                ref={gridScrollRef}
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-                scrollEventThrottle={16}
-                onScroll={(e) => {
-                  if (!isCategorySwitchingRef.current) {
-                    currentScrollYRef.current = e.nativeEvent.contentOffset.y;
-                  }
-                }}
-              >
+              <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 {/* Centered Editorial Title & Description Banner */}
                 <View style={styles.titleSection}>
                   <Text style={styles.bannerTitle}>{currentDisplayTitle}</Text>
