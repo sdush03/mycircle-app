@@ -754,6 +754,18 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       }
     });
 
+  const scrollY = useSharedValue(0);
+  const heroHeight = Math.round(screenHeight * 0.70);
+  const categoryTabsHeight = 54;
+  const totalHeaderHeight = heroHeight + categoryTabsHeight;
+
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    const translateY = Math.max(-heroHeight, -scrollY.value);
+    return {
+      transform: [{ translateY }],
+    };
+  });
+
   const categoryAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: -activeCategorySharedIndex.value * width + categoryTranslateX.value }],
   }));
@@ -983,7 +995,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const isWithinWindow = tabIdx >= 0 && Math.abs(tabIdx - (activeIdx >= 0 ? activeIdx : 0)) <= 1;
 
     if (!isWithinWindow) {
-      return <View style={{ flex: 1, minHeight: 400 }} />;
+      return <View style={{ flex: 1, width, minHeight: screenHeight }} />;
     }
 
     let tabList: Photo[] = [];
@@ -999,91 +1011,115 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     const isCurrentActive = norm === activeTab.toUpperCase();
 
-    if (isLoading || (isCurrentActive && isTabLoading)) {
-      return (
-        <View style={styles.masonryGridContainer}>
-          <View style={styles.masonryColumn}>
-            {[0.75, 0.67, 0.8].map((aspect, i) => (
-              <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-          <View style={styles.masonryColumn}>
-            {[0.67, 0.8, 0.75].map((aspect, i) => (
-              <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-        </View>
-      );
-    }
-
-    if (tabList.length === 0) {
-      return (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            {norm === 'MY PHOTOS'
-              ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-              : norm === 'MY FAVOURITES'
-              ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-              : `No photos found in ${tabName}.`}
-          </Text>
-        </View>
-      );
-    }
-
     const rows: { left?: Photo; right?: Photo }[] = [];
     for (let i = 0; i < tabList.length; i += 2) {
       rows.push({ left: tabList[i], right: tabList[i + 1] });
     }
 
     return (
-      <View style={styles.masonryGridContainer}>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.left) return null;
-            const img = row.left;
-            const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+      <Animated.ScrollView
+        style={{ width, flex: 1 }}
+        contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+        bounces={true}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          if (isCurrentActive) {
+            const currentY = e.nativeEvent.contentOffset.y;
+            scrollY.value = currentY;
+            if (!isTabSwitchingRef.current) {
+              currentYRef.current = currentY;
+            }
+            const past60 = currentY > 4200;
+            if (past60) {
+              if (!isPast60Photos) setIsPast60Photos(true);
+              backToTopOpacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
+            } else {
+              if (isPast60Photos) setIsPast60Photos(false);
+              backToTopOpacity.value = withTiming(0, { duration: 250, easing: Easing.in(Easing.quad) });
+            }
 
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2}
-                isColumn0={true}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.right) return null;
-            const img = row.right;
-            const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+            const isNearBottom = e.nativeEvent.layoutMeasurement.height + currentY >= e.nativeEvent.contentSize.height - 4500;
+            if (isNearBottom && hasMorePhotos && norm === 'ALL') {
+              loadMorePhotos();
+            }
+          }
+        }}
+      >
+        {isLoading || (isCurrentActive && isTabLoading) ? (
+          <View style={styles.masonryGridContainer}>
+            <View style={styles.masonryColumn}>
+              {[0.75, 0.67, 0.8].map((aspect, i) => (
+                <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+              ))}
+            </View>
+            <View style={styles.masonryColumn}>
+              {[0.67, 0.8, 0.75].map((aspect, i) => (
+                <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+              ))}
+            </View>
+          </View>
+        ) : tabList.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {norm === 'MY PHOTOS'
+                ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+                : norm === 'MY FAVOURITES'
+                ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+                : `No photos found in ${tabName}.`}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.masonryGridContainer}>
+            <View style={styles.masonryColumn}>
+              {rows.map((row, rIdx) => {
+                if (!row.left) return null;
+                const img = row.left;
+                const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
+                const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
 
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2 + 1}
-                isColumn0={false}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
-      </View>
+                return (
+                  <MasonryCard
+                    key={cardId}
+                    img={img}
+                    index={img.globalIndex ?? rIdx * 2}
+                    isColumn0={true}
+                    onSelect={(bounds) => openLightbox(img, bounds)}
+                    onRegisterRef={(id, ref) => {
+                      if (id) cardRefs.current[id] = ref;
+                      if (refId) cardRefs.current[refId] = ref;
+                    }}
+                    onToggleLike={handleToggleLike}
+                  />
+                );
+              })}
+            </View>
+            <View style={styles.masonryColumn}>
+              {rows.map((row, rIdx) => {
+                if (!row.right) return null;
+                const img = row.right;
+                const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
+                const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+
+                return (
+                  <MasonryCard
+                    key={cardId}
+                    img={img}
+                    index={img.globalIndex ?? rIdx * 2 + 1}
+                    isColumn0={false}
+                    onSelect={(bounds) => openLightbox(img, bounds)}
+                    onRegisterRef={(id, ref) => {
+                      if (id) cardRefs.current[id] = ref;
+                      if (refId) cardRefs.current[refId] = ref;
+                    }}
+                    onToggleLike={handleToggleLike}
+                  />
+                );
+              })}
+            </View>
+          </View>
+        )}
+      </Animated.ScrollView>
     );
   };
 
@@ -1135,59 +1171,21 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             <Text style={styles.editorialBackText}>← BACK</Text>
           </Pressable>
 
-          <Animated.ScrollView
-            ref={mainScrollRef}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            bounces={true}
-            scrollEventThrottle={32}
-            removeClippedSubviews={true}
-            onScroll={(e) => {
-              if (isSmoothScrollingToTop.value) return; // 120 FPS Lock: Bypass JS re-renders during active smooth scroll to top animation
-              handleScroll(e);
-              const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
-              const currentY = contentOffset.y;
-              if (!isTabSwitchingRef.current) {
-                currentYRef.current = currentY;
-              }
-              const deltaY = currentY - lastScrollYRef.current;
-              lastScrollYRef.current = currentY;
-
-              // Appears after scrolling past 60 photos (~4200px scroll depth)
-              const past60 = currentY > 4200;
-              if (past60) {
-                if (deltaY < -20) {
-                  if (btnStateRef.current !== 'bright') {
-                    btnStateRef.current = 'bright';
-                    if (!isPast60Photos) setIsPast60Photos(true);
-                    backToTopOpacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
-                  }
-                } else if (deltaY > 20) {
-                  if (btnStateRef.current !== 'dim') {
-                    btnStateRef.current = 'dim';
-                    if (!isPast60Photos) setIsPast60Photos(true);
-                    backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
-                  }
-                } else if (btnStateRef.current === 'hidden') {
-                  btnStateRef.current = 'dim';
-                  if (!isPast60Photos) setIsPast60Photos(true);
-                  backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
-                }
-              } else {
-                if (btnStateRef.current !== 'hidden') {
-                  btnStateRef.current = 'hidden';
-                  if (isPast60Photos) setIsPast60Photos(false);
-                  backToTopOpacity.value = withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) });
-                }
-              }
-
-              const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 4500;
-              if (isNearBottom && hasMorePhotos) {
-                loadMorePhotos();
-              }
-            }}
+          {/* ── Floating Sticky Collapsible Header (Hero Cover + Category Tab Bar) ── */}
+          <Animated.View
+            style={[
+              {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                zIndex: 80,
+                backgroundColor: '#ffffff',
+              },
+              headerAnimatedStyle,
+            ]}
           >
-            {/* ── 1. Hero Cover Banner (Exact Featured Story Style) ── */}
+            {/* 1. Hero Cover Banner (Exact Featured Story Style) */}
             <View style={styles.heroContainer}>
               {coverUrl ? (
                 <Image
@@ -1228,7 +1226,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
             </View>
 
-            {/* ── 2. Category Tabs (Dynamic website parity) ── */}
+            {/* 2. Category Tabs (Dynamic website parity) */}
             <View style={styles.galleryContainer}>
               <View style={styles.tabsWrapper}>
                 <ScrollView
@@ -1269,42 +1267,26 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                   })}
                 </ScrollView>
               </View>
-
-              {/* ── 3. 2-Column Balanced Masonry Grid (SIMULTANEOUS PAIR LOADING + ZERO GAPS) ── */}
-              <GestureDetector gesture={categorySwipeGesture}>
-                <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
-                  <Animated.View
-                    style={[
-                      { flexDirection: 'row', width: width * availableTabs.length },
-                      categoryAnimatedStyle,
-                    ]}
-                  >
-                    {availableTabs.map((tabName) => {
-                      const isTabActive = tabName.toUpperCase() === activeTab.toUpperCase();
-                      return (
-                        <View
-                          key={`tab-grid-${tabName}`}
-                          style={[
-                            { width },
-                            !isTabActive && { height: 1, overflow: 'hidden' }
-                          ]}
-                        >
-                          {renderCategoryGrid(tabName)}
-                        </View>
-                      );
-                    })}
-                  </Animated.View>
-                </View>
-              </GestureDetector>
-
-              {/* Loading indicator when fetching next page */}
-              {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
-                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#8c867e" />
-                </View>
-              ) : null}
             </View>
-          </Animated.ScrollView>
+          </Animated.View>
+
+          {/* ── 3. Horizontal ViewPager Container (Independent Tab ScrollViews) ── */}
+          <GestureDetector gesture={categorySwipeGesture}>
+            <View style={{ flex: 1, width: '100%', overflow: 'hidden' }}>
+              <Animated.View
+                style={[
+                  { flexDirection: 'row', width: width * availableTabs.length, flex: 1 },
+                  categoryAnimatedStyle,
+                ]}
+              >
+                {availableTabs.map((tabName) => (
+                  <View key={`tab-grid-${tabName}`} style={{ width, flex: 1 }}>
+                    {renderCategoryGrid(tabName)}
+                  </View>
+                ))}
+              </Animated.View>
+            </View>
+          </GestureDetector>
 
           {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
           <Animated.View
