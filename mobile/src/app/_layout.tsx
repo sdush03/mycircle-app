@@ -230,6 +230,7 @@ function RootLayoutContent() {
   const activeTabSharedIndex = useSharedValue(Math.max(0, TAB_ORDER.indexOf(currentTab)));
 
   const mainTabSwipeGesture = Gesture.Pan()
+    .enabled(!eventSlug)
     .activeOffsetX([-20, 20])
     .failOffsetY([-18, 18])
     .onUpdate((e) => {
