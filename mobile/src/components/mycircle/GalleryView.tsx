@@ -1007,97 +1007,71 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     const isCurrentActive = norm === activeTab.toUpperCase();
 
-    const rows: { left?: Photo; right?: Photo }[] = [];
-    for (let i = 0; i < tabList.length; i += 2) {
-      rows.push({ left: tabList[i], right: tabList[i + 1] });
+    if (isLoading || (isCurrentActive && isTabLoading)) {
+      return (
+        <View style={[{ width, flex: 1, paddingTop: totalHeaderHeight + 10 }, styles.masonryGridContainer]}>
+          <View style={styles.masonryColumn}>
+            {[0.75, 0.67, 0.8].map((aspect, i) => (
+              <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+            ))}
+          </View>
+          <View style={styles.masonryColumn}>
+            {[0.67, 0.8, 0.75].map((aspect, i) => (
+              <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
+            ))}
+          </View>
+        </View>
+      );
     }
 
+    if (tabList.length === 0) {
+      return (
+        <View style={[{ width, flex: 1, paddingTop: totalHeaderHeight + 10 }, styles.emptyContainer]}>
+          <Text style={styles.emptyText}>
+            {norm === 'MY PHOTOS'
+              ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
+              : norm === 'MY FAVOURITES'
+              ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
+              : `No photos found in ${tabName}.`}
+          </Text>
+        </View>
+      );
+    }
+
+    const FlashListAny = FlashList as any;
+
     return (
-      <Animated.ScrollView
-        ref={(r) => {
-          if (r) tabScrollRefs.current[norm] = r;
-        }}
-        style={{ width, flex: 1 }}
-        contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-        bounces={true}
-        scrollEventThrottle={16}
-        onScroll={isCurrentActive ? scrollHandler : undefined}
-      >
-        {isLoading || (isCurrentActive && isTabLoading) ? (
-          <View style={styles.masonryGridContainer}>
-            <View style={styles.masonryColumn}>
-              {[0.75, 0.67, 0.8].map((aspect, i) => (
-                <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-              ))}
+      <View style={{ width, flex: 1 }}>
+        <FlashListAny
+          ref={(r: any) => {
+            if (r) tabScrollRefs.current[norm] = r;
+          }}
+          data={tabList}
+          numColumns={2}
+          estimatedItemSize={250}
+          renderItem={({ item, index }: { item: Photo; index: number }) => (
+            <View style={{ paddingHorizontal: 3, marginBottom: 6 }}>
+              <MasonryCard
+                img={item}
+                index={item.globalIndex ?? index}
+                isColumn0={index % 2 === 0}
+                onSelect={(bounds) => openLightbox(item, bounds)}
+                onRegisterRef={(id, ref) => {
+                  if (id) cardRefs.current[id] = ref;
+                  const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
+                  if (refId) cardRefs.current[refId] = ref;
+                }}
+                onToggleLike={handleToggleLike}
+              />
             </View>
-            <View style={styles.masonryColumn}>
-              {[0.67, 0.8, 0.75].map((aspect, i) => (
-                <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-              ))}
-            </View>
-          </View>
-        ) : tabList.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              {norm === 'MY PHOTOS'
-                ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-                : norm === 'MY FAVOURITES'
-                ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-                : `No photos found in ${tabName}.`}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.masonryGridContainer}>
-            <View style={styles.masonryColumn}>
-              {rows.map((row, rIdx) => {
-                if (!row.left) return null;
-                const img = row.left;
-                const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
-                const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-                return (
-                  <MasonryCard
-                    key={cardId}
-                    img={img}
-                    index={img.globalIndex ?? rIdx * 2}
-                    isColumn0={true}
-                    onSelect={(bounds) => openLightbox(img, bounds)}
-                    onRegisterRef={(id, ref) => {
-                      if (id) cardRefs.current[id] = ref;
-                      if (refId) cardRefs.current[refId] = ref;
-                    }}
-                    onToggleLike={handleToggleLike}
-                  />
-                );
-              })}
-            </View>
-            <View style={styles.masonryColumn}>
-              {rows.map((row, rIdx) => {
-                if (!row.right) return null;
-                const img = row.right;
-                const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
-                const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-                return (
-                  <MasonryCard
-                    key={cardId}
-                    img={img}
-                    index={img.globalIndex ?? rIdx * 2 + 1}
-                    isColumn0={false}
-                    onSelect={(bounds) => openLightbox(img, bounds)}
-                    onRegisterRef={(id, ref) => {
-                      if (id) cardRefs.current[id] = ref;
-                      if (refId) cardRefs.current[refId] = ref;
-                    }}
-                    onToggleLike={handleToggleLike}
-                  />
-                );
-              })}
-            </View>
-          </View>
-        )}
-      </Animated.ScrollView>
+          )}
+          renderScrollComponent={Animated.ScrollView}
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={isCurrentActive ? scrollHandler : undefined}
+          contentContainerStyle={{ paddingTop: totalHeaderHeight + 10, paddingHorizontal: 5, paddingBottom: 40 }}
+        />
+      </View>
     );
   };
 
