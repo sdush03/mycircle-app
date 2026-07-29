@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
@@ -576,6 +576,26 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return list;
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
 
+  const scrollToY = useCallback((targetY: number) => {
+    try {
+      if (mainScrollRef.current) {
+        if ('scrollTo' in mainScrollRef.current && typeof (mainScrollRef.current as any).scrollTo === 'function') {
+          (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+        } else {
+          runOnUI((y: number) => {
+            'worklet';
+            scrollTo(mainScrollRef, 0, y, false);
+          })(targetY);
+        }
+      }
+    } catch (_e) {
+      runOnUI((y: number) => {
+        'worklet';
+        scrollTo(mainScrollRef, 0, y, false);
+      })(targetY);
+    }
+  }, [mainScrollRef]);
+
   const changeTabWithScrollMemory = useCallback((newTab: string) => {
     const currentNorm = activeTab.toUpperCase();
     const newNorm = newTab.toUpperCase();
@@ -600,14 +620,15 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     const targetY = tabOffsetsRef.current[norm] ?? 0;
     currentYRef.current = targetY;
 
+    scrollToY(targetY);
     requestAnimationFrame(() => {
-      scrollTo(mainScrollRef, 0, targetY, false);
+      scrollToY(targetY);
       setTimeout(() => {
-        scrollTo(mainScrollRef, 0, targetY, false);
+        scrollToY(targetY);
         isTabSwitchingRef.current = false;
-      }, 30);
+      }, 40);
     });
-  }, [activeTab, isLoading, isTabLoading, mainScrollRef]);
+  }, [activeTab, isLoading, isTabLoading, scrollToY]);
 
   const handleNextCategoryTab = useCallback(() => {
     const currentIndex = availableTabs.findIndex(
