@@ -15,6 +15,7 @@ import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-g
 import { useAuthStore } from '../store/authStore';
 import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
+import JoinEventView from '../components/mycircle/JoinEventView';
 import { ProfileView } from '../components/profile/ProfileView';
 import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS } from '../lib/tabEvents';
 
@@ -295,6 +296,18 @@ function RootLayoutContent() {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 
+  const adjacentRightTab: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null =
+    currentTab === 'index' ? 'mycircle' :
+    currentTab === 'mycircle' ? 'inspirations' :
+    currentTab === 'inspirations' ? 'moodboard' :
+    currentTab === 'moodboard' ? 'profile' : null;
+
+  const adjacentLeftTab: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null =
+    currentTab === 'profile' ? 'moodboard' :
+    currentTab === 'moodboard' ? 'inspirations' :
+    currentTab === 'inspirations' ? 'mycircle' :
+    currentTab === 'mycircle' ? 'index' : null;
+
   const isHeaderHidden = false;
 
   return (
@@ -337,6 +350,20 @@ function RootLayoutContent() {
               <Tabs.Screen name="inspirations" />
               <Tabs.Screen name="profile" />
             </Tabs>
+
+            {/* ── Adjacent Right Screen Preview (Zero Gap Incoming Screen) ── */}
+            {adjacentRightTab === 'mycircle' && (
+              <View style={{ position: 'absolute', top: 0, bottom: 0, left: width, width, backgroundColor: '#ffffff' }}>
+                <JoinEventView onSuccess={() => {}} />
+              </View>
+            )}
+
+            {/* ── Adjacent Left Screen Preview (Zero Gap Incoming Screen) ── */}
+            {adjacentLeftTab === 'mycircle' && (
+              <View style={{ position: 'absolute', top: 0, bottom: 0, left: -width, width, backgroundColor: '#ffffff' }}>
+                <JoinEventView onSuccess={() => {}} />
+              </View>
+            )}
           </Animated.View>
         </GestureDetector>
 
