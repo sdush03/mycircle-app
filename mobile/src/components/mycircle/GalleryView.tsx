@@ -590,20 +590,24 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     // 3. Switch tab
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
+  }, [activeTab, fetchTabPhotos]);
 
-    // 4. Retrieve saved scroll position of new tab (default 0)
-    const targetY = tabOffsetsRef.current[newNorm] || 0;
+  // Per-tab scroll restoration effect: triggers whenever activeTab or tab photo loading completes
+  useEffect(() => {
+    if (isLoading || isTabLoading) return;
+
+    const norm = activeTab.toUpperCase();
+    const targetY = tabOffsetsRef.current[norm] ?? 0;
     currentYRef.current = targetY;
 
-    // 5. Perform scroll restoration after React renders the new tab's layout
     requestAnimationFrame(() => {
       scrollTo(mainScrollRef, 0, targetY, false);
       setTimeout(() => {
         scrollTo(mainScrollRef, 0, targetY, false);
         isTabSwitchingRef.current = false;
-      }, 50);
+      }, 30);
     });
-  }, [activeTab, fetchTabPhotos, mainScrollRef]);
+  }, [activeTab, isLoading, isTabLoading, mainScrollRef]);
 
   const handleNextCategoryTab = useCallback(() => {
     const currentIndex = availableTabs.findIndex(

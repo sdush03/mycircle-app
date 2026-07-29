@@ -325,25 +325,28 @@ export default function CollectionGridView({
     categoryTransitionOpacity.value = 0.5;
     setSelectedCategory(catName);
 
-    // 3. Retrieve target scroll position (default 0)
-    const targetY = categoryScrollOffsetsRef.current[catName] || 0;
-    currentScrollYRef.current = targetY;
-
-    // 4. Restore scroll position after React layout update
-    requestAnimationFrame(() => {
-      gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
-      setTimeout(() => {
-        gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
-        isCategorySwitchingRef.current = false;
-      }, 50);
-    });
-
     categoryTransitionTranslateX.value = withTiming(0, {
       duration: 250,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     });
     categoryTransitionOpacity.value = withTiming(1, { duration: 200 });
   }, [selectedCategory, categoryTransitionTranslateX, categoryTransitionOpacity]);
+
+  // Per-category scroll restoration effect: triggers whenever selectedCategory or modal open state updates
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    const targetY = categoryScrollOffsetsRef.current[selectedCategory] ?? 0;
+    currentScrollYRef.current = targetY;
+
+    requestAnimationFrame(() => {
+      gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+      setTimeout(() => {
+        gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+        isCategorySwitchingRef.current = false;
+      }, 30);
+    });
+  }, [selectedCategory, isOpen]);
 
   const handleNextCategory = React.useCallback(() => {
     if (activeStoryModalItem !== null) return;
