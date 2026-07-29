@@ -17,6 +17,9 @@ import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
 import JoinEventView from '../components/mycircle/JoinEventView';
 import { ProfileView } from '../components/profile/ProfileView';
+import HomeScreen from './index';
+import InspirationsScreen from './inspirations';
+import MoodboardScreen from './moodboard';
 import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS } from '../lib/tabEvents';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -311,6 +314,24 @@ function RootLayoutContent() {
     currentTab === 'inspirations' ? 'mycircle' :
     currentTab === 'mycircle' ? 'index' : null;
 
+  const renderTabPreview = (tabKey: 'index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile' | null) => {
+    if (!tabKey) return null;
+    switch (tabKey) {
+      case 'index':
+        return <HomeScreen />;
+      case 'mycircle':
+        return <JoinEventView onSuccess={() => {}} />;
+      case 'inspirations':
+        return <InspirationsScreen />;
+      case 'moodboard':
+        return <MoodboardScreen />;
+      case 'profile':
+        return <ProfileView visible={true} onClose={() => {}} profile={profile} onLogout={() => {}} />;
+      default:
+        return null;
+    }
+  };
+
   const isHeaderHidden = false;
 
   return (
@@ -355,16 +376,16 @@ function RootLayoutContent() {
             </Tabs>
 
             {/* ── Adjacent Right Screen Preview (Zero Gap Incoming Screen) ── */}
-            {adjacentRightTab === 'mycircle' && (
+            {adjacentRightTab && (
               <View style={{ position: 'absolute', top: 0, bottom: 0, left: width, width, backgroundColor: '#ffffff' }}>
-                <JoinEventView onSuccess={() => {}} />
+                {renderTabPreview(adjacentRightTab)}
               </View>
             )}
 
             {/* ── Adjacent Left Screen Preview (Zero Gap Incoming Screen) ── */}
-            {adjacentLeftTab === 'mycircle' && (
+            {adjacentLeftTab && (
               <View style={{ position: 'absolute', top: 0, bottom: 0, left: -width, width, backgroundColor: '#ffffff' }}>
-                <JoinEventView onSuccess={() => {}} />
+                {renderTabPreview(adjacentLeftTab)}
               </View>
             )}
           </Animated.View>
