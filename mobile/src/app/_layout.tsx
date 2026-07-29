@@ -200,7 +200,7 @@ function RootLayoutContent() {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 
-  const isHeaderHidden = currentTab === 'mycircle' && Boolean(eventSlug);
+  const isHeaderHidden = false;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
