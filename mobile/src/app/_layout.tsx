@@ -10,7 +10,8 @@ import { useFonts } from 'expo-font';
 import { Jost_400Regular, Jost_500Medium, Jost_600SemiBold } from '@expo-google-fonts/jost';
 import { Montserrat_400Regular, Montserrat_300Light, Montserrat_500Medium, Montserrat_600SemiBold } from '@expo-google-fonts/montserrat';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, FadeIn } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, FadeIn, runOnJS } from 'react-native-reanimated';
+import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { useAuthStore } from '../store/authStore';
 import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
@@ -200,6 +201,57 @@ function RootLayoutContent() {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 
+  const TAB_ORDER: ('index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile')[] = [
+    'index',
+    'mycircle',
+    'inspirations',
+    'moodboard',
+    'profile',
+  ];
+
+  const TAB_ROUTES: Record<string, string> = {
+    index: '/',
+    mycircle: '/mycircle',
+    inspirations: '/inspirations',
+    moodboard: '/moodboard',
+    profile: '/profile',
+  };
+
+  const handleTabSwipeNext = React.useCallback(() => {
+    if (eventSlug || showProfileModal) return;
+    const currentIndex = TAB_ORDER.indexOf(currentTab);
+    if (currentIndex >= 0 && currentIndex < TAB_ORDER.length - 1) {
+      const nextTab = TAB_ORDER[currentIndex + 1];
+      Haptics.selectionAsync().catch(() => {});
+      router.replace(TAB_ROUTES[nextTab] as any);
+    }
+  }, [currentTab, eventSlug, showProfileModal]);
+
+  const handleTabSwipePrev = React.useCallback(() => {
+    if (eventSlug || showProfileModal) return;
+    const currentIndex = TAB_ORDER.indexOf(currentTab);
+    if (currentIndex > 0) {
+      const prevTab = TAB_ORDER[currentIndex - 1];
+      Haptics.selectionAsync().catch(() => {});
+      router.replace(TAB_ROUTES[prevTab] as any);
+    }
+  }, [currentTab, eventSlug, showProfileModal]);
+
+  const mainTabSwipeGesture = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-30, 30])
+    .onEnd((e) => {
+      'worklet';
+      if (eventSlug) return;
+      if (e.x <= 40) return;
+
+      if (e.translationX < -70 || e.velocityX < -450) {
+        runOnJS(handleTabSwipeNext)();
+      } else if (e.translationX > 70 || e.velocityX > 450) {
+        runOnJS(handleTabSwipePrev)();
+      }
+    });
+
   const isHeaderHidden = false;
 
   return (
@@ -228,18 +280,22 @@ function RootLayoutContent() {
           </>
         )}
 
-        <Tabs
-          screenOptions={{
-            headerShown: false,
-            tabBarStyle: { display: 'none' },
-          }}
-        >
-          <Tabs.Screen name="index" />
-          <Tabs.Screen name="mycircle" />
-          <Tabs.Screen name="moodboard" />
-          <Tabs.Screen name="inspirations" />
-          <Tabs.Screen name="profile" />
-        </Tabs>
+        <GestureDetector gesture={mainTabSwipeGesture}>
+          <View style={{ flex: 1 }}>
+            <Tabs
+              screenOptions={{
+                headerShown: false,
+                tabBarStyle: { display: 'none' },
+              }}
+            >
+              <Tabs.Screen name="index" />
+              <Tabs.Screen name="mycircle" />
+              <Tabs.Screen name="moodboard" />
+              <Tabs.Screen name="inspirations" />
+              <Tabs.Screen name="profile" />
+            </Tabs>
+          </View>
+        </GestureDetector>
 
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
         <CustomFloatingTabBar

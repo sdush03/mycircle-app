@@ -169,13 +169,13 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return () => subscription.remove();
   }, [handleBackAction]);
 
-  // Left-Edge Pan Swipe Back Gesture (matching FeaturedStoryView)
+  // Left-Edge Pan Swipe Back + Mid-Screen Horizontal Category Tab Swipe
   const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX(12)
+    .activeOffsetX([-15, 15])
     .failOffsetY([-25, 25])
     .onBegin((e) => {
       'worklet';
-      touchStartedOnLeftEdge.value = e.x <= 40 && !isLightboxOpen.value;
+      touchStartedOnLeftEdge.value = e.x <= 45 && !isLightboxOpen.value;
     })
     .onUpdate((e) => {
       'worklet';
@@ -186,17 +186,28 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     })
     .onEnd((e) => {
       'worklet';
-      if (!touchStartedOnLeftEdge.value) return;
-      if (e.translationX > width * 0.20 || e.velocityX > 250) {
-        screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
-          if (finished) {
-            runOnJS(onChangeEvent)();
-          }
-        });
-      } else {
-        screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+      if (isLightboxOpen.value) return;
+
+      if (touchStartedOnLeftEdge.value) {
+        if (e.translationX > width * 0.20 || e.velocityX > 250) {
+          screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+            if (finished) {
+              runOnJS(onChangeEvent)();
+            }
+          });
+        } else {
+          screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+        }
+        touchStartedOnLeftEdge.value = false;
+        return;
       }
-      touchStartedOnLeftEdge.value = false;
+
+      // Mid-Screen Horizontal Swipes: Switch Category Tabs
+      if (e.translationX < -70 || e.velocityX < -400) {
+        runOnJS(handleNextCategoryTab)();
+      } else if (e.translationX > 70 || e.velocityX > 400) {
+        runOnJS(handlePrevCategoryTab)();
+      }
     });
 
   const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
@@ -602,6 +613,30 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
     return list;
   }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
+
+  const handleNextCategoryTab = useCallback(() => {
+    const currentIndex = availableTabs.findIndex(
+      (t) => t.toUpperCase() === activeTab.toUpperCase()
+    );
+    if (currentIndex >= 0 && currentIndex < availableTabs.length - 1) {
+      const nextTab = availableTabs[currentIndex + 1];
+      setActiveTab(nextTab);
+      fetchTabPhotos(nextTab);
+      Haptics.selectionAsync().catch(() => {});
+    }
+  }, [availableTabs, activeTab, fetchTabPhotos]);
+
+  const handlePrevCategoryTab = useCallback(() => {
+    const currentIndex = availableTabs.findIndex(
+      (t) => t.toUpperCase() === activeTab.toUpperCase()
+    );
+    if (currentIndex > 0) {
+      const prevTab = availableTabs[currentIndex - 1];
+      setActiveTab(prevTab);
+      fetchTabPhotos(prevTab);
+      Haptics.selectionAsync().catch(() => {});
+    }
+  }, [availableTabs, activeTab, fetchTabPhotos]);
 
   // Exact Landing Tab Rules:
   // - Full Access: Lands on ALL
