@@ -54,9 +54,11 @@ export { FONT_FUTURA, FONT_FUTURA_BOLD, FONT_MONTSERRAT_REGULAR } from '../const
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <RootLayoutContent />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <RootLayoutContent />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
