@@ -11,6 +11,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
@@ -305,6 +306,7 @@ export default function CollectionGridView({
 
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
+    Haptics.selectionAsync().catch(() => {});
     isClickBusyRef.current = true;
     setTimeout(() => { isClickBusyRef.current = false; }, 400);
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../services/api';
 
@@ -18,8 +19,15 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
   const eventSlug = useAuthStore((state) => state.eventSlug);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 
+  const handlePhoneNumberChange = (text: string) => {
+    setErrorMsg('');
+    setPhoneNumber(text);
+    Haptics.selectionAsync().catch(() => {});
+  };
+
   const handleCountryCodeChange = (text: string) => {
     setErrorMsg('');
+    Haptics.selectionAsync().catch(() => {});
     if (!text.startsWith('+')) {
       const clean = text.replace(/\D/g, '');
       setCountryCode('+' + clean);
@@ -36,11 +44,13 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
 
     if (cleanCode.length < 2) {
       setErrorMsg('Please enter a valid country code (e.g. +91)');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       return;
     }
 
     if (!cleanDigits) {
       setErrorMsg('Please enter your mobile number');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       return;
     }
 
@@ -113,9 +123,11 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
       
       // Update local profile state
       await updateProfile({ phoneNumber: fullPhoneNumber });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       onSuccess();
     } catch (err: any) {
       console.error(err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const msg = err.response?.data?.error || 'Failed to save phone number. Please try again.';
       setErrorMsg(msg);
     } finally {
@@ -154,10 +166,7 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
             keyboardType="number-pad"
             maxLength={15}
             value={phoneNumber}
-            onChangeText={(text) => {
-              setErrorMsg('');
-              setPhoneNumber(text.replace(/\D/g, ''));
-            }}
+            onChangeText={handlePhoneNumberChange}
             editable={!isSubmitting}
           />
         </View>

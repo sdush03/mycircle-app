@@ -5,6 +5,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs, router, useSegments } from 'expo-router';
 import { ThemeProvider, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Haptics from 'expo-haptics';
 import { useFonts } from 'expo-font';
 import { Jost_400Regular, Jost_500Medium, Jost_600SemiBold } from '@expo-google-fonts/jost';
 import { Montserrat_400Regular, Montserrat_300Light, Montserrat_500Medium, Montserrat_600SemiBold } from '@expo-google-fonts/montserrat';
@@ -313,6 +314,7 @@ function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, on
   const setTabBarCollapsed = useAuthStore((state) => state.setTabBarCollapsed);
 
   const handleTabPress = (tabName: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile') => {
+    Haptics.selectionAsync().catch(() => {});
     setTabBarCollapsed(false);
     if (tabName === 'index') {
       router.replace('/');

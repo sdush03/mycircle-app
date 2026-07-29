@@ -349,6 +349,9 @@ export function EditorialLightbox({
   const handleShare = async () => {
     if (!currentUrl) return;
     try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    try {
       await Share.share({
         message: `Check out this photo from ${title}:\n${currentUrl}`,
         url: currentUrl,
@@ -360,6 +363,9 @@ export function EditorialLightbox({
   };
 
   const handleDownload = async () => {
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
     console.log('[DOWNLOAD DEBUG 🚀] handleDownload invoked!');
     if (!enableDownload) {
       console.warn('[DOWNLOAD DEBUG ⚠️] enableDownload is false!');

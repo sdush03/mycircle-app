@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../services/api';
 
@@ -16,9 +17,15 @@ export default function PasscodeView({ onSuccess, onBack }: PasscodeViewProps) {
   const token = useAuthStore((state) => state.token);
   const setEventDetails = useAuthStore((state) => state.setEventDetails);
 
+  const handleTextChange = (text: string) => {
+    setPasscode(text);
+    Haptics.selectionAsync().catch(() => {});
+  };
+
   const handleSubmit = async () => {
     const trimmed = passcode.trim();
     if (!trimmed) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       Alert.alert('Empty Passcode', 'Please enter the event passcode.');
       return;
     }
@@ -45,11 +52,15 @@ export default function PasscodeView({ onSuccess, onBack }: PasscodeViewProps) {
       
       const { token: newToken } = res.data;
       
+      // Trigger Success Haptic
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      
       // Update local storage/state with the verified passcode
       setEventDetails(eventSlug, trimmed);
       onSuccess(trimmed);
     } catch (err: any) {
       console.error(err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const msg = err.response?.data?.error || 'Invalid passcode. Please try again.';
       Alert.alert('Authentication Failed', msg);
     } finally {
@@ -72,7 +83,7 @@ export default function PasscodeView({ onSuccess, onBack }: PasscodeViewProps) {
         autoCorrect={false}
         secureTextEntry={true}
         value={passcode}
-        onChangeText={setPasscode}
+        onChangeText={handleTextChange}
         editable={!isSubmitting}
       />
 

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { StyleSheet, View, Text, Pressable, ActivityIndicator, Alert, Image, Linking } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../store/authStore';
 import api, { API_BASE_URL } from '../../services/api';
 import { FONT_JOST_SEMIBOLD } from '../../constants/fonts';
@@ -117,6 +118,7 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
   const takePicture = async () => {
     if (cameraRef.current) {
       try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
         const photo = await cameraRef.current.takePictureAsync({
           quality: 0.8,
         });
@@ -176,10 +178,12 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
       await updateProfile({ hasSelfie: true });
       setValidationStatus('accepted');
       setSelfieError('');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (err: any) {
       const msg = err.message || 'Selfie verification failed. Please ensure your face is clearly visible.';
       setValidationStatus('rejected');
       setSelfieError(msg);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     } finally {
       setIsUploading(false);
     }

@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as SecureStore from 'expo-secure-store';
+import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import Animated, {
@@ -61,6 +62,11 @@ export default function JoinCelebrationModal({
   const backdropOpacity = useSharedValue(0);
   const sheetTranslateY = useSharedValue(height);
   const keyboardOffset = useSharedValue(0);
+
+  const handleInputChange = (text: string) => {
+    setEventInput(text);
+    Haptics.selectionAsync().catch(() => {});
+  };
 
   useEffect(() => {
     if (visible) {
@@ -146,11 +152,13 @@ export default function JoinCelebrationModal({
       await saveEventToRecent(slug, eventData.title || slug);
       setEventDetails(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title);
       
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (onSuccess) {
         onSuccess(slug, passcode);
       }
       handleClose();
     } catch (err: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const msg = err.response?.data?.error || 'Celebration not found. Please check your code or link.';
       setErrorMessage(msg);
     } finally {
@@ -323,6 +331,7 @@ export default function JoinCelebrationModal({
                 value={eventInput}
                 onChangeText={(val) => {
                   setEventInput(val);
+                  Haptics.selectionAsync().catch(() => {});
                   if (errorMessage) setErrorMessage(null);
                 }}
                 editable={!isSubmitting}
