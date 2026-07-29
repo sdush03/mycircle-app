@@ -259,7 +259,6 @@ function RootLayoutContent() {
         // Complete fluid slide left then route switch
         tabTranslateX.value = withTiming(-width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
           if (finished) {
-            tabTranslateX.value = 0;
             runOnJS(handleTabSwipeNext)();
           }
         });
@@ -267,7 +266,6 @@ function RootLayoutContent() {
         // Complete fluid slide right then route switch
         tabTranslateX.value = withTiming(width, { duration: 160, easing: Easing.out(Easing.quad) }, (finished) => {
           if (finished) {
-            tabTranslateX.value = 0;
             runOnJS(handleTabSwipePrev)();
           }
         });
@@ -276,6 +274,11 @@ function RootLayoutContent() {
         tabTranslateX.value = withSpring(0, { damping: 25, stiffness: 220 });
       }
     });
+
+  // Seamless route transition: reset translation offset AFTER new route renders
+  React.useEffect(() => {
+    tabTranslateX.value = 0;
+  }, [currentTab]);
 
   const mainTabAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: tabTranslateX.value }],
