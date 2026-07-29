@@ -1262,14 +1262,6 @@ export default function HomeScreen() {
           fetchUserEvents();
         }}
       />
-
-      {/* ── Gallery View Overlay when opened from Home ── */}
-      {eventSlug && openedFrom === 'home' && (
-        <GalleryView
-          onLogout={logout}
-          onChangeEvent={() => setEventDetails(null, null)}
-        />
-      )}
     </View>
   );
 }
