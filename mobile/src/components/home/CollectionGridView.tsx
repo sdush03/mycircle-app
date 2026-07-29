@@ -308,6 +308,14 @@ export default function CollectionGridView({
     opacity: categoryTransitionOpacity.value,
   }));
 
+  const scrollToY = React.useCallback((targetY: number) => {
+    try {
+      if (gridScrollRef.current) {
+        gridScrollRef.current.scrollTo({ y: targetY, animated: false });
+      }
+    } catch (_e) {}
+  }, []);
+
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
 
@@ -339,14 +347,15 @@ export default function CollectionGridView({
     const targetY = categoryScrollOffsetsRef.current[selectedCategory] ?? 0;
     currentScrollYRef.current = targetY;
 
+    scrollToY(targetY);
     requestAnimationFrame(() => {
-      gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+      scrollToY(targetY);
       setTimeout(() => {
-        gridScrollRef.current?.scrollTo({ y: targetY, animated: false });
+        scrollToY(targetY);
         isCategorySwitchingRef.current = false;
-      }, 30);
+      }, 40);
     });
-  }, [selectedCategory, isOpen]);
+  }, [selectedCategory, isOpen, scrollToY]);
 
   const handleNextCategory = React.useCallback(() => {
     if (activeStoryModalItem !== null) return;
