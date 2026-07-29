@@ -624,11 +624,11 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
 
-    // 4. Atomic shared index update
+    // 4. Smooth slide animation to new tab index
     const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
     if (newIdx >= 0) {
-      activeCategorySharedIndex.value = newIdx;
       categoryTranslateX.value = 0;
+      activeCategorySharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
     }
   }, [activeTab, availableTabs, fetchTabPhotos]);
 
@@ -651,26 +651,22 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   }, [activeTab, isLoading, isTabLoading, scrollToY]);
 
   const handleNextCategoryTab = useCallback(() => {
-    const currentIndex = availableTabs.findIndex(
-      (t) => t.toUpperCase() === activeTab.toUpperCase()
-    );
-    if (currentIndex >= 0 && currentIndex < availableTabs.length - 1) {
-      const nextTab = availableTabs[currentIndex + 1];
+    const currentIdx = activeCategorySharedIndex.value;
+    if (currentIdx >= 0 && currentIdx < availableTabs.length - 1) {
+      const nextTab = availableTabs[currentIdx + 1];
       changeTabWithScrollMemory(nextTab);
       Haptics.selectionAsync().catch(() => {});
     }
-  }, [availableTabs, activeTab, changeTabWithScrollMemory]);
+  }, [availableTabs, changeTabWithScrollMemory]);
 
   const handlePrevCategoryTab = useCallback(() => {
-    const currentIndex = availableTabs.findIndex(
-      (t) => t.toUpperCase() === activeTab.toUpperCase()
-    );
-    if (currentIndex > 0) {
-      const prevTab = availableTabs[currentIndex - 1];
+    const currentIdx = activeCategorySharedIndex.value;
+    if (currentIdx > 0) {
+      const prevTab = availableTabs[currentIdx - 1];
       changeTabWithScrollMemory(prevTab);
       Haptics.selectionAsync().catch(() => {});
     }
-  }, [availableTabs, activeTab, changeTabWithScrollMemory]);
+  }, [availableTabs, changeTabWithScrollMemory]);
 
   // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
