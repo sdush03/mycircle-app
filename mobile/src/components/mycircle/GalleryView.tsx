@@ -674,7 +674,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
-    .activeOffsetX(15)
+    .activeOffsetX(30)
     .failOffsetY([-25, 25])
     .onBegin((e) => {
       'worklet';
@@ -707,8 +707,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   // Mid-Screen Horizontal Category Tab Swipe Gesture
   const categorySwipeGesture = Gesture.Pan()
-    .activeOffsetX([-30, 30])
-    .failOffsetY([-6, 6])
+    .activeOffsetX([-15, 15])
+    .failOffsetY([-10, 10])
     .onUpdate((e) => {
       'worklet';
       if (isLightboxOpen.value) return;
