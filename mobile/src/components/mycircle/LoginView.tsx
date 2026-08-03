@@ -31,7 +31,7 @@ import CameraViewScreen from './CameraView';
 
 // Web & iOS Client IDs from Google Cloud Console
 const GOOGLE_WEB_CLIENT_ID = '1051090030242-du725l33veu6vl637lo1jpgpka1ilujj.apps.googleusercontent.com';
-const GOOGLE_IOS_CLIENT_ID = '813548862884-m06a6t1mbo7v71qipthtao91bg105lqt.apps.googleusercontent.com';
+const GOOGLE_IOS_CLIENT_ID = '1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4.apps.googleusercontent.com';
 
 // Safe dynamic imports for Google Sign-In to prevent crashes in Expo Go
 let NativeGoogleSignin: any = null;
@@ -190,7 +190,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
   const handleAuthSuccess = async (
     oauthToken: string,
     provider: 'google' | 'apple',
-    extraFields?: { name?: string; email?: string }
+    extraFields?: { name?: string; email?: string; appleUserId?: string }
   ) => {
     try {
       setIsLoggingIn(true);
@@ -333,6 +333,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
         await handleAuthSuccess(credential.identityToken, 'apple', {
           email: credential.email || undefined,
           name,
+          appleUserId: credential.user, // Stable Apple user ID — always returned, even when email is hidden
         });
       } else {
         throw new Error('Apple Sign-In failed to return an Identity Token');

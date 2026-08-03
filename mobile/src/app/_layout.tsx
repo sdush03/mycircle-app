@@ -321,7 +321,7 @@ function RootLayoutContent() {
                 style={styles.headerLogo}
                 resizeMode="contain"
               />
-              {currentTab === 'profile' && (
+              {activeTabIndex === TAB_ORDER.indexOf('profile') && (
                 <Pressable
                   style={styles.headerSettingsBtn}
                   onPress={() => tabEvents.emit(TAB_OPEN_PROFILE_SETTINGS)}

@@ -25,11 +25,20 @@
             "CFBundleURLSchemes": [
               "mycircle",
               "com.mistyvisuals.mycircle",
-              "com.googleusercontent.apps.813548862884-m06a6t1mbo7v71qipthtao91bg105lqt"
+              "com.googleusercontent.apps.1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4"
+            ]
+          },
+          {
+            "CFBundleURLSchemes": [
+              "mycircle",
+              "com.mistyvisuals.mycircle",
+              "com.googleusercontent.apps.1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4"
             ]
           }
-        ]
-      }
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "appleTeamId": "9S743W7CRJ"
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
@@ -46,9 +55,10 @@
       },
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ]
     },
     "web": {
@@ -77,18 +87,32 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.813548862884-m06a6t1mbo7v71qipthtao91bg105lqt"
+          "iosUrlScheme": "com.googleusercontent.apps.1051090030242-vhi0ec15ittd3ugik983p9gaohlr7fv4"
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow My Circle to access your camera to take a live selfie for facial recognition."
+          "cameraPermission": "Allow My Circle to access your camera to take a live selfie for facial recognition.",
+          "microphonePermission": false
         }
       ],
       "expo-asset",
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      "expo-apple-authentication",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static",
+            "modularHeaders": [
+              "GoogleUtilities",
+              "RecaptchaInterop"
+            ]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
