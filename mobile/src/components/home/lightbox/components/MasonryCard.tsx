@@ -12,6 +12,8 @@ export interface MasonryCardProps {
   onToggleLike?: (img: any) => void;
 }
 
+const DEFAULT_NEUTRAL_BLURHASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
+
 export const MasonryCard = React.memo(function MasonryCard({ 
   img, index, isColumn0, onSelect, onRegisterRef, onToggleLike
 }: MasonryCardProps) {
@@ -20,6 +22,9 @@ export const MasonryCard = React.memo(function MasonryCard({
   const primaryUri = typeof img === 'object' && img.uri ? img.uri : (typeof img === 'string' ? img : '');
   const fallbackUri = typeof img === 'object' && img.fullUri ? img.fullUri : '';
   const blurUri = typeof img === 'object' && img.blurUri ? img.blurUri : null;
+  const blurhash = typeof img === 'object' && (img.blurhash || img.blur_hash || img.blurHash)
+    ? (img.blurhash || img.blur_hash || img.blurHash)
+    : null;
   const [currentUri, setCurrentUri] = useState<string>(primaryUri);
 
   React.useEffect(() => { setCurrentUri(primaryUri); }, [primaryUri]);
@@ -52,6 +57,10 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const loadStartTimeRef = useRef<number>(0);
 
+  const placeholderSource = blurUri
+    ? [{ uri: blurUri }]
+    : [{ blurhash: blurhash || DEFAULT_NEUTRAL_BLURHASH, width: 16, height: 16 }];
+
   return (
     <Pressable 
       ref={(ref) => {
@@ -66,12 +75,12 @@ export const MasonryCard = React.memo(function MasonryCard({
           source={{ uri: currentUri }}
           style={cardStyles.masonryImage}
           contentFit="cover"
-          priority={index < 40 ? "high" : "normal"}
+          priority={index < 10 ? "high" : "low"}
           cachePolicy="memory-disk"
           recyclingKey={String(cardId)}
-          placeholder={blurUri ? { uri: blurUri } : undefined}
+          placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={blurUri ? 200 : 0}
+          transition={200}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
@@ -114,7 +123,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e6e1da',
     overflow: 'hidden',
     position: 'relative',
   },

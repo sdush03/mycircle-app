@@ -20,8 +20,29 @@ import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, useAnimatedRef, useDerivedValue, scrollTo, runOnUI, withTiming, withSpring, runOnJS, Easing } from 'react-native-reanimated';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
+import {
+  GestureHandlerRootView,
+  GestureDetector,
+  Gesture,
+  TouchableOpacity as GHTouchableOpacity,
+  Pressable as GHPressable,
+} from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedRef,
+  useDerivedValue,
+  scrollTo,
+  runOnUI,
+  withTiming,
+  withSpring,
+  runOnJS,
+  Easing,
+  useAnimatedScrollHandler,
+} from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
@@ -65,6 +86,111 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const [allPhotosOffset, setAllPhotosOffset] = useState(0);
   const [hasMorePhotos, setHasMorePhotos] = useState(true);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [isMoreDrawerOpen, setIsMoreDrawerOpen] = useState(false);
+  const [isScrolledPastHero, setIsScrolledPastHero] = useState(false);
+  const [isBatchDownloading, setIsBatchDownloading] = useState(false);
+  const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ current: number; total: number } | null>(null);
+
+  const downloadAllMyPhotos = useCallback(async () => {
+    if (!photos || photos.length === 0 || isBatchDownloading) return;
+
+    try {
+      console.log(`[BATCH DOWNLOAD 🚀] Starting batch download of ${photos.length} photos...`);
+
+      let hasPermission = false;
+      try {
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        console.log('[BATCH DOWNLOAD 📱] MediaLibrary permission:', JSON.stringify(perm));
+        hasPermission = perm.status === 'granted' || perm.granted === true;
+      } catch (pErr) {
+        console.error('[BATCH DOWNLOAD ❌] Permission error:', pErr);
+      }
+
+      if (!hasPermission) {
+        Alert.alert('Permission Required', 'Please allow access to save photos to your photo gallery.');
+        return;
+      }
+
+      setIsBatchDownloading(true);
+      setBatchDownloadProgress({ current: 0, total: photos.length });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      const cacheDir = (((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') as string).replace(/\/+$/, '');
+
+      let savedCount = 0;
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        setBatchDownloadProgress({ current: i + 1, total: photos.length });
+
+        const rawTargetUri = photo.fullUri || photo.photoUrl || photo.r2Url || photo.uri || photo.url || '';
+        if (!rawTargetUri) {
+          console.warn(`[BATCH DOWNLOAD ⚠️] Photo #${i + 1} has no valid URL:`, photo);
+          continue;
+        }
+
+        const safeFilename = `myphoto_${photo.id || i}_${Date.now()}_${i}.jpg`;
+        const localPath = `${cacheDir}/${safeFilename}`;
+
+        try {
+          console.log(`[BATCH DOWNLOAD 📱] Downloading #${i + 1}/${photos.length} from ${rawTargetUri}...`);
+          const downloadRes = await FileSystem.downloadAsync(rawTargetUri, localPath);
+          console.log(`[BATCH DOWNLOAD 📱] Download res #${i + 1}: status=${downloadRes?.status}, uri=${downloadRes?.uri}`);
+
+          if (downloadRes && downloadRes.uri) {
+            let assetSaved = false;
+
+            // Attempt 1: createAssetAsync (Standard Expo MediaLibrary)
+            if (typeof MediaLibrary.createAssetAsync === 'function') {
+              try {
+                const asset = await MediaLibrary.createAssetAsync(downloadRes.uri);
+                if (asset) assetSaved = true;
+              } catch (cErr) {
+                console.warn(`[BATCH DOWNLOAD ⚠️] createAssetAsync failed for photo #${i + 1}:`, cErr);
+              }
+            }
+
+            // Attempt 2: saveToLibraryAsync (iOS specific extension)
+            if (!assetSaved && typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {
+              try {
+                await (MediaLibrary as any).saveToLibraryAsync(downloadRes.uri);
+                assetSaved = true;
+              } catch (sErr) {
+                console.warn(`[BATCH DOWNLOAD ⚠️] saveToLibraryAsync failed for photo #${i + 1}:`, sErr);
+              }
+            }
+
+            if (assetSaved) {
+              savedCount++;
+            } else {
+              console.warn(`[BATCH DOWNLOAD ⚠️] Neither createAssetAsync nor saveToLibraryAsync succeeded for photo #${i + 1}`);
+            }
+
+            // Clean up cached temp file
+            FileSystem.deleteAsync(downloadRes.uri, { idempotent: true }).catch(() => {});
+          } else {
+            console.warn(`[BATCH DOWNLOAD ⚠️] Download failed for photo #${i + 1}`);
+          }
+        } catch (err: any) {
+          console.error(`[BATCH DOWNLOAD ❌] Exception downloading photo #${i + 1}:`, err);
+        }
+      }
+
+      console.log(`[BATCH DOWNLOAD ✅] Finished! Successfully saved ${savedCount} of ${photos.length} photos.`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      if (savedCount > 0) {
+        Alert.alert('Download Complete ✨', `Successfully saved ${savedCount} of ${photos.length} photos to your phone gallery!`);
+      } else {
+        Alert.alert('Download Failed', `Could not save photos to your gallery. Please check storage permissions.`);
+      }
+    } catch (err: any) {
+      console.error('[BATCH DOWNLOAD ERROR]:', err);
+      Alert.alert('Download Error', 'Could not complete downloading photos. Please try again.');
+    } finally {
+      setIsBatchDownloading(false);
+      setBatchDownloadProgress(null);
+    }
+  }, [photos, isBatchDownloading]);
 
   // Lightbox State
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
@@ -94,9 +220,35 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const touchStartedOnLeftEdge = useSharedValue(false);
   const isLightboxOpen = useSharedValue(false);
   const backToTopOpacity = useSharedValue(0);
+  const scrollY = useSharedValue(0);
   const scrollTargetY = useSharedValue(0);
   const isSmoothScrollingToTop = useSharedValue(false);
   const [isPast60Photos, setIsPast60Photos] = useState(false);
+
+  const exactTouchPoint = Math.round(screenHeight * 0.70) - Math.round(insets.top + 45);
+
+  const animatedBackTextStyle = useAnimatedStyle(() => ({
+    color: scrollY.value >= exactTouchPoint ? '#3a3632' : '#ffffff',
+  }));
+
+  const loadMorePhotosRef = useRef<(() => void) | null>(null);
+
+  const triggerLoadMore = useCallback(() => {
+    if (hasMorePhotos && !isFetchingMoreRef.current && loadMorePhotosRef.current) {
+      loadMorePhotosRef.current();
+    }
+  }, [hasMorePhotos]);
+
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      'worklet';
+      scrollY.value = event.contentOffset.y;
+      const isNearBottom = event.layoutMeasurement.height + event.contentOffset.y >= event.contentSize.height - 4500;
+      if (isNearBottom) {
+        runOnJS(triggerLoadMore)();
+      }
+    },
+  });
 
   useDerivedValue(() => {
     if (isSmoothScrollingToTop.value) {
@@ -267,6 +419,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           photoUrl: fullUri,
           width: p.width,
           height: p.height,
+          blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
           tabName: p.tabName || p.tab_name || null,
           isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
           likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
@@ -354,14 +507,14 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     if (isFetchingMoreRef.current || isLoadingMore || isLoading || !eventSlug) return;
 
     const normTab = activeTab.toUpperCase();
-    const isCeremonyTab = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
-
-    if (!isCeremonyTab && !hasMorePhotos) return;
+    if (normTab === 'ALL' && !hasMorePhotos) return;
+    if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') return;
 
     try {
       isFetchingMoreRef.current = true;
       setIsLoadingMore(true);
 
+      const isCeremonyTab = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
       const currentOffset = isCeremonyTab
         ? (tabOffsetsRef.current[normTab] ?? (tabCache[normTab]?.length || 0))
         : allPhotosOffsetRef.current;
@@ -387,6 +540,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           photoUrl: fullUri,
           width: p.width,
           height: p.height,
+          blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
           tabName: p.tabName || p.tab_name || null,
           isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
           likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
@@ -444,6 +598,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       setIsLoadingMore(false);
     }
   };
+  loadMorePhotosRef.current = loadMorePhotos;
 
   useEffect(() => {
     fetchPhotos();
@@ -758,6 +913,16 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     });
   }, [activeTab, photos, allPhotos, tabCache]);
 
+  const isEndOfTabReached = useMemo(() => {
+    if (renderLimit !== (Infinity as any) || isLoading || isTabLoading || !activeList || activeList.length === 0) {
+      return false;
+    }
+    if (activeTab.toUpperCase() === 'ALL' && (hasMorePhotos || isLoadingMore)) {
+      return false;
+    }
+    return true;
+  }, [renderLimit, isLoading, isTabLoading, isLoadingMore, activeList, activeTab, hasMorePhotos]);
+
   // Progressive 3-Step Hydration: Prevents initial phone CPU hang on gallery open
   useEffect(() => {
     setRenderLimit(12); // Frame 1: Render top 12 cards only (1 screen) -> 0ms instant UI modal open!
@@ -769,15 +934,17 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     };
   }, []);
 
-  // Shortest Column Height Balancing — EXACTLY matching FeaturedStoryView
-  const { column0, column1 } = React.useMemo(() => {
-    const cols: [any[], any[]] = [[], []];
-    const colHeights = [0, 0];
+  const masonryColWidth = Math.floor((width - 16 - 6) / 2);
 
+  // Absolute Row-Wise Masonry Positioning Algorithm — Row-by-row parallel rendering with ZERO vertical gaps
+  const { positionedList, totalGridHeight, column0, column1 } = React.useMemo(() => {
+    const colHeights = [0, 0];
+    const cols: [any[], any[]] = [[], []];
+    const list: any[] = [];
     const visibleList = activeList.slice(0, renderLimit);
 
     for (let index = 0; index < visibleList.length; index++) {
-      const photo: any = visibleList[index];
+      const photo: any = { ...visibleList[index] };
       const realAspect = photo.width && photo.height && Number(photo.height) > 0
         ? Number(photo.width) / Number(photo.height)
         : (photo.aspectRatio || null);
@@ -792,17 +959,35 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
         cardAspect = cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5;
       }
 
+      const cardHeight = Math.round(masonryColWidth / cardAspect);
+      const targetCol = colHeights[0] <= colHeights[1] ? 0 : 1;
+
       photo.cardAspect = cardAspect;
+      photo.cardHeight = cardHeight;
+      photo.cardWidth = masonryColWidth;
+      photo.leftX = targetCol === 0 ? 0 : masonryColWidth + 6;
+      photo.topY = colHeights[targetCol];
+      photo.isColumn0 = targetCol === 0;
       photo.globalIndex = index;
 
-      const cardHeight = 1 / cardAspect;
-      const targetCol = colHeights[0] <= colHeights[1] ? 0 : 1;
       cols[targetCol].push(photo);
-      colHeights[targetCol] += cardHeight;
+      colHeights[targetCol] += cardHeight + 6;
+      list.push(photo);
     }
 
-    return { column0: cols[0], column1: cols[1] };
-  }, [activeList, renderLimit]);
+    const gridHeight = Math.max(colHeights[0], colHeights[1]);
+    return { positionedList: list, totalGridHeight: gridHeight, column0: cols[0], column1: cols[1] };
+  }, [activeList, renderLimit, masonryColWidth]);
+
+  // Pre-fetch top 12 images (both left & right columns) into native cache for 100% simultaneous 0ms paint
+  useEffect(() => {
+    if (!activeList || activeList.length === 0) return;
+    const topItems = activeList.slice(0, 12);
+    topItems.forEach((photo: any) => {
+      const uri = photo.r2Url || photo.uri || photo.fullUri;
+      if (uri) Image.prefetch(uri);
+    });
+  }, [activeTab, activeList]);
 
   // Interleaved Rows for 100% Simultaneous Left & Right Column Loading
   const interleavedRows = React.useMemo(() => {
@@ -988,53 +1173,36 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
 
     return (
-      <View style={styles.masonryGridContainer}>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.left) return null;
-            const img = row.left;
-            const cardId = img.id ? `c0-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c0-${norm}-${img.r2Url}-${rIdx}` : `c0-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
+      <View style={[styles.masonryGridContainer, { height: totalGridHeight }]}>
+        {positionedList.map((photo: any, idx: number) => {
+          const cardId = photo.id ? `card-${norm}-${photo.id}-${idx}` : (photo.r2Url ? `card-${norm}-${photo.r2Url}-${idx}` : `card-${norm}-${idx}`);
+          const refId = photo.id ? String(photo.id) : (photo.r2Url || `photo-${idx}`);
 
-            return (
+          return (
+            <View
+              key={cardId}
+              style={{
+                position: 'absolute',
+                left: photo.leftX,
+                top: photo.topY,
+                width: photo.cardWidth,
+                height: photo.cardHeight,
+              }}
+            >
               <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2}
-                isColumn0={true}
-                onSelect={(bounds) => openLightbox(img, bounds)}
+                img={photo}
+                index={photo.globalIndex}
+                isColumn0={photo.isColumn0}
+                onSelect={(bounds) => openLightbox(photo, bounds)}
                 onRegisterRef={(id, ref) => {
                   if (id) cardRefs.current[id] = ref;
                   if (refId) cardRefs.current[refId] = ref;
                 }}
                 onToggleLike={handleToggleLike}
               />
-            );
-          })}
-        </View>
-        <View style={styles.masonryColumn}>
-          {rows.map((row, rIdx) => {
-            if (!row.right) return null;
-            const img = row.right;
-            const cardId = img.id ? `c1-${norm}-${img.id}-${rIdx}` : (img.r2Url ? `c1-${norm}-${img.r2Url}-${rIdx}` : `c1-${norm}-${rIdx}`);
-            const refId = img.id ? String(img.id) : (img.r2Url || `photo-${rIdx}`);
-
-            return (
-              <MasonryCard
-                key={cardId}
-                img={img}
-                index={img.globalIndex ?? rIdx * 2 + 1}
-                isColumn0={false}
-                onSelect={(bounds) => openLightbox(img, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            );
-          })}
-        </View>
+            </View>
+          );
+        })}
       </View>
     );
   };
@@ -1084,7 +1252,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             onPress={handleBackAction}
             hitSlop={16}
           >
-            <Text style={styles.editorialBackText}>← BACK</Text>
+            <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
           </Pressable>
 
           <Animated.ScrollView
@@ -1092,52 +1260,10 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             bounces={true}
-            scrollEventThrottle={32}
+            scrollEventThrottle={16}
+            stickyHeaderIndices={[1]}
             removeClippedSubviews={true}
-            onScroll={(e) => {
-              if (isSmoothScrollingToTop.value) return; // 120 FPS Lock: Bypass JS re-renders during active smooth scroll to top animation
-              handleScroll(e);
-              const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
-              const currentY = contentOffset.y;
-              if (!isTabSwitchingRef.current) {
-                currentYRef.current = currentY;
-              }
-              const deltaY = currentY - lastScrollYRef.current;
-              lastScrollYRef.current = currentY;
-
-              // Appears after scrolling past 60 photos (~4200px scroll depth)
-              const past60 = currentY > 4200;
-              if (past60) {
-                if (deltaY < -20) {
-                  if (btnStateRef.current !== 'bright') {
-                    btnStateRef.current = 'bright';
-                    if (!isPast60Photos) setIsPast60Photos(true);
-                    backToTopOpacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
-                  }
-                } else if (deltaY > 20) {
-                  if (btnStateRef.current !== 'dim') {
-                    btnStateRef.current = 'dim';
-                    if (!isPast60Photos) setIsPast60Photos(true);
-                    backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
-                  }
-                } else if (btnStateRef.current === 'hidden') {
-                  btnStateRef.current = 'dim';
-                  if (!isPast60Photos) setIsPast60Photos(true);
-                  backToTopOpacity.value = withTiming(0.28, { duration: 300, easing: Easing.out(Easing.quad) });
-                }
-              } else {
-                if (btnStateRef.current !== 'hidden') {
-                  btnStateRef.current = 'hidden';
-                  if (isPast60Photos) setIsPast60Photos(false);
-                  backToTopOpacity.value = withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) });
-                }
-              }
-
-              const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 4500;
-              if (isNearBottom && hasMorePhotos) {
-                loadMorePhotos();
-              }
-            }}
+            onScroll={scrollHandler}
           >
             {/* ── 1. Hero Cover Banner (Exact Featured Story Style) ── */}
             <View style={styles.heroContainer}>
@@ -1180,55 +1306,88 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
               </View>
             </View>
 
-            {/* ── 2. Category Tabs (Dynamic website parity) ── */}
-            <View style={styles.galleryContainer}>
-              <View style={styles.tabsWrapper}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.tabsScrollContent}
-                  nestedScrollEnabled={true}
-                  decelerationRate="fast"
-                  overScrollMode="always"
-                >
-                  {availableTabs.map((tabName, tabIdx) => {
-                    const isActive = activeTab.toUpperCase() === tabName.toUpperCase();
-                    let tabCount: number | null = null;
-                    if (tabName === 'MY PHOTOS') {
-                      tabCount = photos.length;
-                    } else if (tabName === 'MY FAVOURITES') {
-                      tabCount = favoritesCount;
-                    } else if (tabName === 'ALL') {
-                      tabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
-                    } else {
-                      const normKey = tabName.trim().toUpperCase();
-                      tabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
-                    }
+            {/* ── 2. Sticky Category Header (Centered Active Album Toggle Bar) ── */}
+            <View style={[styles.stickyHeaderContainer, { paddingTop: Math.max(insets.top + 4, 28) }]}>
+              {(() => {
+                let activeTabCount: number | null = null;
+                if (activeTab === 'MY PHOTOS') {
+                  activeTabCount = photos.length;
+                } else if (activeTab === 'MY FAVOURITES') {
+                  activeTabCount = favoritesCount;
+                } else if (activeTab === 'ALL') {
+                  activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+                } else {
+                  const normKey = activeTab.trim().toUpperCase();
+                  activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+                }
 
-                    return (
-                      <TouchableOpacity
-                        key={`tab-${tabName}-${tabIdx}`}
-                        onPress={() => changeTabWithScrollMemory(tabName)}
-                        activeOpacity={0.7}
-                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                        style={[styles.tabButton, isActive && styles.tabButtonActive]}
-                      >
-                        <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
-                          {tabName} {tabCount !== null ? `(${tabCount})` : ''}
+                return (
+                  <View style={styles.stickyHeaderContainerInner}>
+                    <GHPressable
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                        setIsMoreDrawerOpen(true);
+                      }}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={styles.compactTabHeaderBarCentered}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                        <Text style={styles.compactTabActiveTitleCentered} numberOfLines={1}>
+                          {activeTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
                         </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
+                        <Text style={styles.downArrowIcon}>▾</Text>
+                      </View>
+                    </GHPressable>
 
-              {/* ── 3. 2-Column Balanced Masonry Grid ── */}
+                    {/* Right Corner Download Button (ONLY on MY PHOTOS tab) */}
+                    {activeTab.trim().toUpperCase().includes('MY PHOTO') ? (
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        disabled={isBatchDownloading}
+                        onPress={downloadAllMyPhotos}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={styles.headerRightDownloadButton}
+                      >
+                        {isBatchDownloading ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
+                            <Text style={styles.headerRightDownloadText}>
+                              {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
+                            </Text>
+                          </View>
+                        ) : (
+                          <Feather name="download" size={16} color="#3a3632" />
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                );
+              })()}
+            </View>
+
+            {/* ── 3. 2-Column Balanced Masonry Grid (Child 2) ── */}
+            <View style={styles.galleryContainer}>
               {renderCategoryGrid(activeTab)}
 
               {/* Loading indicator when fetching next page */}
               {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                   <ActivityIndicator size="small" color="#8c867e" />
+                </View>
+              ) : null}
+
+              {/* ── End of Album / Tab Editorial Footer (Only visible when last photo of the tab has been shown) ── */}
+              {isEndOfTabReached ? (
+                <View style={styles.endOfTabFooterContainer}>
+                  <View style={styles.endOfTabDividerLine} />
+                  <View style={styles.endOfTabBadgeContainer}>
+                    <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
+                    <Text style={styles.endOfTabBadgeText}>
+                      END OF {activeTab}
+                    </Text>
+                    <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
+                  </View>
+                  <View style={styles.endOfTabDividerLine} />
                 </View>
               ) : null}
             </View>
@@ -1253,6 +1412,77 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
           </Animated.View>
         </Animated.View>
       </GestureDetector>
+
+      {/* ── "+ MORE / ALL ALBUMS" BOTTOM DRAWER OVERLAY (Outside GestureDetector) ── */}
+      {isMoreDrawerOpen ? (
+        <View style={styles.drawerOverlay}>
+          <GHPressable style={styles.drawerBackdrop} onPress={() => setIsMoreDrawerOpen(false)} />
+          <View style={[styles.drawerContent, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}>
+            {/* Handle Bar */}
+            <View style={styles.drawerHandleBar} />
+
+            {/* Header */}
+            <View style={styles.drawerHeader}>
+              <Text style={styles.drawerTitle}>ALL ALBUMS & EVENTS</Text>
+              <GHTouchableOpacity
+                onPress={() => setIsMoreDrawerOpen(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={styles.drawerCloseButton}
+              >
+                <Text style={styles.drawerCloseText}>✕</Text>
+              </GHTouchableOpacity>
+            </View>
+
+            {/* Tabs List */}
+            <ScrollView
+              scrollEnabled={availableTabs.length > 8}
+              bounces={false}
+              showsVerticalScrollIndicator={availableTabs.length > 8}
+              style={styles.drawerScrollView}
+            >
+              {availableTabs.map((tabName, tabIdx) => {
+                const isActive = activeTab.toUpperCase() === tabName.toUpperCase();
+                let tabCount: number | null = null;
+                if (tabName === 'MY PHOTOS') {
+                  tabCount = photos.length;
+                } else if (tabName === 'MY FAVOURITES') {
+                  tabCount = favoritesCount;
+                } else if (tabName === 'ALL') {
+                  tabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+                } else {
+                  const normKey = tabName.trim().toUpperCase();
+                  tabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={`drawer-tab-${tabName}-${tabIdx}`}
+                    delayPressIn={60}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                      changeTabWithScrollMemory(tabName);
+                      setIsMoreDrawerOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                    style={[styles.drawerItem, isActive && styles.drawerItemActive]}
+                  >
+                    <View style={styles.drawerItemLeft}>
+                      <Text style={[styles.drawerItemText, isActive && styles.drawerItemTextActive]}>
+                        {tabName}
+                      </Text>
+                      {tabCount !== null ? (
+                        <Text style={[styles.drawerItemCount, isActive && styles.drawerItemCountActive]}>
+                          ({tabCount})
+                        </Text>
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      ) : null}
 
       {/* ── 4. Universal Editorial Lightbox Component ── */}
       {activeImageIndex !== null && (
@@ -1293,14 +1523,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   editorialBackText: {
-    fontFamily: FONT_JOST_SEMIBOLD,
+    fontFamily: FONT_JOST_REGULAR,
     fontSize: 11,
     lineHeight: 14,
     letterSpacing: 1.5,
     color: '#ffffff',
-    textShadowColor: 'rgba(0, 0, 0, 0.65)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
   scrollContent: {
     paddingBottom: 40,
@@ -1417,8 +1644,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   masonryGridContainer: {
-    flexDirection: 'row',
-    gap: 6,
+    position: 'relative',
     width: '100%',
     paddingHorizontal: 8,
   },
@@ -1429,7 +1655,7 @@ const styles = StyleSheet.create({
   },
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e8e4de',
     overflow: 'hidden',
   },
   skeletonCard: {
@@ -1469,5 +1695,202 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  editorialBackTextDark: {
+    color: '#1c1a18',
+    textShadowColor: 'transparent',
+  },
+  stickyHeaderContainer: {
+    backgroundColor: '#ffffff',
+    zIndex: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  drawerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 1000,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  drawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  drawerContent: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    maxHeight: screenHeight * 0.85,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  drawerHandleBar: {
+    width: 38,
+    height: 4,
+    backgroundColor: '#d6d1ca',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  drawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede8',
+    marginBottom: 8,
+  },
+  drawerTitle: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: '#1c1a18',
+    fontWeight: '600',
+  },
+  drawerCloseButton: {
+    padding: 4,
+  },
+  drawerCloseText: {
+    fontSize: 16,
+    color: '#8c867e',
+    fontWeight: '300',
+  },
+  drawerScrollView: {
+    marginVertical: 4,
+  },
+  drawerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f7f5f2',
+  },
+  drawerItemActive: {
+    backgroundColor: '#faf8f5',
+    borderRadius: 8,
+  },
+  drawerItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  drawerItemText: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: '#8c867e',
+  },
+  drawerItemTextActive: {
+    color: '#000000',
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontWeight: '600',
+  },
+  drawerItemCount: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 11,
+    letterSpacing: 1,
+    color: '#b0a9a0',
+  },
+  drawerItemCountActive: {
+    color: '#000000',
+    fontWeight: '600',
+  },
+  drawerItemCheck: {
+    fontSize: 13,
+    color: '#000000',
+    fontWeight: 'bold',
+  },
+  compactTabHeaderBarCentered: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede8',
+    width: '100%',
+  },
+  compactTabActiveTitleCentered: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: '#000000',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  downArrowIcon: {
+    fontSize: 15,
+    lineHeight: 16,
+    color: '#000000',
+  },
+  stickyHeaderContainerInner: {
+    position: 'relative',
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRightDownloadButton: {
+    position: 'absolute',
+    right: 16,
+    top: 0,
+    bottom: 0,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  headerRightDownloadIcon: {
+    fontSize: 14,
+  },
+  headerRightDownloadText: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 10,
+    color: '#3a3632',
+    fontWeight: '600',
+  },
+  endOfTabFooterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 24,
+    width: '100%',
+    gap: 12,
+  },
+  endOfTabDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e8e4de',
+  },
+  endOfTabBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  endOfTabBadgeSymbol: {
+    fontSize: 9,
+    color: '#8c867e',
+  },
+  endOfTabBadgeText: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 10,
+    letterSpacing: 2,
+    color: '#8c867e',
+    fontWeight: '500',
   },
 });
