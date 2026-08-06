@@ -996,18 +996,34 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   useEffect(() => {
     const allowPhotoDownloads = eventDetails?.allowDownloads ?? true;
     const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
+    const shouldPrevent = !allowPhotoDownloads || !allowBulkDownloads;
 
     if (ScreenCapture) {
-      if (!allowPhotoDownloads || !allowBulkDownloads) {
-        ScreenCapture.preventScreenCaptureAsync?.().catch(() => {});
+      if (shouldPrevent) {
+        ScreenCapture.preventScreenCaptureAsync?.('gallery_protection').catch(() => {});
       } else {
-        ScreenCapture.allowScreenCaptureAsync?.().catch(() => {});
+        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
       }
+    }
+
+    let listenerSub: any = null;
+    if (shouldPrevent && ScreenCapture && typeof ScreenCapture.addScreenshotListener === 'function') {
+      try {
+        listenerSub = ScreenCapture.addScreenshotListener(() => {
+          Alert.alert(
+            'Screenshots Restricted 🛡️',
+            'Screenshots and screen recordings are disabled for this private event gallery by the studio host.'
+          );
+        });
+      } catch (_) {}
     }
 
     return () => {
       if (ScreenCapture) {
-        ScreenCapture.allowScreenCaptureAsync?.().catch(() => {});
+        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
+      }
+      if (listenerSub && typeof listenerSub.remove === 'function') {
+        listenerSub.remove();
       }
     };
   }, [eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
