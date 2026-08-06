@@ -76,6 +76,10 @@ export function useApplePhotosGesture({
   const activePointerCount = useSharedValue(0);
   const needsPanReset = useSharedValue(false);
 
+  const logGestureDebug = (msg: string) => {
+    console.log(`[MYCIRCLE DEBUG 🔎 GESTURE] ${msg}`);
+  };
+
   /**
    * Smooth spring-back to valid target bounds on final release (when 0 pointers remain).
    */
@@ -94,6 +98,7 @@ export function useApplePhotosGesture({
       'worklet';
       isPinching.value = true;
       needsPanReset.value = true;
+      runOnJS(logGestureDebug)(`PINCH START | currentScale: ${scale.value.toFixed(2)} | pinchScale: ${e.scale.toFixed(2)}`);
       runOnJS(onInteractionStart)();
       startScale.value = scale.value;
       startTx.value = translateX.value;
@@ -120,6 +125,7 @@ export function useApplePhotosGesture({
     .onEnd(() => {
       'worklet';
       isPinching.value = false;
+      runOnJS(logGestureDebug)(`PINCH END | finalScale: ${scale.value.toFixed(2)}`);
       runOnJS(onInteractionEnd)();
       if (scale.value <= 1.001 || activePointerCount.value === 0) {
         finishGesture();
@@ -282,6 +288,7 @@ export function useApplePhotosGesture({
     .onEnd(() => {
       'worklet';
       if (scale.value > 1.01) return;
+      runOnJS(logGestureDebug)('SINGLE TAP FIRED -> Toggling Controls');
       runOnJS(onToggleControls)();
     });
 
@@ -291,6 +298,7 @@ export function useApplePhotosGesture({
     .maxDistance(Platform.OS === 'android' ? 35 * PixelRatio.get() : 35)
     .onEnd((e) => {
       'worklet';
+      runOnJS(logGestureDebug)(`DOUBLE TAP FIRED | currentScale: ${scale.value.toFixed(2)} | touch: (${e.x.toFixed(0)}, ${e.y.toFixed(0)})`);
       if (scale.value > 1.01) {
         finishGesture();
         scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
