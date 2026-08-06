@@ -964,28 +964,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
 
   // Exact Landing Tab Rules:
-  // - Full Access: Lands on ALL
+  // - Full Access (including Bride & Groom): Lands on ALL
   // - Partial Access: If highlights.count > 0 -> HIGHLIGHTS, else -> MY PHOTOS
   useEffect(() => {
-    if (!hasSetLandingTabRef.current) {
-      if (hasFullAccess === false) {
-        hasSetLandingTabRef.current = true;
-        const targetTab = highlightsCount > 0 ? 'HIGHLIGHTS' : 'MY PHOTOS';
-        setActiveTab(targetTab);
-      } else if (hasFullAccess === true) {
-        hasSetLandingTabRef.current = true;
+    if (!isLoading && !hasSetLandingTabRef.current) {
+      hasSetLandingTabRef.current = true;
+      if (hasFullAccess) {
         setActiveTab('ALL');
+      } else {
+        const hasHighlights = highlightsCount > 0 || availableTabs.includes('HIGHLIGHTS');
+        const targetTab = hasHighlights ? 'HIGHLIGHTS' : 'MY PHOTOS';
+        setActiveTab(targetTab);
       }
     }
-  }, [hasFullAccess, highlightsCount]);
+  }, [isLoading, hasFullAccess, highlightsCount, availableTabs]);
 
   // Sanitize activeTab: Ensure partial access users never stay on 'ALL' if it's not in availableTabs
   useEffect(() => {
-    if (availableTabs.length > 0 && !availableTabs.map(t => t.toUpperCase()).includes(activeTab.toUpperCase())) {
+    if (!isLoading && availableTabs.length > 0 && !availableTabs.map(t => t.toUpperCase()).includes(activeTab.toUpperCase())) {
       const fallbackTab = availableTabs.includes('HIGHLIGHTS') ? 'HIGHLIGHTS' : availableTabs[0];
       setActiveTab(fallbackTab);
     }
-  }, [availableTabs, activeTab]);
+  }, [isLoading, availableTabs, activeTab]);
 
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
