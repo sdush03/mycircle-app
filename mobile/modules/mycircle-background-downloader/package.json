@@ -1,0 +1,9 @@
+{
+  "name": "mycircle-background-downloader",
+  "version": "1.0.0",
+  "description": "MyCircle Background Downloader Native Expo Module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "author": "Misty Visuals",
+  "license": "MIT"
+}

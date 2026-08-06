@@ -1,0 +1,10 @@
+{
+  "name": "mycircle-background-downloader",
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["MyCircleBackgroundDownloaderModule"]
+  },
+  "android": {
+    "modules": ["com.mycircle.downloader.MyCircleBackgroundDownloaderModule"]
+  }
+}

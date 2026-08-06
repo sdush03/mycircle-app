@@ -35,6 +35,8 @@ import { LightboxImageItem } from './components/LightboxImageItem';
 import { Image as ExpoImage } from 'expo-image';
 import { savesService } from '../../../services/savesService';
 import { API_BASE_URL } from '../../../services/api';
+import { GlobalDownloadManagerService } from '../../../services/downloader/GlobalDownloadManagerService';
+
 import {
   FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
@@ -456,13 +458,28 @@ export function EditorialLightbox({
         return;
       }
 
-      const filename = currentItem.filename || `photo_${Date.now()}`;
-      let safeName = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+      // Deterministic ID & Filename Extraction (Never use random Date.now())
+      const photoId = currentItem.id || currentItem.photo_id || currentItem.photoId;
+
+      let urlFileName = '';
+      if (rawTargetUri) {
+        try {
+          const cleanUrl = rawTargetUri.split('?')[0].split('#')[0];
+          const parts = cleanUrl.split('/');
+          urlFileName = parts[parts.length - 1];
+        } catch (e) {}
+      }
+
+      const baseName = currentItem.filename || (photoId ? `photo_${photoId}` : urlFileName) || 'photo_asset';
+      let safeName = baseName.replace(/[^a-zA-Z0-9_.-]/g, '_');
       if (!safeName.match(/\.(jpg|jpeg|png)$/i)) {
         safeName += '.jpg';
       }
 
-      console.log(`[DOWNLOAD DEBUG 📁] Target Filename: ${safeName} | OS: ${Platform.OS}`);
+      const targetId = photoId ? `photo_${photoId}` : `task_${safeName}`;
+
+      console.log(`[DOWNLOAD DEBUG 📁] Target ID: ${targetId} | Filename: ${safeName} | OS: ${Platform.OS}`);
+
 
       if (Platform.OS === 'web') {
         try {
@@ -492,87 +509,31 @@ export function EditorialLightbox({
           showToast('Downloading photo...');
         }
       } else {
-        // Native Mobile (iOS / Android)
-        showToast('Saving photo to Photos...');
-        console.log('[DOWNLOAD DEBUG 📱 STEP 1] Preparing FileSystem cache path...');
+        // Native Mobile (iOS / Android) - Direct through Native SQLite Download Manager
+        console.log('[DOWNLOAD DEBUG 📱 NATIVE ENGINE] Triggering GlobalDownloadManagerService...');
+        const downloadService = GlobalDownloadManagerService.getInstance();
+        const expectedSize = currentItem.size || currentItem.file_size || currentItem.expectedSizeBytes || 0;
 
-        const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
-        const cleanCacheDir = cacheDir.replace(/\/+$/, '');
-        const localPath = `${cleanCacheDir}/${safeName}`;
-        console.log('[DOWNLOAD DEBUG 📱 STEP 1] Local Path:', localPath);
+        const res = await downloadService.startSingleDownload({
 
-        let downloadedFileUri: string | null = null;
-        try {
-          console.log('[DOWNLOAD DEBUG 📱 STEP 2] Starting FileSystem.downloadAsync...');
-          const startTime = Date.now();
-          const downloadRes = await FileSystem.downloadAsync(rawTargetUri, localPath);
-          const duration = Date.now() - startTime;
-          console.log(`[DOWNLOAD DEBUG 📱 STEP 2] Download completed in ${duration}ms | Status: ${downloadRes?.status} | URI: ${downloadRes?.uri}`);
-          if (downloadRes && downloadRes.uri) {
-            downloadedFileUri = downloadRes.uri;
-          }
-        } catch (dlErr: any) {
-          console.error('[DOWNLOAD DEBUG ❌ STEP 2 DOWNLOAD CRASH]:', dlErr);
-          Alert.alert('Download File Error', `FileSystem.downloadAsync error: ${dlErr?.message || String(dlErr)}`);
+          id: targetId,
+          url: rawTargetUri,
+          destinationPath: `downloads/${safeName}`,
+          fileType: 'PHOTO',
+          sourceType: 'INDIVIDUAL_PHOTO',
+          exportMode: 'BOTH',
+          expectedSizeBytes: expectedSize,
+        });
+
+        if (res.isDuplicate) {
+          console.log('[DOWNLOAD DEBUG 🛡️] Photo is ALREADY in native queue or disk.');
+          showToast('Photo already saved in your library 🛡️');
+        } else {
+          console.log('[DOWNLOAD DEBUG ✅] Enqueued single download via native engine.');
+          showToast('Photo queued for download... ✨');
         }
-
-        if (!downloadedFileUri) {
-          console.warn('[DOWNLOAD DEBUG ❌ STEP 2] downloadedFileUri is null!');
-          showToast('Failed to download photo file');
-          return;
-        }
-
-        console.log('[DOWNLOAD DEBUG 📱 STEP 3] Checking MediaLibrary permissions...');
-        let hasPermission = false;
-        try {
-          const perm = await MediaLibrary.requestPermissionsAsync();
-          console.log('[DOWNLOAD DEBUG 📱 STEP 3] Permission result:', JSON.stringify(perm));
-          hasPermission = perm.status === 'granted';
-        } catch (pErr: any) {
-          console.error('[DOWNLOAD DEBUG ❌ STEP 3 PERMISSION CRASH]:', pErr);
-        }
-
-        if (hasPermission) {
-          console.log('[DOWNLOAD DEBUG 📱 STEP 4] Saving photo asset to device Photos Library...');
-          try {
-            if (typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {
-              console.log('[DOWNLOAD DEBUG 📱 STEP 4] Calling MediaLibrary.saveToLibraryAsync...');
-              await (MediaLibrary as any).saveToLibraryAsync(downloadedFileUri);
-              console.log('[DOWNLOAD DEBUG ✅ STEP 4 SUCCESS] Photo saved via saveToLibraryAsync!');
-              showToast('Photo saved to Photos! ✨');
-              return;
-            } else if (typeof MediaLibrary.createAssetAsync === 'function') {
-              console.log('[DOWNLOAD DEBUG 📱 STEP 4] Calling MediaLibrary.createAssetAsync...');
-              const asset = await MediaLibrary.createAssetAsync(downloadedFileUri);
-              console.log('[DOWNLOAD DEBUG ✅ STEP 4 SUCCESS] Created Asset:', JSON.stringify(asset));
-              if (asset) {
-                showToast('Photo saved to Photos! ✨');
-                return;
-              }
-            }
-          } catch (saveErr: any) {
-            console.error('[DOWNLOAD DEBUG ❌ STEP 4 SAVE CRASH]:', saveErr);
-          }
-        }
-
-        console.log('[DOWNLOAD DEBUG 📱 STEP 5] Attempting Native Sharing fallback...');
-        try {
-          if (Sharing && typeof Sharing.isAvailableAsync === 'function' && (await Sharing.isAvailableAsync())) {
-            console.log('[DOWNLOAD DEBUG 📱 STEP 5] Launching Sharing.shareAsync...');
-            await Sharing.shareAsync(downloadedFileUri, {
-              mimeType: 'image/jpeg',
-              UTI: 'public.jpeg',
-            });
-            console.log('[DOWNLOAD DEBUG ✅ STEP 5 SUCCESS] Sharing sheet displayed!');
-            showToast('Photo ready to save');
-            return;
-          }
-        } catch (shareErr: any) {
-          console.error('[DOWNLOAD DEBUG ❌ STEP 5 SHARING CRASH]:', shareErr);
-        }
-
-        showToast('Save failed, please check permissions');
       }
+
     } catch (err: any) {
       console.error('[DOWNLOAD DEBUG ❌ UNHANDLED TOP-LEVEL CRASH]:', err);
       Alert.alert('Download Error', `Unhandled error in handleDownload: ${err?.message || String(err)}`);
