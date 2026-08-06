@@ -994,13 +994,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
   // Screen Capture Protection: Prevent screenshots if allowDownloads or allowBulkDownloads is disabled
   useEffect(() => {
+    if (isLoading || !eventDetails) return;
+
     const allowPhotoDownloads = eventDetails?.allowDownloads ?? true;
     const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
     const shouldPrevent = !allowPhotoDownloads || !allowBulkDownloads;
 
+    console.log(`[MYCIRCLE SECURITY 🛡️] PhotoDownloads: ${allowPhotoDownloads} | BulkDownloads: ${allowBulkDownloads} | PreventCapture: ${shouldPrevent}`);
+
     if (ScreenCapture) {
       if (shouldPrevent) {
-        ScreenCapture.preventScreenCaptureAsync?.('gallery_protection').catch(() => {});
+        ScreenCapture.preventScreenCaptureAsync?.('gallery_protection').catch((err: any) => {
+          console.warn('[MYCIRCLE SECURITY ⚠️] preventScreenCapture error:', err);
+        });
       } else {
         ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
       }
@@ -1019,14 +1025,20 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
     }
 
     return () => {
-      if (ScreenCapture) {
-        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
-      }
       if (listenerSub && typeof listenerSub.remove === 'function') {
         listenerSub.remove();
       }
     };
-  }, [eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
+  }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
+
+  // Release screen capture protection when leaving the gallery view
+  useEffect(() => {
+    return () => {
+      if (ScreenCapture) {
+        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
+      }
+    };
+  }, []);
 
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
