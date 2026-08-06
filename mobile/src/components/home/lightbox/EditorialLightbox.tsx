@@ -724,12 +724,6 @@ export function EditorialLightbox({
                   index,
                 })}
                 scrollEventThrottle={16}
-                onScroll={(e) => {
-                  const nextIdx = Math.round(e.nativeEvent.contentOffset.x / (width + 18));
-                  if (nextIdx >= 0 && nextIdx < images.length && nextIdx !== activeIdx) {
-                    setActiveIdx(nextIdx);
-                  }
-                }}
                 onScrollBeginDrag={() => {
                   setShowControls(true);
                   pauseAutoHideTimer();
