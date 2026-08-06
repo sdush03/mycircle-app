@@ -1276,31 +1276,46 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
             </View>
           </TouchableOpacity>
 
-          {/* Right Corner Download Button (ONLY on MY PHOTOS or MY FAVOURITES tab) */}
-          {activeTab.trim().toUpperCase().includes('MY PHOTO') || activeTab.trim().toUpperCase().includes('MY FAVOURITES') || activeTab.trim().toUpperCase().includes('MY FAVORITE') ? (
-            <TouchableOpacity
-              activeOpacity={0.75}
-              disabled={isBatchDownloading}
-              onPress={downloadCurrentTabPhotos}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={styles.headerRightDownloadButton}
-            >
-              {isBatchDownloading ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
-                  <Text style={styles.headerRightDownloadText}>
-                    {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
-                  </Text>
-                </View>
-              ) : (
-                <Feather name="download" size={16} color="#3a3632" />
-              )}
-            </TouchableOpacity>
-          ) : null}
+          {/* Right Corner Download Button (ALL tabs for BRIDE/GROOM/HOST, or MY PHOTOS / MY FAVOURITES for GUESTS) */}
+          {(() => {
+            const isBrideOrGroomOrHost = Boolean(
+              hasFullAccess ||
+              profile?.displayRole === 'BRIDE' ||
+              profile?.displayRole === 'GROOM' ||
+              (profile as any)?.role === 'BRIDE' ||
+              (profile as any)?.role === 'GROOM'
+            );
+            const isDownloadableTab = isBrideOrGroomOrHost || (
+              activeTab.trim().toUpperCase().includes('MY PHOTO') ||
+              activeTab.trim().toUpperCase().includes('MY FAVOURITES') ||
+              activeTab.trim().toUpperCase().includes('MY FAVORITE')
+            );
+            if (!isDownloadableTab) return null;
+            return (
+              <TouchableOpacity
+                activeOpacity={0.75}
+                disabled={isBatchDownloading}
+                onPress={downloadCurrentTabPhotos}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.headerRightDownloadButton}
+              >
+                {isBatchDownloading ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
+                    <Text style={styles.headerRightDownloadText}>
+                      {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
+                    </Text>
+                  </View>
+                ) : (
+                  <Feather name="download" size={16} color="#3a3632" />
+                )}
+              </TouchableOpacity>
+            );
+          })()}
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets]);
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, hasFullAccess, profile]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
