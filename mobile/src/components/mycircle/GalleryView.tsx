@@ -25,6 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
+import * as ScreenCapture from 'expo-screen-capture';
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -987,6 +988,22 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
     }
   }, [isLoading, availableTabs, activeTab]);
 
+  // Screen Capture Protection: Prevent screenshots if allowDownloads or allowBulkDownloads is disabled
+  useEffect(() => {
+    const allowPhotoDownloads = eventDetails?.allowDownloads ?? true;
+    const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
+
+    if (!allowPhotoDownloads || !allowBulkDownloads) {
+      ScreenCapture.preventScreenCaptureAsync().catch(() => {});
+    } else {
+      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+    }
+
+    return () => {
+      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+    };
+  }, [eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
+
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
     if (currentUpper === 'MY PHOTOS') {
@@ -1388,8 +1405,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
             </View>
           </TouchableOpacity>
 
-          {/* Right Corner Download Button (ALL tabs strictly for BRIDE or GROOM; MY PHOTOS & MY FAVOURITES for all other guests) */}
+          {/* Right Corner Download Button (Strictly when allowBulkDownloads is true; ALL tabs for BRIDE or GROOM; MY PHOTOS & MY FAVOURITES for all other guests) */}
           {(() => {
+            const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
+            if (!allowBulkDownloads) return null;
+
             const isDownloadableTab = isBrideOrGroom || (
               activeTab.trim().toUpperCase().includes('MY PHOTO') ||
               activeTab.trim().toUpperCase().includes('MY FAVOURITES') ||
@@ -1642,7 +1662,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
               onGetBoundsForIndex={getBoundsForIndex}
               onToggleLike={handleToggleLike}
               likeTargetName="My Favourites"
-              enableDownload={true}
+              enableDownload={eventDetails?.allowDownloads ?? true}
               totalCount={activeTabTotalCount}
               enableDelete={isBrideOrGroom}
               onDeletePhoto={handleDeletePhoto}
