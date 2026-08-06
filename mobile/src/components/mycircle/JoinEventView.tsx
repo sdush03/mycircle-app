@@ -139,15 +139,12 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
       <StatusBar barStyle="dark-content" />
       
       {/* Editorial Header */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top + 8, 20) }]}>
+      <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <View>
             <Text style={styles.headerCategory}>MY CIRCLE</Text>
             <Text style={styles.headerTitle}>All Celebrations</Text>
           </View>
-          <Pressable style={styles.addBtn} onPress={() => setIsJoinModalOpen(true)}>
-            <Text style={styles.addBtnText}>+ Join</Text>
-          </Pressable>
         </View>
         <Text style={styles.headerSubtitle}>
           Select a celebration gallery to explore your private memories.
@@ -267,7 +264,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: PADDING,
-    paddingTop: 16,
+    paddingTop: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede8',

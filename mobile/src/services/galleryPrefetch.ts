@@ -46,6 +46,7 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
         width: p.width,
         height: p.height,
         tabName: p.tabName || p.tab_name || null,
+        blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
         isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
         likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
       };
@@ -71,7 +72,7 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
               if (Array.isArray(tList) && tList.length > 0) {
                 const mappedTab = tList.map(mapPhotoItem);
                 prefetchedTabCache[norm] = mappedTab;
-                mappedTab.slice(0, 20).forEach((p: any) => {
+                mappedTab.forEach((p: any) => {
                   if (p.r2Url) Image.prefetch(p.r2Url);
                 });
               }
@@ -86,7 +87,7 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
     const totalCount = typeof photosRes.data?.total === 'number' ? photosRes.data.total : mappedPhotos.length;
 
     if (mappedPhotos.length > 0) {
-      mappedPhotos.slice(0, 30).forEach((p: any) => {
+      mappedPhotos.forEach((p: any) => {
         if (p.r2Url) Image.prefetch(p.r2Url);
       });
     }

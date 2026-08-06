@@ -150,19 +150,28 @@ export default function JoinCelebrationModal({
       const eventData = res.data;
 
       await saveEventToRecent(slug, eventData.title || slug);
-      setEventDetails(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
-      
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      if (onSuccess) {
-        onSuccess(slug, passcode);
-      }
-      handleClose();
+      
+      // Close modal smoothly FIRST before setting event details to avoid unmount animation hang
+      backdropOpacity.value = withTiming(0, { duration: 150 });
+      sheetTranslateY.value = withTiming(
+        height,
+        { duration: 180, easing: Easing.in(Easing.poly(3)) },
+        () => {
+          runOnJS(setIsSubmitting)(false);
+          runOnJS(setModalVisible)(false);
+          runOnJS(onClose)();
+          runOnJS(setEventDetails)(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
+          if (onSuccess) {
+            runOnJS(onSuccess)(slug, passcode);
+          }
+        }
+      );
     } catch (err: any) {
+      setIsSubmitting(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       const msg = err.response?.data?.error || 'Celebration not found. Please check your code or link.';
       setErrorMessage(msg);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -324,14 +333,13 @@ export default function JoinCelebrationModal({
 
               <TextInput
                 style={[styles.textInput, errorMessage ? styles.textInputError : null]}
-                placeholder="Enter event code or paste link"
+                placeholder="ENTER EVENT CODE OR PASTE LINK"
                 placeholderTextColor="#9ca3af"
-                autoCapitalize="none"
+                autoCapitalize="characters"
                 autoCorrect={false}
                 value={eventInput}
                 onChangeText={(val) => {
-                  setEventInput(val);
-                  Haptics.selectionAsync().catch(() => {});
+                  setEventInput(val.toUpperCase());
                   if (errorMessage) setErrorMessage(null);
                 }}
                 editable={!isSubmitting}

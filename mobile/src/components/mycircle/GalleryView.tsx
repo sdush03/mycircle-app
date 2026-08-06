@@ -13,10 +13,12 @@ import {
   Modal,
   InteractionManager,
   TouchableOpacity,
+  Platform,
   Image as RNImage,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { FlashList } from '@shopify/flash-list';
+import { MasonryFlashList } from '../common/MasonryFlashList';
+import { getPhotoAspect } from '../../utils/photoDimensionCache';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -63,9 +65,33 @@ interface Photo {
   r2Url: string;
   width?: number;
   height?: number;
+  aspectRatio?: number | null;
   isLiked?: boolean;
   likeCount?: number;
   [key: string]: any;
+}
+
+function mapPhotoItem(p: any): Photo {
+  const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
+  const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
+  const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
+  const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
+  const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
+  const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null));
+  return {
+    id: p.id,
+    r2Url: thumbUri,
+    uri: thumbUri,
+    fullUri: fullUri,
+    photoUrl: fullUri,
+    width: w || undefined,
+    height: h || undefined,
+    aspectRatio,
+    blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
+    tabName: p.tabName || p.tab_name || null,
+    isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
+    likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
+  };
 }
 
 interface GalleryViewProps {
@@ -73,14 +99,13 @@ interface GalleryViewProps {
   onChangeEvent: () => void;
 }
 
-export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProps) {
+const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }: GalleryViewProps) {
   const insets = useSafeAreaInsets();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [allPhotos, setAllPhotos] = useState<Photo[]>([]);
   const [totalAllPhotosCount, setTotalAllPhotosCount] = useState<number | null>(null);
   const [eventDetails, setEventDetailsData] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<string>('ALL');
-  const [renderLimit, setRenderLimit] = useState<number>(40);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [allPhotosOffset, setAllPhotosOffset] = useState(0);
@@ -204,6 +229,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   const eventHeadersRef = useRef<Record<string, string>>({});
   const allPhotosOffsetRef = useRef<number>(0);
   const tabOffsetsRef = useRef<Record<string, number>>({});
+  const tabHasMoreRef = useRef<Record<string, boolean>>({});
   const eventSlug = useAuthStore((state) => state.eventSlug);
   const passcode = useAuthStore((state) => state.passcode);
   const profile = useAuthStore((state) => state.profile);
@@ -227,26 +253,114 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
   const exactTouchPoint = Math.round(screenHeight * 0.70) - Math.round(insets.top + 45);
 
+  const drawerProgress = useSharedValue(0);
+
+  const openDrawerWithAnimation = useCallback(() => {
+    setIsMoreDrawerOpen(true);
+    drawerProgress.value = 0;
+    drawerProgress.value = withTiming(1, { duration: 320, easing: Easing.bezier(0.25, 1, 0.5, 1) });
+  }, [drawerProgress]);
+
+  const closeDrawerWithAnimation = useCallback(() => {
+    drawerProgress.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) }, (finished) => {
+      'worklet';
+      if (finished) {
+        runOnJS(setIsMoreDrawerOpen)(false);
+      }
+    });
+  }, [drawerProgress]);
+
+  const drawerPanY = useSharedValue(0);
+
+  const drawerBackdropStyle = useAnimatedStyle(() => ({
+    opacity: 0,
+  }));
+
+  const drawerContentStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - drawerProgress.value) * screenHeight + Math.max(0, drawerPanY.value) }],
+  }));
+
+  const drawerHandlePanGesture = Gesture.Pan()
+    .onUpdate((e) => {
+      'worklet';
+      drawerPanY.value = e.translationY;
+    })
+    .onEnd((e) => {
+      'worklet';
+      if (e.translationY > 80 || e.velocityY > 500) {
+        drawerPanY.value = withTiming(screenHeight, { duration: 250, easing: Easing.out(Easing.quad) }, (finished) => {
+          'worklet';
+          if (finished) {
+            runOnJS(setIsMoreDrawerOpen)(false);
+            drawerPanY.value = 0;
+            drawerProgress.value = 0;
+          }
+        });
+      } else {
+        drawerPanY.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.quad) });
+      }
+    });
+
   const animatedBackTextStyle = useAnimatedStyle(() => ({
     color: scrollY.value >= exactTouchPoint ? '#3a3632' : '#ffffff',
   }));
 
   const loadMorePhotosRef = useRef<(() => void) | null>(null);
+  const prefetchedUrlsRef = useRef<Set<string>>(new Set());
+  const activeListRef = useRef<Photo[]>([]);
+  const prevTabRef = useRef<string | null>(null);
+  const hasSetLandingTabRef = useRef<boolean>(false);
 
-  const triggerLoadMore = useCallback(() => {
-    if (hasMorePhotos && !isFetchingMoreRef.current && loadMorePhotosRef.current) {
+  const handleViewportScroll = useCallback((offsetY: number, layoutHeight: number, contentHeight: number) => {
+    currentYRef.current = offsetY;
+
+    const heroHeight = Math.round(screenHeight * 0.70);
+    const relativeY = Math.max(0, offsetY - heroHeight);
+    const newEnd = Math.max(0, Math.floor(relativeY / 220) * 2 - 4) + 20;
+
+    // Viewport-Proximity Pre-fetch: pre-fetch the next 12 cards right below the user's screen
+    const upcomingPhotos = activeListRef.current.slice(newEnd, newEnd + 12);
+    upcomingPhotos.forEach((photo) => {
+      const uri = photo.r2Url || photo.uri || photo.fullUri;
+      if (uri && !prefetchedUrlsRef.current.has(uri)) {
+        prefetchedUrlsRef.current.add(uri);
+        Image.prefetch(uri);
+      }
+    });
+
+    const isNearBottom = layoutHeight + offsetY >= contentHeight - 8000;
+    if (isNearBottom && hasMorePhotos && !isFetchingMoreRef.current && loadMorePhotosRef.current) {
       loadMorePhotosRef.current();
     }
   }, [hasMorePhotos]);
 
+  const isScrollingRef = useRef<boolean>(false);
+
+  const handleScrollState = useCallback((isScrolling: boolean) => {
+    isScrollingRef.current = isScrolling;
+  }, []);
+
   const scrollHandler = useAnimatedScrollHandler({
+    onBeginDrag: () => {
+      'worklet';
+      runOnJS(handleScrollState)(true);
+    },
     onScroll: (event) => {
       'worklet';
       scrollY.value = event.contentOffset.y;
-      const isNearBottom = event.layoutMeasurement.height + event.contentOffset.y >= event.contentSize.height - 4500;
-      if (isNearBottom) {
-        runOnJS(triggerLoadMore)();
-      }
+      runOnJS(handleViewportScroll)(
+        event.contentOffset.y,
+        event.layoutMeasurement.height,
+        event.contentSize.height
+      );
+    },
+    onEndDrag: () => {
+      'worklet';
+      runOnJS(handleScrollState)(false);
+    },
+    onMomentumEnd: () => {
+      'worklet';
+      runOnJS(handleScrollState)(false);
     },
   });
 
@@ -329,6 +443,21 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     return () => subscription.remove();
   }, [handleBackAction]);
 
+  // Viewport-Proximity & Page Batch Pre-Fetch Engine: Prefetches upcoming 20 thumbnail photos into native image cache
+  const scheduleBatchPrefetch = useCallback((mappedList: Photo[]) => {
+    if (!mappedList || mappedList.length === 0) return;
+
+    // Prefetch next 20 thumbnail photos (~3 screens ahead) without choking network connection sockets
+    const chunk = mappedList.slice(0, 20);
+    chunk.forEach((p) => {
+      const targetUri = p.uri || p.r2Url || p.fullUri;
+      if (targetUri && !prefetchedUrlsRef.current.has(targetUri)) {
+        prefetchedUrlsRef.current.add(targetUri);
+        Image.prefetch(targetUri);
+      }
+    });
+  }, []);
+
 
 
   const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
@@ -408,23 +537,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
       const eventHeaders = eventHeadersRef.current;
 
-      const mapPhotoItem = (p: any): Photo => {
-        const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
-        const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
-        return {
-          id: p.id,
-          r2Url: thumbUri,
-          uri: thumbUri,
-          fullUri: fullUri,
-          photoUrl: fullUri,
-          width: p.width,
-          height: p.height,
-          blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
-          tabName: p.tabName || p.tab_name || null,
-          isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
-          likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
-        };
-      };
+
 
       allPhotosOffsetRef.current = 0;
 
@@ -483,10 +596,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
 
         console.log(`[MYCIRCLE DEBUG ✅] Initial Fetch Done in ${fetchDuration}ms | Loaded: ${mapped.length} / ${total} photos | HasMore: ${hasMore}`);
 
-        // Silent background prefetch of initial batch into native image cache
-        mapped.forEach((p) => {
-          if (p.r2Url) Image.prefetch(p.r2Url);
-        });
+        // Smooth chunked background prefetch of initial batch into native image cache
+        scheduleBatchPrefetch(mapped);
 
         if (hasMore) {
           setTimeout(() => {
@@ -529,31 +640,13 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
         { headers: eventHeaders }
       );
       const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
-      const mapPhotoItem = (p: any): Photo => {
-        const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
-        const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
-        return {
-          id: p.id,
-          r2Url: thumbUri,
-          uri: thumbUri,
-          fullUri: fullUri,
-          photoUrl: fullUri,
-          width: p.width,
-          height: p.height,
-          blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
-          tabName: p.tabName || p.tab_name || null,
-          isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
-          likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
-        };
-      };
+
       const mapped = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
       const loadMoreDuration = Date.now() - loadMoreStartTime;
       console.log(`[MYCIRCLE DEBUG ✅] Page Fetch Done in ${loadMoreDuration}ms | Received ${mapped.length} new photos for '${normTab}' | New Offset: ${currentOffset + mapped.length}`);
 
       if (mapped.length > 0) {
-        mapped.forEach((p) => {
-          if (p.r2Url) Image.prefetch(p.r2Url);
-        });
+        scheduleBatchPrefetch(mapped);
 
         if (isCeremonyTab) {
           const newOffset = currentOffset + mapped.length;
@@ -578,17 +671,14 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             if (reachedTotal) {
               setHasMorePhotos(false);
             }
-            if (!reachedTotal && dedupped.length < 180) {
-              setTimeout(() => {
-                loadMorePhotos();
-              }, 200);
-            }
             return dedupped;
           });
         }
       } else {
         if (!isCeremonyTab) {
           setHasMorePhotos(false);
+        } else {
+          tabHasMoreRef.current[normTab] = false;
         }
       }
     } catch (e: any) {
@@ -650,14 +740,18 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       const mapPhotoItem = (p: any): Photo => {
         const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
         const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
+        const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
+        const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
+        const aspectRatio = w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null);
         return {
           id: p.id,
           r2Url: thumbUri,
           uri: thumbUri,
           fullUri: fullUri,
           photoUrl: fullUri,
-          width: p.width,
-          height: p.height,
+          width: w || undefined,
+          height: h || undefined,
+          aspectRatio,
           tabName: p.tabName || p.tab_name || null,
           isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
           likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
@@ -665,10 +759,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       };
       const mapped = Array.isArray(rawList) ? rawList.map(mapPhotoItem) : [];
 
-      // Silent background prefetch of top 30 tab thumbnails into native cache
-      mapped.slice(0, 30).forEach((p) => {
-        if (p.r2Url) Image.prefetch(p.r2Url);
-      });
+      // Smooth chunked background prefetch of tab thumbnails into native cache
+      scheduleBatchPrefetch(mapped);
 
       setTabCache((prev) => ({ ...prev, [norm]: mapped }));
     } catch (err) {
@@ -794,22 +886,26 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   }, [activeTab, availableTabs, fetchTabPhotos]);
 
-  // Per-tab scroll restoration effect: triggers whenever activeTab or tab photo loading completes
+  // Per-tab scroll restoration effect: triggers ONLY when activeTab changes
   useEffect(() => {
     if (isLoading || isTabLoading) return;
 
-    const norm = activeTab.toUpperCase();
-    const targetY = tabOffsetsRef.current[norm] ?? 0;
-    currentYRef.current = targetY;
+    if (prevTabRef.current !== activeTab) {
+      prevTabRef.current = activeTab;
 
-    scrollToY(targetY);
-    requestAnimationFrame(() => {
+      const norm = activeTab.toUpperCase();
+      const targetY = tabOffsetsRef.current[norm] ?? 0;
+      currentYRef.current = targetY;
+
       scrollToY(targetY);
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         scrollToY(targetY);
-        isTabSwitchingRef.current = false;
-      }, 40);
-    });
+        setTimeout(() => {
+          scrollToY(targetY);
+          isTabSwitchingRef.current = false;
+        }, 40);
+      });
+    }
   }, [activeTab, isLoading, isTabLoading, scrollToY]);
 
   const handleNextCategoryTab = useCallback(() => {
@@ -869,18 +965,14 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
   // - Full Access: Lands on ALL
   // - Partial Access: If highlights.count > 0 -> HIGHLIGHTS, else -> MY PHOTOS
   useEffect(() => {
-    if (!isLoading) {
-      if (hasFullAccess) {
-        setActiveTab('ALL');
-      } else {
-        if (highlightsCount > 0) {
-          setActiveTab('HIGHLIGHTS');
-        } else {
-          setActiveTab('MY PHOTOS');
-        }
+    if (!isLoading && !hasSetLandingTabRef.current) {
+      hasSetLandingTabRef.current = true;
+      const targetTab = hasFullAccess ? 'ALL' : (highlightsCount > 0 ? 'HIGHLIGHTS' : 'MY PHOTOS');
+      if (activeTab.toUpperCase() !== targetTab.toUpperCase()) {
+        setActiveTab(targetTab);
       }
     }
-  }, [isLoading, hasFullAccess, highlightsCount]);
+  }, [isLoading, hasFullAccess, highlightsCount, activeTab]);
 
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
@@ -913,71 +1005,40 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     });
   }, [activeTab, photos, allPhotos, tabCache]);
 
+  activeListRef.current = activeList;
+
+  // Immediate full render limit: prevents staggered height jumps that trigger native scroll resets
+  const renderLimit = Infinity;
+
   const isEndOfTabReached = useMemo(() => {
     if (renderLimit !== (Infinity as any) || isLoading || isTabLoading || !activeList || activeList.length === 0) {
       return false;
     }
-    if (activeTab.toUpperCase() === 'ALL' && (hasMorePhotos || isLoadingMore)) {
+    if (isLoadingMore) {
       return false;
     }
-    return true;
-  }, [renderLimit, isLoading, isTabLoading, isLoadingMore, activeList, activeTab, hasMorePhotos]);
 
-  // Progressive 3-Step Hydration: Prevents initial phone CPU hang on gallery open
-  useEffect(() => {
-    setRenderLimit(12); // Frame 1: Render top 12 cards only (1 screen) -> 0ms instant UI modal open!
-    const t1 = setTimeout(() => setRenderLimit(30), 100);
-    const t2 = setTimeout(() => setRenderLimit(Infinity as any), 250);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, []);
+    const norm = activeTab.toUpperCase();
 
-  const masonryColWidth = Math.floor((width - 16 - 6) / 2);
-
-  // Absolute Row-Wise Masonry Positioning Algorithm — Row-by-row parallel rendering with ZERO vertical gaps
-  const { positionedList, totalGridHeight, column0, column1 } = React.useMemo(() => {
-    const colHeights = [0, 0];
-    const cols: [any[], any[]] = [[], []];
-    const list: any[] = [];
-    const visibleList = activeList.slice(0, renderLimit);
-
-    for (let index = 0; index < visibleList.length; index++) {
-      const photo: any = { ...visibleList[index] };
-      const realAspect = photo.width && photo.height && Number(photo.height) > 0
-        ? Number(photo.width) / Number(photo.height)
-        : (photo.aspectRatio || null);
-
-      const isLandscape = realAspect ? realAspect > 1.05 : photo.isHorizontal;
-
-      let cardAspect = 0.75;
-      if (isLandscape) {
-        cardAspect = realAspect && realAspect > 1.0 ? realAspect : 1.5;
-      } else {
-        const cycle = index % 3;
-        cardAspect = cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5;
-      }
-
-      const cardHeight = Math.round(masonryColWidth / cardAspect);
-      const targetCol = colHeights[0] <= colHeights[1] ? 0 : 1;
-
-      photo.cardAspect = cardAspect;
-      photo.cardHeight = cardHeight;
-      photo.cardWidth = masonryColWidth;
-      photo.leftX = targetCol === 0 ? 0 : masonryColWidth + 6;
-      photo.topY = colHeights[targetCol];
-      photo.isColumn0 = targetCol === 0;
-      photo.globalIndex = index;
-
-      cols[targetCol].push(photo);
-      colHeights[targetCol] += cardHeight + 6;
-      list.push(photo);
+    if (norm === 'ALL') {
+      return !hasMorePhotos;
     }
 
-    const gridHeight = Math.max(colHeights[0], colHeights[1]);
-    return { positionedList: list, totalGridHeight: gridHeight, column0: cols[0], column1: cols[1] };
-  }, [activeList, renderLimit, masonryColWidth]);
+    if (norm === 'MY PHOTOS' || norm === 'MY FAVOURITES') {
+      return true;
+    }
+
+    // For ceremony / category tabs (e.g. COCKTAIL, HALDI, MEHNDI, HIGHLIGHTS)
+    const expectedCount = eventDetails?.tabCounts?.[norm];
+    if (typeof expectedCount === 'number' && expectedCount > 0) {
+      return activeList.length >= expectedCount;
+    }
+
+    // Fallback if tabCounts is not present: check tabHasMore state
+    return tabHasMoreRef.current[norm] === false;
+  }, [renderLimit, isLoading, isTabLoading, isLoadingMore, activeList, activeTab, hasMorePhotos, eventDetails?.tabCounts]);
+
+  const masonryColWidth = Math.floor((width - 16 - 6) / 2);
 
   // Pre-fetch top 12 images (both left & right columns) into native cache for 100% simultaneous 0ms paint
   useEffect(() => {
@@ -988,19 +1049,6 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       if (uri) Image.prefetch(uri);
     });
   }, [activeTab, activeList]);
-
-  // Interleaved Rows for 100% Simultaneous Left & Right Column Loading
-  const interleavedRows = React.useMemo(() => {
-    const maxLen = Math.max(column0.length, column1.length);
-    const rows = [];
-    for (let i = 0; i < maxLen; i++) {
-      rows.push({
-        left: column0[i] || null,
-        right: column1[i] || null,
-      });
-    }
-    return rows;
-  }, [column0, column1]);
 
   // Bounds measurement for smooth Lightbox opening & background page auto-scrolling
   const getBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
@@ -1111,101 +1159,33 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     }
   };
 
-  const renderCategoryGrid = (tabName: string) => {
-    const norm = tabName.trim().toUpperCase();
-    const tabIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === norm);
-    const activeIdx = availableTabs.findIndex((t) => t.trim().toUpperCase() === activeTab.toUpperCase());
 
-    // Optimization: Only mount heavy photo grids for active tab & immediate adjacent neighbor tabs
-    const isWithinWindow = tabIdx >= 0 && Math.abs(tabIdx - (activeIdx >= 0 ? activeIdx : 0)) <= 1;
-
-    if (!isWithinWindow) {
-      return <View style={{ flex: 1, minHeight: 400 }} />;
+  const displayData = useMemo(() => {
+    if (activeList.length === 0 && (isLoading || isTabLoading)) {
+      return Array.from({ length: 12 }, (_, i) => ({
+        id: `sk-${i}`,
+        isSkeleton: true,
+        r2Url: '',
+        uri: '',
+        fullUri: '',
+        photoUrl: '',
+        width: 720,
+        height: 960,
+        aspectRatio: 0.75,
+      }));
     }
+    return activeList;
+  }, [activeList, isLoading, isTabLoading]);
 
-    let tabList: Photo[] = [];
-    if (norm === 'MY PHOTOS') {
-      tabList = photos;
-    } else if (norm === 'MY FAVOURITES') {
-      tabList = tabCache['MY FAVOURITES'] || allPhotos.filter((p: any) => p.isLiked);
-    } else if (norm === 'ALL') {
-      tabList = allPhotos;
-    } else {
-      tabList = tabCache[norm] || allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm);
-    }
-
-    const isCurrentActive = norm === activeTab.toUpperCase();
-
-    if (isLoading || (isCurrentActive && isTabLoading)) {
-      return (
-        <View style={styles.masonryGridContainer}>
-          <View style={styles.masonryColumn}>
-            {[0.75, 0.67, 0.8].map((aspect, i) => (
-              <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-          <View style={styles.masonryColumn}>
-            {[0.67, 0.8, 0.75].map((aspect, i) => (
-              <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-            ))}
-          </View>
-        </View>
-      );
-    }
-
-    if (tabList.length === 0) {
-      return (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            {norm === 'MY PHOTOS'
-              ? "We couldn't find any photos matched with your face yet. Switch to ceremony tabs to view the gallery!"
-              : norm === 'MY FAVOURITES'
-              ? "You haven't liked any photos yet. Tap the heart icon on any photo to save it here!"
-              : `No photos found in ${tabName}.`}
-          </Text>
-        </View>
-      );
-    }
-
-    const rows: { left?: Photo; right?: Photo }[] = [];
-    for (let i = 0; i < tabList.length; i += 2) {
-      rows.push({ left: tabList[i], right: tabList[i + 1] });
-    }
-
-    return (
-      <View style={[styles.masonryGridContainer, { height: totalGridHeight }]}>
-        {positionedList.map((photo: any, idx: number) => {
-          const cardId = photo.id ? `card-${norm}-${photo.id}-${idx}` : (photo.r2Url ? `card-${norm}-${photo.r2Url}-${idx}` : `card-${norm}-${idx}`);
-          const refId = photo.id ? String(photo.id) : (photo.r2Url || `photo-${idx}`);
-
-          return (
-            <View
-              key={cardId}
-              style={{
-                position: 'absolute',
-                left: photo.leftX,
-                top: photo.topY,
-                width: photo.cardWidth,
-                height: photo.cardHeight,
-              }}
-            >
-              <MasonryCard
-                img={photo}
-                index={photo.globalIndex}
-                isColumn0={photo.isColumn0}
-                onSelect={(bounds) => openLightbox(photo, bounds)}
-                onRegisterRef={(id, ref) => {
-                  if (id) cardRefs.current[id] = ref;
-                  if (refId) cardRefs.current[refId] = ref;
-                }}
-                onToggleLike={handleToggleLike}
-              />
-            </View>
-          );
-        })}
-      </View>
-    );
-  };
+  const { column0, column1 } = useMemo(() => {
+    const col0: { item: any; originalIndex: number }[] = [];
+    const col1: { item: any; originalIndex: number }[] = [];
+    displayData.forEach((item: any, idx: number) => {
+      if (idx % 2 === 0) col0.push({ item, originalIndex: idx });
+      else col1.push({ item, originalIndex: idx });
+    });
+    return { column0: col0, column1: col1 };
+  }, [displayData]);
 
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
@@ -1232,6 +1212,128 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
     ? new Date(eventDetails.date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()
     : '';
 
+  const renderHeroCover = useCallback(() => {
+    return (
+      <View style={styles.heroContainer}>
+        {coverUrl ? (
+          <Image
+            source={{ uri: coverUrl }}
+            style={styles.heroImage}
+            contentFit="cover"
+            priority="high"
+            cachePolicy="memory-disk"
+            transition={200}
+          />
+        ) : (
+          <View style={[styles.heroImage, { backgroundColor: '#1c1a18', justifyContent: 'center', alignItems: 'center' }]}>
+            <ActivityIndicator size="small" color="#ffffff" />
+          </View>
+        )}
+
+        {/* White Brand Logo on Cover */}
+        <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
+          <RNImage
+            source={require('../../../assets/images/logo-white.png')}
+            style={styles.coverHeaderLogo}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* Vignette Gradient Overlay */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.1)', 'rgba(0,0,0,0.75)']}
+          locations={[0, 0.45, 1]}
+          style={styles.heroOverlay}
+        />
+
+        {/* Cover Title Container */}
+        <View style={[styles.titleContainer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
+          <Text style={styles.storyTitle}>{cleanTitle}</Text>
+          {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
+        </View>
+      </View>
+    );
+  }, [coverUrl, cleanTitle, locationText, dateText, insets]);
+
+  const renderStickyHeader = useCallback(() => {
+    let activeTabCount: number | null = null;
+    if (activeTab === 'MY PHOTOS') {
+      activeTabCount = photos.length;
+    } else if (activeTab === 'MY FAVOURITES') {
+      activeTabCount = favoritesCount;
+    } else if (activeTab === 'ALL') {
+      activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+    } else {
+      const normKey = activeTab.trim().toUpperCase();
+      activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+    }
+
+    return (
+      <View style={[styles.stickyHeaderContainer, { paddingTop: Math.max(insets.top + 4, 28), backgroundColor: '#ffffff' }]}>
+        <View style={styles.stickyHeaderContainerInner}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            delayPressIn={60}
+            onPress={() => {
+              if (isScrollingRef.current) return;
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              openDrawerWithAnimation();
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.compactTabHeaderBarCentered}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+              <Text style={styles.compactTabActiveTitleCentered} numberOfLines={1}>
+                {activeTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
+              </Text>
+              <Text style={styles.downArrowIcon}>▾</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Right Corner Download Button (ONLY on MY PHOTOS tab) */}
+          {activeTab.trim().toUpperCase().includes('MY PHOTO') ? (
+            <TouchableOpacity
+              activeOpacity={0.75}
+              disabled={isBatchDownloading}
+              onPress={downloadAllMyPhotos}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.headerRightDownloadButton}
+            >
+              {isBatchDownloading ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
+                  <Text style={styles.headerRightDownloadText}>
+                    {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
+                  </Text>
+                </View>
+              ) : (
+                <Feather name="download" size={16} color="#3a3632" />
+              )}
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    );
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadAllMyPhotos, openDrawerWithAnimation, insets]);
+
+  const renderFooter = useCallback(() => {
+    if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
+    return (
+      <View style={styles.endOfTabFooterContainer}>
+        <View style={styles.endOfTabDividerLine} />
+        <View style={styles.endOfTabBadgeContainer}>
+          <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
+          <Text style={styles.endOfTabBadgeText}>
+            END OF {activeTab}
+          </Text>
+          <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
+        </View>
+        <View style={styles.endOfTabDividerLine} />
+      </View>
+    );
+  }, [isEndOfTabReached, activeTab]);
+
   return (
     <Modal
       visible={!!eventSlug}
@@ -1255,143 +1357,37 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
             <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
           </Pressable>
 
-          <Animated.ScrollView
-            ref={mainScrollRef}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            bounces={true}
-            scrollEventThrottle={16}
-            stickyHeaderIndices={[1]}
-            removeClippedSubviews={true}
+          <MasonryFlashList
+            mainScrollRef={mainScrollRef}
+            data={displayData as any}
+            numColumns={2}
             onScroll={scrollHandler}
-          >
-            {/* ── 1. Hero Cover Banner (Exact Featured Story Style) ── */}
-            <View style={styles.heroContainer}>
-              {coverUrl ? (
-                <Image
-                  source={{ uri: coverUrl }}
-                  style={styles.heroImage}
-                  contentFit="cover"
-                  priority="high"
-                  cachePolicy="memory-disk"
-                  transition={200}
-                />
+            scrollSharedValue={scrollY}
+            onEndReached={loadMorePhotos}
+            onEndReachedThreshold={0.6}
+            renderHeroCover={renderHeroCover}
+            renderStickyHeader={renderStickyHeader}
+            ListFooterComponent={renderFooter()}
+            renderItem={({ item, index, isColumn0 }) => (
+              item.isSkeleton ? (
+                <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
               ) : (
-                <View style={[styles.heroImage, { backgroundColor: '#1c1a18', justifyContent: 'center', alignItems: 'center' }]}>
-                  <ActivityIndicator size="small" color="#ffffff" />
-                </View>
-              )}
-
-              {/* White Brand Logo on Cover */}
-              <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
-                <RNImage
-                  source={require('../../../assets/images/logo-white.png')}
-                  style={styles.coverHeaderLogo}
-                  resizeMode="contain"
+                <MasonryCard
+                  img={item}
+                  index={index}
+                  isColumn0={isColumn0}
+                  isHighPriority={index < 12}
+                  onSelect={(bounds) => openLightbox(item, bounds)}
+                  onRegisterRef={(id, ref) => {
+                    const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
+                    if (id) cardRefs.current[id] = ref;
+                    if (refId) cardRefs.current[refId] = ref;
+                  }}
+                  onToggleLike={handleToggleLike}
                 />
-              </View>
-
-              {/* Vignette Gradient Overlay */}
-              <LinearGradient
-                colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.1)', 'rgba(0,0,0,0.75)']}
-                locations={[0, 0.45, 1]}
-                style={styles.heroOverlay}
-              />
-
-              {/* Cover Title Container */}
-              <View style={[styles.titleContainer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-                {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
-                <Text style={styles.storyTitle}>{cleanTitle}</Text>
-                {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
-              </View>
-            </View>
-
-            {/* ── 2. Sticky Category Header (Centered Active Album Toggle Bar) ── */}
-            <View style={[styles.stickyHeaderContainer, { paddingTop: Math.max(insets.top + 4, 28) }]}>
-              {(() => {
-                let activeTabCount: number | null = null;
-                if (activeTab === 'MY PHOTOS') {
-                  activeTabCount = photos.length;
-                } else if (activeTab === 'MY FAVOURITES') {
-                  activeTabCount = favoritesCount;
-                } else if (activeTab === 'ALL') {
-                  activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
-                } else {
-                  const normKey = activeTab.trim().toUpperCase();
-                  activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
-                }
-
-                return (
-                  <View style={styles.stickyHeaderContainerInner}>
-                    <GHPressable
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                        setIsMoreDrawerOpen(true);
-                      }}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                      style={styles.compactTabHeaderBarCentered}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                        <Text style={styles.compactTabActiveTitleCentered} numberOfLines={1}>
-                          {activeTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
-                        </Text>
-                        <Text style={styles.downArrowIcon}>▾</Text>
-                      </View>
-                    </GHPressable>
-
-                    {/* Right Corner Download Button (ONLY on MY PHOTOS tab) */}
-                    {activeTab.trim().toUpperCase().includes('MY PHOTO') ? (
-                      <TouchableOpacity
-                        activeOpacity={0.75}
-                        disabled={isBatchDownloading}
-                        onPress={downloadAllMyPhotos}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.headerRightDownloadButton}
-                      >
-                        {isBatchDownloading ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                            <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
-                            <Text style={styles.headerRightDownloadText}>
-                              {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
-                            </Text>
-                          </View>
-                        ) : (
-                          <Feather name="download" size={16} color="#3a3632" />
-                        )}
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                );
-              })()}
-            </View>
-
-            {/* ── 3. 2-Column Balanced Masonry Grid (Child 2) ── */}
-            <View style={styles.galleryContainer}>
-              {renderCategoryGrid(activeTab)}
-
-              {/* Loading indicator when fetching next page */}
-              {activeTab.toUpperCase() === 'ALL' && isLoadingMore ? (
-                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#8c867e" />
-                </View>
-              ) : null}
-
-              {/* ── End of Album / Tab Editorial Footer (Only visible when last photo of the tab has been shown) ── */}
-              {isEndOfTabReached ? (
-                <View style={styles.endOfTabFooterContainer}>
-                  <View style={styles.endOfTabDividerLine} />
-                  <View style={styles.endOfTabBadgeContainer}>
-                    <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
-                    <Text style={styles.endOfTabBadgeText}>
-                      END OF {activeTab}
-                    </Text>
-                    <Text style={styles.endOfTabBadgeSymbol}>✦</Text>
-                  </View>
-                  <View style={styles.endOfTabDividerLine} />
-                </View>
-              ) : null}
-            </View>
-          </Animated.ScrollView>
+              )
+            )}
+          />
 
           {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
           <Animated.View
@@ -1416,28 +1412,36 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       {/* ── "+ MORE / ALL ALBUMS" BOTTOM DRAWER OVERLAY (Outside GestureDetector) ── */}
       {isMoreDrawerOpen ? (
         <View style={styles.drawerOverlay}>
-          <GHPressable style={styles.drawerBackdrop} onPress={() => setIsMoreDrawerOpen(false)} />
-          <View style={[styles.drawerContent, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}>
-            {/* Handle Bar */}
-            <View style={styles.drawerHandleBar} />
+          <Pressable style={{ flex: 1 }} onPress={closeDrawerWithAnimation}>
+            <Animated.View style={[styles.drawerBackdrop, drawerBackdropStyle]} />
+          </Pressable>
+          <Animated.View style={[styles.drawerContent, drawerContentStyle, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}>
+            {/* Handle Bar — swipe down to close */}
+            <GestureDetector gesture={drawerHandlePanGesture}>
+              <Animated.View>
+                <View style={styles.drawerHandleBar} />
 
-            {/* Header */}
-            <View style={styles.drawerHeader}>
-              <Text style={styles.drawerTitle}>ALL ALBUMS & EVENTS</Text>
-              <GHTouchableOpacity
-                onPress={() => setIsMoreDrawerOpen(false)}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                style={styles.drawerCloseButton}
-              >
-                <Text style={styles.drawerCloseText}>✕</Text>
-              </GHTouchableOpacity>
-            </View>
+                {/* Header */}
+                <View style={styles.drawerHeader}>
+                  <Text style={styles.drawerTitle}>ALL EVENTS</Text>
+                  <TouchableOpacity
+                    onPress={closeDrawerWithAnimation}
+                    hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                    style={styles.drawerCloseButton}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="close" size={20} color="#8c867e" />
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            </GestureDetector>
 
-            {/* Tabs List */}
             <ScrollView
-              scrollEnabled={availableTabs.length > 8}
-              bounces={false}
-              showsVerticalScrollIndicator={availableTabs.length > 8}
+              scrollEnabled={true}
+              bounces={true}
+              alwaysBounceVertical={true}
+              overScrollMode="always"
+              showsVerticalScrollIndicator={false}
               style={styles.drawerScrollView}
             >
               {availableTabs.map((tabName, tabIdx) => {
@@ -1461,7 +1465,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
                       changeTabWithScrollMemory(tabName);
-                      setIsMoreDrawerOpen(false);
+                      closeDrawerWithAnimation();
                     }}
                     activeOpacity={0.7}
                     style={[styles.drawerItem, isActive && styles.drawerItemActive]}
@@ -1480,7 +1484,7 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
                 );
               })}
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       ) : null}
 
@@ -1505,8 +1509,8 @@ export default function GalleryView({ onLogout, onChangeEvent }: GalleryViewProp
       )}
     </GestureHandlerRootView>
   </Modal>
-);
-}
+  );
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -1589,7 +1593,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 32,
     alignItems: 'center',
-    backgroundColor: '#fbfaf8',
+    backgroundColor: '#ffffff',
   },
   subtitleText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
@@ -1613,7 +1617,7 @@ const styles = StyleSheet.create({
   tabsWrapper: {
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0ede8',
+    borderBottomColor: '#f3f3f3',
     marginBottom: 16,
   },
   tabsScrollContent: {
@@ -1646,7 +1650,7 @@ const styles = StyleSheet.create({
   masonryGridContainer: {
     position: 'relative',
     width: '100%',
-    paddingHorizontal: 8,
+    paddingHorizontal: 0,
   },
   masonryColumn: {
     flex: 1,
@@ -1655,12 +1659,12 @@ const styles = StyleSheet.create({
   },
   masonryCard: {
     width: '100%',
-    backgroundColor: '#e8e4de',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
   },
   skeletonCard: {
-    backgroundColor: '#eae6e1',
-    opacity: 0.7,
+    backgroundColor: '#ffffff',
+    opacity: 1,
   },
   emptyContainer: {
     paddingVertical: 60,
@@ -1703,23 +1707,17 @@ const styles = StyleSheet.create({
   stickyHeaderContainer: {
     backgroundColor: '#ffffff',
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0ede8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 4,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1000,
     elevation: 1000,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
   },
   drawerBackdrop: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
   },
   drawerContent: {
     backgroundColor: '#ffffff',
@@ -1740,15 +1738,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#d6d1ca',
     borderRadius: 2,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   drawerHeader: {
+    position: 'relative',
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 14,
+    justifyContent: 'center',
+    paddingTop: 8,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0ede8',
+    borderBottomColor: '#f3f3f3',
     marginBottom: 8,
   },
   drawerTitle: {
@@ -1757,9 +1758,17 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     color: '#1c1a18',
     fontWeight: '600',
+    textAlign: 'center',
   },
   drawerCloseButton: {
-    padding: 4,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingRight: 4,
+    zIndex: 10,
   },
   drawerCloseText: {
     fontSize: 16,
@@ -1776,10 +1785,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f7f5f2',
+    borderBottomColor: '#f3f3f3',
   },
   drawerItemActive: {
-    backgroundColor: '#faf8f5',
+    backgroundColor: '#f5f5f5',
     borderRadius: 8,
   },
   drawerItemLeft: {
@@ -1819,8 +1828,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0ede8',
     width: '100%',
   },
   compactTabActiveTitleCentered: {
@@ -1875,7 +1882,7 @@ const styles = StyleSheet.create({
   endOfTabDividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#e8e4de',
+    backgroundColor: '#f3f3f3',
   },
   endOfTabBadgeContainer: {
     flexDirection: 'row',
@@ -1894,3 +1901,5 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+
+export default GalleryView;

@@ -20,16 +20,14 @@ export default function MyCircleScreen() {
   const [eventRequiresPasscode, setEventRequiresPasscode] = useState<boolean | null>(null);
   const [isValidatingEvent, setIsValidatingEvent] = useState(false);
 
-  const {
-    token,
-    profile,
-    isLoading,
-    eventSlug,
-    passcode,
-    openedFrom,
-    setEventDetails,
-    logout,
-  } = useAuthStore();
+  const token = useAuthStore((s) => s.token);
+  const profile = useAuthStore((s) => s.profile);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const eventSlug = useAuthStore((s) => s.eventSlug);
+  const passcode = useAuthStore((s) => s.passcode);
+  const openedFrom = useAuthStore((s) => s.openedFrom);
+  const setEventDetails = useAuthStore((s) => s.setEventDetails);
+  const logout = useAuthStore((s) => s.logout);
 
   const handleCloseGallery = () => {
     const from = useAuthStore.getState().openedFrom;

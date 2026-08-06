@@ -18,8 +18,7 @@ export default function PasscodeView({ onSuccess, onBack }: PasscodeViewProps) {
   const setEventDetails = useAuthStore((state) => state.setEventDetails);
 
   const handleTextChange = (text: string) => {
-    setPasscode(text);
-    Haptics.selectionAsync().catch(() => {});
+    setPasscode(text.toUpperCase());
   };
 
   const handleSubmit = async () => {
@@ -77,9 +76,9 @@ export default function PasscodeView({ onSuccess, onBack }: PasscodeViewProps) {
 
       <TextInput
         style={styles.input}
-        placeholder="Enter Passcode"
+        placeholder="ENTER PASSCODE"
         placeholderTextColor="rgba(0, 0, 0, 0.4)"
-        autoCapitalize="none"
+        autoCapitalize="characters"
         autoCorrect={false}
         secureTextEntry={true}
         value={passcode}

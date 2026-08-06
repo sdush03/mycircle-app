@@ -261,9 +261,10 @@ export function useApplePhotosGesture({
       const isDownwardFlick = e.translationY > 40 && e.velocityY > 800 && e.velocityY > Math.abs(e.velocityX) * 1.5;
 
       if (isDownwardDrag || isDownwardFlick) {
-        translateX.value = withSpring(0, { damping: 28, mass: 1, stiffness: 190 });
-        translateY.value = withSpring(0, { damping: 28, mass: 1, stiffness: 190 });
-        scale.value = withSpring(1, { damping: 28, mass: 1, stiffness: 190 });
+        const closingDuration = 360;
+        translateX.value = withTiming(0, { duration: closingDuration, easing: Easing.bezier(0.25, 1, 0.5, 1) });
+        translateY.value = withTiming(0, { duration: closingDuration, easing: Easing.bezier(0.25, 1, 0.5, 1) });
+        scale.value = withTiming(1, { duration: closingDuration, easing: Easing.bezier(0.25, 1, 0.5, 1) });
         runOnJS(onCloseLightbox)();
       } else {
         translateX.value = withSpring(0, { damping: 20, mass: 1, stiffness: 150 });

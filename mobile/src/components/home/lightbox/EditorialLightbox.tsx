@@ -259,8 +259,8 @@ export function EditorialLightbox({
     expandProgress.value = withTiming(
       0,
       {
-        duration: 280,
-        easing: Easing.bezier(0.16, 1, 0.3, 1),
+        duration: 360,
+        easing: Easing.bezier(0.25, 1, 0.5, 1),
       },
       (finished) => {
         'worklet';

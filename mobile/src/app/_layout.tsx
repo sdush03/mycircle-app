@@ -121,23 +121,41 @@ function RootLayoutContent() {
     }
   }, [isReady, isLoading, fontsLoaded, isSplashHidden]);
 
+  // Determine current active tab
+  const currentTab: 'index' | 'mycircle' | 'moodboard' | 'profile' =
+    segments[0] === 'mycircle' ? 'mycircle' :
+    segments[0] === 'moodboard' ? 'moodboard' :
+    segments[0] === 'profile' ? 'profile' : 'index';
+
   // Handle Android back button & swipe back gestures globally
   useEffect(() => {
     const onBackPress = () => {
-      if (!token) {
-        BackHandler.exitApp();
+      if (Platform.OS !== 'android') return false;
+
+      // 1. If Gallery Overlay modal is open, close gallery modal first
+      if (eventSlug) {
+        useAuthStore.getState().setEventDetails(null, null);
         return true;
       }
-      if (segments[0] === 'mycircle' || segments[0] === 'profile' || segments[0] === 'inspirations' || segments[0] === 'moodboard') {
+
+      // 2. If user is on ANY tab other than Home (index / tab index 0):
+      if (activeTabIndex > 0 || currentTab !== 'index') {
+        setActiveTabIndex(0);
+        activeTabSharedIndex.value = 0;
+        tabTranslateX.value = 0;
         router.replace('/');
-        return true;
+        Haptics.selectionAsync().catch(() => {});
+        return true; // Consume event, user is now on Home tab
       }
-      return false;
+
+      // 3. User is ALREADY on Home tab with no open modals: exit app
+      BackHandler.exitApp();
+      return true;
     };
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
-  }, [token, segments]);
+  }, [eventSlug, activeTabIndex, currentTab]);
 
   // Fetch selfie once per session when authenticated.
   // Uses a ref flag so it never reruns due to profile state changes.
@@ -179,19 +197,12 @@ function RootLayoutContent() {
     fetchSelfie();
   }, [token]);
 
-  // Determine current active tab
-  const currentTab: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile' =
-    segments[0] === 'mycircle' ? 'mycircle' :
-    segments[0] === 'inspirations' ? 'inspirations' :
-    segments[0] === 'moodboard' ? 'moodboard' :
-    segments[0] === 'profile' ? 'profile' : 'index';
   const topInset = insets.top;
   const headerHeight = 52 + topInset;
 
-  const TAB_ORDER: ('index' | 'mycircle' | 'inspirations' | 'moodboard' | 'profile')[] = [
+  const TAB_ORDER: ('index' | 'mycircle' | 'moodboard' | 'profile')[] = [
     'index',
     'mycircle',
-    'inspirations',
     'moodboard',
     'profile',
   ];
@@ -199,7 +210,6 @@ function RootLayoutContent() {
   const TAB_ROUTES: Record<string, string> = {
     index: '/',
     mycircle: '/mycircle',
-    inspirations: '/inspirations',
     moodboard: '/moodboard',
     profile: '/profile',
   };
@@ -336,15 +346,12 @@ function RootLayoutContent() {
 
         <GestureDetector gesture={mainTabSwipeGesture}>
           <View style={{ flex: 1, overflow: 'hidden' }}>
-            <Animated.View style={[{ flexDirection: 'row', width: width * 5, flex: 1 }, mainTabAnimatedStyle]}>
+            <Animated.View style={[{ flexDirection: 'row', width: width * 4, flex: 1 }, mainTabAnimatedStyle]}>
               <View style={{ width, flex: 1 }}>
                 <HomeScreen />
               </View>
               <View style={{ width, flex: 1 }}>
                 <JoinEventView onSuccess={() => {}} />
-              </View>
-              <View style={{ width, flex: 1 }}>
-                <InspirationsScreen />
               </View>
               <View style={{ width, flex: 1 }}>
                 <MoodboardScreen />
@@ -390,11 +397,11 @@ function RootLayoutContent() {
 }
 
 interface CustomTabBarProps {
-  activeTab: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile';
+  activeTab: 'index' | 'mycircle' | 'moodboard' | 'profile';
   isCollapsed: boolean;
   bottomInset: number;
   profile: any;
-  onSelectTab: (tabName: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile') => void;
+  onSelectTab: (tabName: 'index' | 'mycircle' | 'moodboard' | 'profile') => void;
 }
 
 // ── Icon components ────────────────────────────────────────────────────────
@@ -437,7 +444,7 @@ function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, on
 
   const setTabBarCollapsed = useAuthStore((state) => state.setTabBarCollapsed);
 
-  const handleTabPress = (tabName: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile') => {
+  const handleTabPress = (tabName: 'index' | 'mycircle' | 'moodboard' | 'profile') => {
     Haptics.selectionAsync().catch(() => {});
     setTabBarCollapsed(false);
     onSelectTab(tabName);
@@ -485,7 +492,7 @@ function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, on
 
   const ICON_SIZE = 22;
   const tabs: Array<{
-    key: 'index' | 'mycircle' | 'moodboard' | 'inspirations' | 'profile';
+    key: 'index' | 'mycircle' | 'moodboard' | 'profile';
     label: string;
     icon: (active: boolean) => React.ReactNode;
   }> = [

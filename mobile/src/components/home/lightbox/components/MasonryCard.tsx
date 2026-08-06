@@ -2,11 +2,13 @@ import React, { useState, useRef, useCallback } from 'react';
 import { StyleSheet, View, Text, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { savePhotoAspect } from '../../../../utils/photoDimensionCache';
 
 export interface MasonryCardProps {
   img: any;
   index: number;
   isColumn0: boolean;
+  isHighPriority?: boolean;
   onSelect: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
   onRegisterRef?: (cardId: string, ref: View | null) => void;
   onToggleLike?: (img: any) => void;
@@ -15,7 +17,7 @@ export interface MasonryCardProps {
 const DEFAULT_NEUTRAL_BLURHASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
 
 export const MasonryCard = React.memo(function MasonryCard({ 
-  img, index, isColumn0, onSelect, onRegisterRef, onToggleLike
+  img, index, isColumn0, isHighPriority, onSelect, onRegisterRef, onToggleLike
 }: MasonryCardProps) {
   const cardRef = useRef<View>(null);
   const cardId = String(img.id || img.uri || `idx-${index}`);
@@ -25,14 +27,18 @@ export const MasonryCard = React.memo(function MasonryCard({
   const blurhash = typeof img === 'object' && (img.blurhash || img.blur_hash || img.blurHash)
     ? (img.blurhash || img.blur_hash || img.blurHash)
     : null;
-  const [currentUri, setCurrentUri] = useState<string>(primaryUri);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
 
-  React.useEffect(() => { setCurrentUri(primaryUri); }, [primaryUri]);
+  const realAspect = (typeof img === 'object' && img.width && img.height && Number(img.height) > 0)
+    ? Number(img.width) / Number(img.height)
+    : (typeof img === 'object' && img.aspectRatio && !isNaN(img.aspectRatio) && img.aspectRatio > 0 ? img.aspectRatio : null);
+  const isLandscape = Boolean(realAspect && realAspect > 1.05);
 
   const cardAspect = (typeof img === 'object' && img.cardAspect)
     ? img.cardAspect
-    : ((typeof img === 'object' && img.aspectRatio && !isNaN(img.aspectRatio) && img.aspectRatio > 0)
-      ? img.aspectRatio
+    : (isLandscape && realAspect
+      ? realAspect
       : ((index + (isColumn0 ? 0 : 1)) % 3 === 0 ? 0.67 : ((index + (isColumn0 ? 0 : 1)) % 3 === 1 ? 0.75 : 0.80)));
 
   const isLiked = typeof img === 'object' && !!img.isLiked;
@@ -57,9 +63,16 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const loadStartTimeRef = useRef<number>(0);
 
+  const DEFAULT_BLURHASH = 'L6PZfSi_.AyE_3t7t7R**0o#DGR4';
+  const effectiveBlurhash = blurhash || DEFAULT_BLURHASH;
+
   const placeholderSource = blurUri
-    ? [{ uri: blurUri }]
-    : [{ blurhash: blurhash || DEFAULT_NEUTRAL_BLURHASH, width: 16, height: 16 }];
+    ? { uri: blurUri }
+    : { blurhash: effectiveBlurhash, width: 32, height: 32 };
+
+  const effectivePriority = typeof isHighPriority === 'boolean'
+    ? (isHighPriority ? "high" : "low")
+    : (index < 10 ? "high" : "low");
 
   return (
     <Pressable 
@@ -67,33 +80,38 @@ export const MasonryCard = React.memo(function MasonryCard({
         (cardRef as any).current = ref;
         if (onRegisterRef) onRegisterRef(cardId, ref);
       }} 
-      style={[cardStyles.masonryCard, { aspectRatio: cardAspect }]} 
+      style={[cardStyles.masonryCard, { width: '100%', aspectRatio: cardAspect }]} 
       onPress={handlePress}
     >
-      {currentUri ? (
+      {activeUri ? (
         <Image
-          source={{ uri: currentUri }}
+          source={{ uri: activeUri }}
           style={cardStyles.masonryImage}
           contentFit="cover"
-          priority={index < 10 ? "high" : "low"}
+          priority={effectivePriority}
           cachePolicy="memory-disk"
           recyclingKey={String(cardId)}
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={200}
+          transition={50}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
           onLoad={(e) => {
+            if (e.source?.width && e.source?.height) {
+              const aspect = e.source.width / e.source.height;
+              if (cardId) savePhotoAspect(cardId, aspect);
+              if (activeUri) savePhotoAspect(activeUri, aspect);
+            }
             const elapsed = Date.now() - (loadStartTimeRef.current || Date.now());
             const cacheType = elapsed < 35 ? '💾 CACHE HIT (0-35ms)' : `🌐 NETWORK DOWNLOAD (${elapsed}ms)`;
-            const isThumb = currentUri.includes('thumb') || (e.source?.width && e.source.width <= 600);
+            const isThumb = activeUri.includes('thumb') || (e.source?.width && e.source.width <= 600);
             const resTag = isThumb ? '🖼️ [THUMBNAIL]' : '4️⃣K [FULL RES ORIGINAL]';
             console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
           }}
           onError={(err) => {
-            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${currentUri}`);
-            if (fallbackUri && currentUri !== fallbackUri) setCurrentUri(fallbackUri);
+            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${activeUri}`);
+            if (fallbackUri && activeUri !== fallbackUri) setFailedUri(primaryUri);
           }}
         />
       ) : null}
@@ -118,12 +136,22 @@ export const MasonryCard = React.memo(function MasonryCard({
       ) : null}
     </Pressable>
   );
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.index === nextProps.index &&
+    prevProps.isColumn0 === nextProps.isColumn0 &&
+    prevProps.isHighPriority === nextProps.isHighPriority &&
+    prevProps.img?.id === nextProps.img?.id &&
+    prevProps.img?.uri === nextProps.img?.uri &&
+    prevProps.img?.r2Url === nextProps.img?.r2Url &&
+    prevProps.img?.isLiked === nextProps.img?.isLiked
+  );
 });
 
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#e6e1da',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
     position: 'relative',
   },
