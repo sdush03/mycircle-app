@@ -116,106 +116,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ current: number; total: number } | null>(null);
 
-  const downloadAllMyPhotos = useCallback(async () => {
-    if (!photos || photos.length === 0 || isBatchDownloading) return;
 
-    try {
-      console.log(`[BATCH DOWNLOAD 🚀] Starting batch download of ${photos.length} photos...`);
-
-      let hasPermission = false;
-      try {
-        const perm = await MediaLibrary.requestPermissionsAsync();
-        console.log('[BATCH DOWNLOAD 📱] MediaLibrary permission:', JSON.stringify(perm));
-        hasPermission = perm.status === 'granted' || perm.granted === true;
-      } catch (pErr) {
-        console.error('[BATCH DOWNLOAD ❌] Permission error:', pErr);
-      }
-
-      if (!hasPermission) {
-        Alert.alert('Permission Required', 'Please allow access to save photos to your photo gallery.');
-        return;
-      }
-
-      setIsBatchDownloading(true);
-      setBatchDownloadProgress({ current: 0, total: photos.length });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-
-      const cacheDir = (((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') as string).replace(/\/+$/, '');
-
-      let savedCount = 0;
-      for (let i = 0; i < photos.length; i++) {
-        const photo = photos[i];
-        setBatchDownloadProgress({ current: i + 1, total: photos.length });
-
-        const rawTargetUri = photo.fullUri || photo.photoUrl || photo.r2Url || photo.uri || photo.url || '';
-        if (!rawTargetUri) {
-          console.warn(`[BATCH DOWNLOAD ⚠️] Photo #${i + 1} has no valid URL:`, photo);
-          continue;
-        }
-
-        const safeFilename = `myphoto_${photo.id || i}_${Date.now()}_${i}.jpg`;
-        const localPath = `${cacheDir}/${safeFilename}`;
-
-        try {
-          console.log(`[BATCH DOWNLOAD 📱] Downloading #${i + 1}/${photos.length} from ${rawTargetUri}...`);
-          const downloadRes = await FileSystem.downloadAsync(rawTargetUri, localPath);
-          console.log(`[BATCH DOWNLOAD 📱] Download res #${i + 1}: status=${downloadRes?.status}, uri=${downloadRes?.uri}`);
-
-          if (downloadRes && downloadRes.uri) {
-            let assetSaved = false;
-
-            // Attempt 1: createAssetAsync (Standard Expo MediaLibrary)
-            if (typeof MediaLibrary.createAssetAsync === 'function') {
-              try {
-                const asset = await MediaLibrary.createAssetAsync(downloadRes.uri);
-                if (asset) assetSaved = true;
-              } catch (cErr) {
-                console.warn(`[BATCH DOWNLOAD ⚠️] createAssetAsync failed for photo #${i + 1}:`, cErr);
-              }
-            }
-
-            // Attempt 2: saveToLibraryAsync (iOS specific extension)
-            if (!assetSaved && typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {
-              try {
-                await (MediaLibrary as any).saveToLibraryAsync(downloadRes.uri);
-                assetSaved = true;
-              } catch (sErr) {
-                console.warn(`[BATCH DOWNLOAD ⚠️] saveToLibraryAsync failed for photo #${i + 1}:`, sErr);
-              }
-            }
-
-            if (assetSaved) {
-              savedCount++;
-            } else {
-              console.warn(`[BATCH DOWNLOAD ⚠️] Neither createAssetAsync nor saveToLibraryAsync succeeded for photo #${i + 1}`);
-            }
-
-            // Clean up cached temp file
-            FileSystem.deleteAsync(downloadRes.uri, { idempotent: true }).catch(() => {});
-          } else {
-            console.warn(`[BATCH DOWNLOAD ⚠️] Download failed for photo #${i + 1}`);
-          }
-        } catch (err: any) {
-          console.error(`[BATCH DOWNLOAD ❌] Exception downloading photo #${i + 1}:`, err);
-        }
-      }
-
-      console.log(`[BATCH DOWNLOAD ✅] Finished! Successfully saved ${savedCount} of ${photos.length} photos.`);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
-      if (savedCount > 0) {
-        Alert.alert('Download Complete ✨', `Successfully saved ${savedCount} of ${photos.length} photos to your phone gallery!`);
-      } else {
-        Alert.alert('Download Failed', `Could not save photos to your gallery. Please check storage permissions.`);
-      }
-    } catch (err: any) {
-      console.error('[BATCH DOWNLOAD ERROR]:', err);
-      Alert.alert('Download Error', 'Could not complete downloading photos. Please try again.');
-    } finally {
-      setIsBatchDownloading(false);
-      setBatchDownloadProgress(null);
-    }
-  }, [photos, isBatchDownloading]);
 
   // Lightbox State
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
@@ -1007,6 +908,90 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
   activeListRef.current = activeList;
 
+  const downloadCurrentTabPhotos = useCallback(async () => {
+    const listToDownload = activeListRef.current || [];
+    if (!listToDownload || listToDownload.length === 0 || isBatchDownloading) return;
+
+    try {
+      console.log(`[BATCH DOWNLOAD 🚀] Starting batch download of ${listToDownload.length} photos...`);
+
+      let hasPermission = false;
+      try {
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        hasPermission = perm.status === 'granted' || perm.granted === true;
+      } catch (pErr) {
+        console.error('[BATCH DOWNLOAD ❌] Permission error:', pErr);
+      }
+
+      if (!hasPermission) {
+        Alert.alert('Permission Required', 'Please allow access to save photos to your photo gallery.');
+        return;
+      }
+
+      setIsBatchDownloading(true);
+      setBatchDownloadProgress({ current: 0, total: listToDownload.length });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      const cacheDir = (((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') as string).replace(/\/+$/, '');
+
+      let savedCount = 0;
+      for (let i = 0; i < listToDownload.length; i++) {
+        const photo = listToDownload[i];
+        setBatchDownloadProgress({ current: i + 1, total: listToDownload.length });
+
+        const rawTargetUri = photo.fullUri || photo.photoUrl || photo.r2Url || photo.uri || photo.url || '';
+        if (!rawTargetUri) continue;
+
+        const safeFilename = `myphoto_${photo.id || i}_${Date.now()}_${i}.jpg`;
+        const localPath = `${cacheDir}/${safeFilename}`;
+
+        try {
+          const downloadRes = await FileSystem.downloadAsync(rawTargetUri, localPath);
+
+          if (downloadRes && downloadRes.uri) {
+            let assetSaved = false;
+
+            if (typeof MediaLibrary.createAssetAsync === 'function') {
+              try {
+                const asset = await MediaLibrary.createAssetAsync(downloadRes.uri);
+                if (asset) assetSaved = true;
+              } catch (_) {}
+            }
+
+            if (!assetSaved && typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {
+              try {
+                await (MediaLibrary as any).saveToLibraryAsync(downloadRes.uri);
+                assetSaved = true;
+              } catch (_) {}
+            }
+
+            if (assetSaved) {
+              savedCount++;
+            }
+
+            FileSystem.deleteAsync(downloadRes.uri, { idempotent: true }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error(`[BATCH DOWNLOAD ❌] Exception downloading photo #${i + 1}:`, err);
+        }
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      if (savedCount > 0) {
+        Alert.alert('Download Complete ✨', `Successfully saved ${savedCount} of ${listToDownload.length} photos to your phone gallery!`);
+      } else {
+        Alert.alert('Download Failed', `Could not save photos to your gallery. Please check storage permissions.`);
+      }
+    } catch (err: any) {
+      console.error('[BATCH DOWNLOAD ERROR]:', err);
+      Alert.alert('Download Error', 'Could not complete downloading photos. Please try again.');
+    } finally {
+      setIsBatchDownloading(false);
+      setBatchDownloadProgress(null);
+    }
+  }, [isBatchDownloading]);
+
   // Immediate full render limit: prevents staggered height jumps that trigger native scroll resets
   const renderLimit = Infinity;
 
@@ -1291,12 +1276,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
             </View>
           </TouchableOpacity>
 
-          {/* Right Corner Download Button (ONLY on MY PHOTOS tab) */}
-          {activeTab.trim().toUpperCase().includes('MY PHOTO') ? (
+          {/* Right Corner Download Button (ONLY on MY PHOTOS or MY FAVOURITES tab) */}
+          {activeTab.trim().toUpperCase().includes('MY PHOTO') || activeTab.trim().toUpperCase().includes('MY FAVOURITES') || activeTab.trim().toUpperCase().includes('MY FAVORITE') ? (
             <TouchableOpacity
               activeOpacity={0.75}
               disabled={isBatchDownloading}
-              onPress={downloadAllMyPhotos}
+              onPress={downloadCurrentTabPhotos}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={styles.headerRightDownloadButton}
             >
@@ -1315,7 +1300,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadAllMyPhotos, openDrawerWithAnimation, insets]);
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
