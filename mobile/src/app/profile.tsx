@@ -17,7 +17,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { useAuthStore } from '../store/authStore';
 import { savesService, SavedPhotoItem } from '../services/savesService';
-import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED } from '../lib/tabEvents';
+import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import api from '../services/api';
 import {
@@ -307,9 +307,15 @@ export default function ProfileScreen() {
       fetchSavedPhotos();
     });
 
+    const unsubJoined = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
+      fetchMyCelebrationPhotos();
+      fetchSavedPhotos();
+    });
+
     return () => {
       unsubscribe();
       unsubSaves();
+      unsubJoined();
     };
   }, [fetchMyCelebrationPhotos, fetchSavedPhotos]);
 

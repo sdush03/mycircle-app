@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useAuthStore } from '../store/authStore';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import api from '../services/api';
@@ -56,7 +56,7 @@ import AllStoriesView from '../components/home/AllStoriesView';
 import GalleryView from '../components/mycircle/GalleryView';
 import { formatUniversalGalleryImages } from '@/utils/masonryHelper';
 import JoinCelebrationModal from '../components/JoinCelebrationModal';
-import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS } from '../lib/tabEvents';
+import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -351,7 +351,19 @@ export default function HomeScreen() {
 
   useEffect(() => {
     fetchUserEvents();
+    const unsub = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
+      fetchUserEvents();
+    });
+    return () => {
+      unsub();
+    };
   }, [fetchUserEvents]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchUserEvents();
+    }, [fetchUserEvents])
+  );
 
   const isGlobalClickBusyRef = useRef(false);
 

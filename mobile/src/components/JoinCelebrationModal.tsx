@@ -19,6 +19,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
+import { tabEvents, EVENT_JOINED_CELEBRATION, EVENT_SAVES_UPDATED } from '../lib/tabEvents';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -162,6 +163,8 @@ export default function JoinCelebrationModal({
           runOnJS(setModalVisible)(false);
           runOnJS(onClose)();
           runOnJS(setEventDetails)(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
+          tabEvents.emit(EVENT_JOINED_CELEBRATION);
+          tabEvents.emit(EVENT_SAVES_UPDATED);
           if (onSuccess) {
             runOnJS(onSuccess)(slug, passcode);
           }

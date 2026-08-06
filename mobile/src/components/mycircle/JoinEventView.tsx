@@ -16,6 +16,8 @@ import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import api from '../../services/api';
+import { useFocusEffect } from 'expo-router';
+import { tabEvents, EVENT_JOINED_CELEBRATION } from '../../lib/tabEvents';
 import JoinCelebrationModal from '../JoinCelebrationModal';
 import {
   FONT_FUTURA,
@@ -54,7 +56,19 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
   // Load user's joined events from backend API + fallback to SecureStore
   useEffect(() => {
     fetchEvents();
+    const unsub = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
+      fetchEvents();
+    });
+    return () => {
+      unsub();
+    };
   }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchEvents();
+    }, [])
+  );
 
   const fetchEvents = async () => {
     try {
