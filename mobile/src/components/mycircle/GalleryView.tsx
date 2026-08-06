@@ -703,15 +703,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
       }
     }
 
-    // 5. Account match for Groom (Dushyant Saini)
-    const userEmail = (profile?.email || eventGuest?.email || '').toLowerCase().trim();
-    const userPhone = (profile?.phoneNumber || eventGuest?.phoneNumber || '').toString().replace(/\D/g, '');
-    const userName = (profile?.name || eventGuest?.name || '').toLowerCase().trim();
-
-    if (userEmail === 'sdush03@gmail.com' || userPhone.endsWith('8629010401') || userName.includes('dushyant saini')) {
-      return true;
-    }
-
     return false;
   }, [profile, userEvents, eventSlug, eventGuest, eventDetails]);
   const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
