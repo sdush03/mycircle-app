@@ -220,58 +220,98 @@ export default function ProfileScreen() {
   const fetchSavedPhotos = useCallback(async () => {
     setLoadingSaves(true);
     try {
-      const data = await savesService.getSavedPhotos();
-      const rawSaves = data || [];
-      setSavedPhotos(rawSaves);
-      setTotalFavouriteCount(rawSaves.length);
-
-      // Fetch event list to group favourites by event
+      // 1. Fetch user's joined celebration events
       let eventsList: any[] = [];
       try {
         const eventsRes = await api.get('/api/gallery/family/events');
         eventsList = eventsRes.data?.events || (Array.isArray(eventsRes.data) ? eventsRes.data : []);
+      } catch (_e) {
+        try {
+          const eventsRes = await api.get('/api/events');
+          eventsList = eventsRes.data?.events || (Array.isArray(eventsRes.data) ? eventsRes.data : []);
+        } catch (_e2) {}
+      }
+
+      // 2. Fetch saved moodboard photos as fallback/supplement
+      let rawSaves: any[] = [];
+      try {
+        const data = await savesService.getSavedPhotos();
+        rawSaves = data || [];
+        setSavedPhotos(rawSaves);
       } catch (_e) {}
 
+      let grandTotal = 0;
       const groups: EventMatchedGroup[] = [];
-      const assignedIds = new Set<any>();
+      const seenPhotoKeys = new Set<string>();
 
       if (Array.isArray(eventsList) && eventsList.length > 0) {
         for (const ev of eventsList) {
-          const evSaves = rawSaves.filter((item) => {
-            const matchesEvent =
-              String(item.eventId || '') === String(ev.id || '') ||
-              String((item as any).event_id || '') === String(ev.id || '') ||
-              String((item as any).eventSlug || '') === String(ev.slug || '');
-            if (matchesEvent) {
-              assignedIds.add(item.id || item.photoUrl);
-              return true;
+          let evFavs: any[] = [];
+          // Fetch event-wise liked/favourited photos for this event
+          try {
+            const favRes = await api.get(`/api/gallery/public/events/${ev.slug}/favorites`);
+            const raw =
+              favRes.data?.photos ||
+              favRes.data?.favorites ||
+              (Array.isArray(favRes.data) ? favRes.data : []);
+            if (Array.isArray(raw) && raw.length > 0) {
+              evFavs = raw.map((p) => ({ ...p, isLiked: true }));
             }
-            return false;
-          });
+          } catch (_e) {}
 
-          if (evSaves.length > 0) {
+          // Supplement with any saved moodboard photos matching this event
+          if (rawSaves.length > 0) {
+            const matchedSaves = rawSaves.filter((item) => {
+              return (
+                String(item.eventId || '') === String(ev.id || '') ||
+                String((item as any).event_id || '') === String(ev.id || '') ||
+                String((item as any).eventSlug || '') === String(ev.slug || '')
+              );
+            });
+            for (const sItem of matchedSaves) {
+              const sKey = String(sItem.id || sItem.photoUrl);
+              if (!evFavs.some((f) => String(f.id || f.photoUrl) === sKey)) {
+                evFavs.push({ ...sItem, isLiked: true });
+              }
+            }
+          }
+
+          const validPhotos = evFavs.filter((p) => !!getPhotoUri(p));
+          if (validPhotos.length > 0) {
+            validPhotos.forEach((p) => seenPhotoKeys.add(String(p.id || p.photoUrl || getPhotoUri(p))));
+            grandTotal += validPhotos.length;
+
             groups.push({
               eventSlug: ev.slug || `event-${ev.id}`,
               eventTitle: ev.title || ev.name || 'Celebration',
               eventDate: ev.date || ev.eventDate,
               coverImage: ev.coverImage || ev.imageUrl,
-              photos: evSaves,
+              photos: validPhotos,
             });
           }
         }
       }
 
-      // Collect unassigned favourites into a group
-      const remainingSaves = rawSaves.filter((item) => !assignedIds.has(item.id || item.photoUrl));
+      // Collect any remaining unassigned moodboard saves into a group
+      const remainingSaves = rawSaves.filter((item) => {
+        const k = String(item.id || item.photoUrl || getPhotoUri(item));
+        return !seenPhotoKeys.has(k);
+      });
+
       if (remainingSaves.length > 0) {
-        groups.push({
-          eventSlug: 'curated-favourites',
-          eventTitle: groups.length > 0 ? 'Curated Favourites' : 'My Favourites',
-          photos: remainingSaves,
-        });
+        const validRemaining = remainingSaves.map((p) => ({ ...p, isLiked: true })).filter((p) => !!getPhotoUri(p));
+        if (validRemaining.length > 0) {
+          grandTotal += validRemaining.length;
+          groups.push({
+            eventSlug: 'curated-favourites',
+            eventTitle: groups.length > 0 ? 'Curated Favourites' : 'My Favourites',
+            photos: validRemaining,
+          });
+        }
       }
 
       setFavouriteEventGroups(groups);
+      setTotalFavouriteCount(grandTotal);
     } catch (_err) {
       setSavedPhotos([]);
       setFavouriteEventGroups([]);
