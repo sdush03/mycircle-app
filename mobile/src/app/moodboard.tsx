@@ -18,6 +18,7 @@ import { useAuthStore } from '../store/authStore';
 import { tabEvents, EVENT_SAVES_UPDATED } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
+import { getPhotoAspect } from '../utils/photoDimensionCache';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -138,10 +139,12 @@ export default function MoodboardScreen() {
     const colHeights = [0, 0];
 
     filteredSaves.forEach((photo: any, index: number) => {
+      const cachedAspect = getPhotoAspect(photo.photoUrl) || getPhotoAspect(photo.id);
       const realAspect =
-        photo.width && photo.height && Number(photo.height) > 0
+        cachedAspect ||
+        (photo.width && photo.height && Number(photo.height) > 0
           ? Number(photo.width) / Number(photo.height)
-          : photo.aspectRatio || aspectMap[photo.photoUrl] || null;
+          : photo.aspectRatio || aspectMap[photo.photoUrl] || null);
 
       const isLandscape = realAspect ? realAspect > 1.05 : photo.isHorizontal;
 
@@ -150,7 +153,7 @@ export default function MoodboardScreen() {
         cardAspect = realAspect && realAspect > 1.0 ? realAspect : 1.5;
       } else {
         const cycle = index % 3;
-        cardAspect = cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5;
+        cardAspect = realAspect && realAspect < 1.0 ? realAspect : (cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5);
       }
 
       const photoWithAspect = {
@@ -208,14 +211,17 @@ export default function MoodboardScreen() {
   const renderMasonryCard = (item: any, isColumn0: boolean) => {
     const photoMine = isMine(item);
     const cardId = item.id || item.photoUrl || `save-${item.globalIndex}`;
+    const cardAspect = item.cardAspect || item.aspectRatio || 0.75;
 
     return (
-      <View key={cardId} style={styles.masonryCardWrapper}>
+      <View key={cardId} style={[styles.masonryCardWrapper, { aspectRatio: cardAspect }]}>
         <MasonryCard
           img={{
             ...item,
+            id: item.id || item.photoUrl,
             uri: item.photoUrl || item.r2Url || item.file_url || item.uri || '',
             fullUri: item.photoUrl || item.r2Url || item.file_url || item.uri || '',
+            aspectRatio: cardAspect,
           }}
           index={item.globalIndex ?? 0}
           isColumn0={isColumn0}
