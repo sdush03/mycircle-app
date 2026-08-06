@@ -127,8 +127,11 @@ export default function ProfileScreen() {
   const [savedPhotos, setSavedPhotos] = useState<SavedPhotoItem[]>([]);
   const [loadingSaves, setLoadingSaves] = useState(false);
 
-  // MY PHOTOS lightbox state (kept separate as requested)
-  const [selectedPhoto, setSelectedPhoto] = useState<any | null>(null);
+  // MY CELEBRATION PHOTOS Featured Story Lightbox state & bounds
+  const [selectedMyPhotoIdx, setSelectedMyPhotoIdx] = useState<number | null>(null);
+  const [selectedMyPhotoBounds, setSelectedMyPhotoBounds] = useState<LightboxBounds | null>(null);
+  const [selectedMyPhotoList, setSelectedMyPhotoList] = useState<any[]>([]);
+  const [selectedMyPhotoTitle, setSelectedMyPhotoTitle] = useState<string>('MY CELEBRATION PHOTOS');
 
   // SAVED MOODBOARD Featured Story Lightbox state & bounds
   const [selectedSavedIdx, setSelectedSavedIdx] = useState<number | null>(null);
@@ -331,24 +334,77 @@ export default function ProfileScreen() {
     }
   }, [savedPhotos]);
 
-  const renderMasonryCard = (p: any, index: number, isSavedTab: boolean = false) => {
+  const getMyPhotoBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
+    if (idx < 0 || idx >= selectedMyPhotoList.length) return;
+    const p = selectedMyPhotoList[idx];
+    if (!p) return;
+    const cardId = p.id || (p as any).uri || `photo-${idx}`;
+    const targetCard = cardRefs.current[cardId];
+
+    if (targetCard) {
+      targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
+        if (cardWidth > 0 && cardHeight > 0) {
+          if (y < 80 || y + cardHeight > Dimensions.get('screen').height - 60) {
+            targetCard.measureLayout(
+              mainScrollRef.current as any,
+              (left, top, w, h) => {
+                const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
+                mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
+                requestAnimationFrame(() => {
+                  targetCard.measureInWindow((nx, ny, nw, nh) => {
+                    if (nw > 0 && nh > 0) {
+                      callback({ x: nx, y: ny, width: nw, height: nh });
+                    }
+                  });
+                });
+              },
+              () => {}
+            );
+          } else {
+            callback({ x, y, width: cardWidth, height: cardHeight });
+          }
+        }
+      });
+    }
+  }, [selectedMyPhotoList]);
+
+  const renderMasonryCard = (
+    p: any,
+    index: number,
+    isSavedTab: boolean = false,
+    photosList: any[] = [],
+    groupTitle: string = ''
+  ) => {
     const imgUri = getPhotoUri(p);
     const cardId = p.id || p.uri || `photo-${index}`;
 
     const handlePress = () => {
+      const ref = cardRefs.current[cardId];
       if (isSavedTab) {
-        const ref = cardRefs.current[cardId];
         if (ref) {
           ref.measureInWindow((x, y, w, h) => {
             setSelectedSavedBounds({ x, y, width: w, height: h });
-            setSelectedSavedIdx(p.globalIndex ?? 0);
+            setSelectedSavedIdx(p.globalIndex ?? index);
           });
         } else {
           setSelectedSavedBounds(null);
-          setSelectedSavedIdx(p.globalIndex ?? 0);
+          setSelectedSavedIdx(p.globalIndex ?? index);
         }
       } else {
-        setSelectedPhoto(p);
+        const itemIdx = photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : index;
+        if (ref) {
+          ref.measureInWindow((x, y, w, h) => {
+            setSelectedMyPhotoList(photosList);
+            setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
+            setSelectedMyPhotoBounds({ x, y, width: w, height: h });
+            setSelectedMyPhotoIdx(itemIdx);
+          });
+        } else {
+          setSelectedMyPhotoList(photosList);
+          setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
+          setSelectedMyPhotoBounds(null);
+          setSelectedMyPhotoIdx(itemIdx);
+        }
       }
     };
 
@@ -367,16 +423,20 @@ export default function ProfileScreen() {
   };
 
   // Render 2-column Featured Story balanced masonry grid
-  const renderPhotoListMasonry = (photosList: any[], isSavedTab: boolean = false) => {
+  const renderPhotoListMasonry = (photosList: any[], isSavedTab: boolean = false, title: string = '') => {
     const { column0, column1 } = balancePhotosIntoColumns(photosList, aspectMap);
 
     return (
       <View style={styles.masonryGridContainer}>
         <View style={styles.masonryColumn}>
-          {column0.map((p, idx) => renderMasonryCard(p, idx * 2, isSavedTab))}
+          {column0.map((p, idx) =>
+            renderMasonryCard(p, photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : idx * 2, isSavedTab, photosList, title)
+          )}
         </View>
         <View style={styles.masonryColumn}>
-          {column1.map((p, idx) => renderMasonryCard(p, idx * 2 + 1, isSavedTab))}
+          {column1.map((p, idx) =>
+            renderMasonryCard(p, photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : idx * 2 + 1, isSavedTab, photosList, title)
+          )}
         </View>
       </View>
     );
@@ -487,7 +547,7 @@ export default function ProfileScreen() {
                     </View>
 
                     {/* 2-Column Featured Story Balanced Masonry Grid for this Event */}
-                    {renderPhotoListMasonry(group.photos, false)}
+                    {renderPhotoListMasonry(group.photos, false, group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS')}
                   </View>
                 );
               })}
@@ -567,34 +627,20 @@ export default function ProfileScreen() {
         />
       )}
 
-      {/* ── MY PHOTOS Standard Lightbox Modal (Kept separate as requested) ── */}
-      {selectedPhoto && (
-        <Modal
-          visible={!!selectedPhoto}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setSelectedPhoto(null)}
-        >
-          <View style={styles.lightboxOverlay}>
-            <SafeAreaView style={styles.lightboxSafeArea}>
-              <View style={styles.lightboxHeader}>
-                <Text style={styles.lightboxTitle}>PHOTO DETAIL</Text>
-                <Pressable style={styles.lightboxCloseBtn} onPress={() => setSelectedPhoto(null)}>
-                  <Ionicons name="close" size={24} color="#ffffff" />
-                </Pressable>
-              </View>
-
-              <View style={styles.lightboxImageContainer}>
-                <Image
-                  source={{ uri: getPhotoFullUri(selectedPhoto) }}
-                  style={styles.lightboxImage}
-                  contentFit="contain"
-                  cachePolicy="memory-disk"
-                />
-              </View>
-            </SafeAreaView>
-          </View>
-        </Modal>
+      {/* ── MY CELEBRATION PHOTOS Shared Universal Editorial Lightbox Modal ── */}
+      {selectedMyPhotoIdx !== null && (
+        <EditorialLightbox
+          visible={selectedMyPhotoIdx !== null}
+          images={selectedMyPhotoList}
+          initialIndex={selectedMyPhotoIdx}
+          initialBounds={selectedMyPhotoBounds}
+          onGetBoundsForIndex={getMyPhotoBoundsForIndex}
+          onClose={() => {
+            setSelectedMyPhotoIdx(null);
+            setSelectedMyPhotoBounds(null);
+          }}
+          title={selectedMyPhotoTitle}
+        />
       )}
     </View>
   );
