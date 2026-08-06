@@ -989,9 +989,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [isLoading, availableTabs, activeTab]);
 
-  // Screen Capture Protection: Notify root layout to apply/release protection
-  // NOTE: preventScreenCaptureAsync must run at root window level (outside Modal)
-  // so the callback bubbles up to _layout.tsx which runs in the main UIWindow.
+  // Screen Capture Protection:
+  //   - Calls onScreenProtectionChange so _layout.tsx applies it to the main UIWindow (iOS)
+  //   - Also calls preventScreenCaptureAsync directly here (Android FLAG_SECURE, same Activity)
   useEffect(() => {
     if (isLoading || !eventDetails) return;
 
@@ -1001,9 +1001,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     console.log(`[MYCIRCLE SECURITY 🛡️] PhotoDownloads: ${allowPhotoDownloads} | BulkDownloads: ${allowBulkDownloads} | PreventCapture: ${shouldPrevent}`);
 
+    // Notify root layout (covers iOS main UIWindow)
     onScreenProtectionChange?.(shouldPrevent);
 
-    // Screenshot listener CAN run inside modal — it just triggers a JS alert
+    // Also call directly (covers Android FLAG_SECURE on Activity window)
+    if (shouldPrevent) {
+      preventScreenCaptureAsync('gallery_protection');
+    } else {
+      allowScreenCaptureAsync('gallery_protection');
+    }
+
+    // Screenshot listener fires AFTER screenshot is saved — shows alert
     let listenerSub: any = null;
     if (shouldPrevent) {
       try {
@@ -1023,10 +1031,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     };
   }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads, onScreenProtectionChange]);
 
-  // On unmount, release protection at root level
+  // On unmount: release protection everywhere
   useEffect(() => {
     return () => {
       onScreenProtectionChange?.(false);
+      allowScreenCaptureAsync('gallery_protection');
     };
   }, []);
 

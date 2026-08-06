@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox, Dimensions } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -97,6 +97,11 @@ function RootLayoutContent() {
 
   const [isReady, setIsReady] = useState(false);
   const [shouldPreventCapture, setShouldPreventCapture] = useState(false);
+
+  // Stable callback reference — prevents GalleryView re-render loop
+  const handleScreenProtectionChange = useCallback((shouldPrevent: boolean) => {
+    setShouldPreventCapture(shouldPrevent);
+  }, []);
 
   // Apply/release screen capture protection at root window level
   // (must be here, NOT inside GalleryView Modal, because iOS Modal = separate UIWindow)
@@ -384,9 +389,7 @@ function RootLayoutContent() {
             onChangeEvent={() => {
               useAuthStore.getState().setEventDetails(null, null);
             }}
-            onScreenProtectionChange={(shouldPrevent) => {
-              setShouldPreventCapture(shouldPrevent);
-            }}
+            onScreenProtectionChange={handleScreenProtectionChange}
           />
         )}
 
