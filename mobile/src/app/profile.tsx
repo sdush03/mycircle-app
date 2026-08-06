@@ -868,6 +868,7 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     borderWidth: 1.5,
     borderColor: '#111111',
+    transform: [{ scaleX: -1 }],
   },
   avatarCircle: {
     width: 64,

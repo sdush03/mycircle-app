@@ -637,6 +637,7 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     borderWidth: 1.5,
     borderColor: 'transparent',
+    transform: [{ scaleX: -1 }],
   },
   tabAvatarImageActive: {
     borderColor: '#000000',
