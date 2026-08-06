@@ -175,7 +175,11 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         throw new Error(data.error || 'Selfie verification failed. Please try taking another photo.');
       }
 
-      await updateProfile({ hasSelfie: true });
+      const returnedSelfieUrl = data.selfieUrl
+        ? (data.selfieUrl.startsWith('http') ? data.selfieUrl : `${API_BASE_URL}${data.selfieUrl}`)
+        : photoUri;
+
+      await updateProfile({ hasSelfie: true, selfieUrl: returnedSelfieUrl });
       setValidationStatus('accepted');
       setSelfieError('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

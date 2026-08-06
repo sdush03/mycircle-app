@@ -202,7 +202,7 @@ export default function ProfileScreen() {
       // 2. Fetch all matched photos for user from my-photos endpoint as fallback/supplement
       let allMatched: any[] = [];
       try {
-        const myPhotosRes = await api.get('/api/my-photos');
+        const myPhotosRes = await api.get(`/api/my-photos?t=${Date.now()}`);
         if (myPhotosRes.data?.photos && Array.isArray(myPhotosRes.data.photos)) {
           allMatched = myPhotosRes.data.photos;
         }
@@ -215,7 +215,7 @@ export default function ProfileScreen() {
         for (const ev of eventsList) {
           let evPhotos: any[] = [];
           try {
-            const matchedRes = await api.get(`/api/gallery/public/events/${ev.slug}/matched-photos`);
+            const matchedRes = await api.get(`/api/gallery/public/events/${ev.slug}/matched-photos?t=${Date.now()}`);
             const raw =
               matchedRes.data?.photos ||
               matchedRes.data?.matchedPhotos ||
