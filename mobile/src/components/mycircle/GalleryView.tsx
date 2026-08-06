@@ -25,7 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { preventScreenCaptureAsync, allowScreenCaptureAsync, addScreenshotListener } from '../../utils/screenCapture';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -1011,24 +1011,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       allowScreenCaptureAsync('gallery_protection');
     }
 
-    // Screenshot listener fires AFTER screenshot is saved — shows alert
-    let listenerSub: any = null;
-    if (shouldPrevent) {
-      try {
-        listenerSub = addScreenshotListener(() => {
-          Alert.alert(
-            'Screenshots Restricted 🛡️',
-            'Screenshots are disabled for this private event gallery by the studio host.'
-          );
-        });
-      } catch (_) {}
-    }
-
-    return () => {
-      if (listenerSub && typeof listenerSub.remove === 'function') {
-        listenerSub.remove();
-      }
-    };
+    // Screen capture protection active — silent black screen on capture
   }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads, onScreenProtectionChange]);
 
   // On unmount: release protection everywhere
