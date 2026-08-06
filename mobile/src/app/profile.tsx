@@ -14,6 +14,7 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { useAuthStore } from '../store/authStore';
 import { savesService, SavedPhotoItem } from '../services/savesService';
@@ -561,7 +562,14 @@ export default function ProfileScreen() {
       >
         {/* ── User Avatar & Info Card ── */}
         <View style={styles.profileHeaderCard}>
-          <Pressable style={styles.avatarTouchable} onPress={() => setShowSelfieModal(true)}>
+          <Pressable
+            style={styles.avatarTouchable}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              setShowSelfieModal(true);
+            }}
+            delayLongPress={800}
+          >
             {profile?.selfieUrl ? (
               <Image source={{ uri: profile.selfieUrl }} style={styles.avatarImage} />
             ) : (
@@ -571,9 +579,6 @@ export default function ProfileScreen() {
                 </Text>
               </View>
             )}
-            <View style={styles.avatarCameraBadge}>
-              <Ionicons name="camera" size={12} color="#ffffff" />
-            </View>
           </Pressable>
 
           <View style={styles.userMetaInfo}>
@@ -750,17 +755,6 @@ export default function ProfileScreen() {
             </View>
 
             <View style={styles.sheetDivider} />
-
-            <Pressable
-              style={styles.sheetOptionBtn}
-              onPress={() => {
-                setShowSettingsModal(false);
-                setShowSelfieModal(true);
-              }}
-            >
-              <Ionicons name="camera-outline" size={20} color="#111111" />
-              <Text style={styles.sheetOptionText}>Update Selfie</Text>
-            </Pressable>
 
             <Pressable style={styles.sheetOptionBtn} onPress={handleLogout}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
