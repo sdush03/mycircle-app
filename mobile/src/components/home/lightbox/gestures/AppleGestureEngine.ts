@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dimensions, Platform } from 'react-native';
+import { Dimensions } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import { 
   useSharedValue, 
@@ -287,8 +287,8 @@ export function useApplePhotosGesture({
 
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .maxDelay(Platform.OS === 'android' ? 450 : 350)
-    .maxDistance(Platform.OS === 'android' ? 60 : 35)
+    .maxDelay(350)
+    .maxDistance(35)
     .onEnd((e) => {
       'worklet';
       if (scale.value > 1.01) {
