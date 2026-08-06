@@ -719,7 +719,7 @@ export function EditorialLightbox({
                 horizontal
                 pagingEnabled={false}
                 disableIntervalMomentum={true}
-                snapToAlignment="center"
+                snapToAlignment="start"
                 decelerationRate="fast"
                 snapToInterval={width + 18}
                 scrollEnabled={true}
