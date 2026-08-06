@@ -128,13 +128,13 @@ export default function ProfileScreen() {
   const subTabPanGesture = useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX(activeSubTab === 'my_photos' ? [-25, 9999] : [-9999, 25])
-        .failOffsetY([-15, 15])
+        .activeOffsetX(activeSubTab === 'my_photos' ? [-10, 9999] : [-9999, 10])
+        .failOffsetY([-12, 12])
         .onEnd((e) => {
           'worklet';
-          if (e.translationX < -35 && activeSubTabShared.value === 'my_photos') {
+          if (e.translationX < -25 && activeSubTabShared.value === 'my_photos') {
             runOnJS(setActiveSubTab)('my_favourites');
-          } else if (e.translationX > 35 && activeSubTabShared.value === 'my_favourites') {
+          } else if (e.translationX > 25 && activeSubTabShared.value === 'my_favourites') {
             runOnJS(setActiveSubTab)('my_photos');
           }
         }),
