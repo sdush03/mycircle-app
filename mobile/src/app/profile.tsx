@@ -32,7 +32,7 @@ import {
 
 const { width } = Dimensions.get('window');
 
-type ProfileSubTab = 'my_photos' | 'saved_moodboard';
+type ProfileSubTab = 'my_photos' | 'my_favourites';
 
 interface EventMatchedGroup {
   eventSlug: string;
@@ -123,8 +123,10 @@ export default function ProfileScreen() {
   const [totalMatchedCount, setTotalMatchedCount] = useState<number>(0);
   const [loadingPhotos, setLoadingPhotos] = useState<boolean>(true);
 
-  // Saved Moodboard photos
+  // Saved Favourites photos grouped by event
   const [savedPhotos, setSavedPhotos] = useState<SavedPhotoItem[]>([]);
+  const [favouriteEventGroups, setFavouriteEventGroups] = useState<EventMatchedGroup[]>([]);
+  const [totalFavouriteCount, setTotalFavouriteCount] = useState<number>(0);
   const [loadingSaves, setLoadingSaves] = useState(false);
 
   // MY CELEBRATION PHOTOS Featured Story Lightbox state & bounds
@@ -219,9 +221,61 @@ export default function ProfileScreen() {
     setLoadingSaves(true);
     try {
       const data = await savesService.getSavedPhotos();
-      setSavedPhotos(data || []);
+      const rawSaves = data || [];
+      setSavedPhotos(rawSaves);
+      setTotalFavouriteCount(rawSaves.length);
+
+      // Fetch event list to group favourites by event
+      let eventsList: any[] = [];
+      try {
+        const eventsRes = await api.get('/api/gallery/family/events');
+        eventsList = eventsRes.data?.events || (Array.isArray(eventsRes.data) ? eventsRes.data : []);
+      } catch (_e) {}
+
+      const groups: EventMatchedGroup[] = [];
+      const assignedIds = new Set<any>();
+
+      if (Array.isArray(eventsList) && eventsList.length > 0) {
+        for (const ev of eventsList) {
+          const evSaves = rawSaves.filter((item) => {
+            const matchesEvent =
+              String(item.eventId || '') === String(ev.id || '') ||
+              String((item as any).event_id || '') === String(ev.id || '') ||
+              String((item as any).eventSlug || '') === String(ev.slug || '');
+            if (matchesEvent) {
+              assignedIds.add(item.id || item.photoUrl);
+              return true;
+            }
+            return false;
+          });
+
+          if (evSaves.length > 0) {
+            groups.push({
+              eventSlug: ev.slug || `event-${ev.id}`,
+              eventTitle: ev.title || ev.name || 'Celebration',
+              eventDate: ev.date || ev.eventDate,
+              coverImage: ev.coverImage || ev.imageUrl,
+              photos: evSaves,
+            });
+          }
+        }
+      }
+
+      // Collect unassigned favourites into a group
+      const remainingSaves = rawSaves.filter((item) => !assignedIds.has(item.id || item.photoUrl));
+      if (remainingSaves.length > 0) {
+        groups.push({
+          eventSlug: 'curated-favourites',
+          eventTitle: groups.length > 0 ? 'Curated Favourites' : 'My Favourites',
+          photos: remainingSaves,
+        });
+      }
+
+      setFavouriteEventGroups(groups);
     } catch (_err) {
       setSavedPhotos([]);
+      setFavouriteEventGroups([]);
+      setTotalFavouriteCount(0);
     } finally {
       setLoadingSaves(false);
     }
@@ -472,7 +526,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* ── Sub-Tab Selector (MY PHOTOS vs SAVED MOODBOARD) ── */}
+        {/* ── Sub-Tab Selector (MY PHOTOS vs MY FAVOURITES) ── */}
         <View style={styles.subTabRow}>
           <Pressable
             style={[styles.subTabBtn, activeSubTab === 'my_photos' && styles.subTabBtnActive]}
@@ -489,16 +543,16 @@ export default function ProfileScreen() {
           </Pressable>
 
           <Pressable
-            style={[styles.subTabBtn, activeSubTab === 'saved_moodboard' && styles.subTabBtnActive]}
-            onPress={() => setActiveSubTab('saved_moodboard')}
+            style={[styles.subTabBtn, activeSubTab === 'my_favourites' && styles.subTabBtnActive]}
+            onPress={() => setActiveSubTab('my_favourites')}
           >
             <Ionicons
-              name={activeSubTab === 'saved_moodboard' ? 'heart' : 'heart-outline'}
+              name={activeSubTab === 'my_favourites' ? 'heart' : 'heart-outline'}
               size={16}
-              color={activeSubTab === 'saved_moodboard' ? '#111111' : '#888888'}
+              color={activeSubTab === 'my_favourites' ? '#ef4444' : '#888888'}
             />
-            <Text style={[styles.subTabText, activeSubTab === 'saved_moodboard' && styles.subTabTextActive]}>
-              SAVED MOODBOARD ({savedPhotos.length})
+            <Text style={[styles.subTabText, activeSubTab === 'my_favourites' && styles.subTabTextActive]}>
+              MY FAVOURITES ({totalFavouriteCount})
             </Text>
           </Pressable>
         </View>
@@ -554,27 +608,60 @@ export default function ProfileScreen() {
             </View>
           )
         ) : (
-          /* SAVED MOODBOARD CONTENT */
+          /* MY FAVOURITES CONTENT (Grouped by Events) */
           loadingSaves ? (
             <View style={styles.loadingBox}>
               <ActivityIndicator size="small" color="#111111" />
             </View>
-          ) : savedPhotos.length === 0 ? (
+          ) : favouriteEventGroups.length === 0 || totalFavouriteCount === 0 ? (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconCircle}>
                 <Ionicons name="heart-outline" size={30} color="#888888" />
               </View>
-              <Text style={styles.emptyTitle}>YOUR MOODBOARD IS EMPTY</Text>
+              <Text style={styles.emptyTitle}>NO FAVOURITE PHOTOS YET</Text>
               <Text style={styles.emptySub}>
-                Heart or save photos while exploring stories & inspirations to add them to your moodboard.
+                Heart or save photos while exploring event stories to curate your personal favourites collection.
               </Text>
-              <Pressable style={styles.exploreBtn} onPress={() => router.replace('/moodboard')}>
-                <Text style={styles.exploreBtnText}>GO TO MOODBOARD TAB</Text>
+              <Pressable style={styles.exploreBtn} onPress={() => router.replace('/')}>
+                <Text style={styles.exploreBtnText}>EXPLORE CELEBRATIONS</Text>
               </Pressable>
             </View>
           ) : (
-            /* 2-Column Featured Story Balanced Masonry Grid for Saved Moodboard */
-            renderPhotoListMasonry(savedPhotos, true)
+            <View style={styles.eventsSection}>
+              {favouriteEventGroups.map((group) => {
+                if (!group.photos || group.photos.length === 0) return null;
+                return (
+                  <View key={`fav-${group.eventSlug}`} style={styles.eventGroupContainer}>
+                    {/* Event Title Header */}
+                    <View style={styles.eventHeaderRow}>
+                      <View style={styles.eventHeaderInfo}>
+                        <Text style={styles.eventGroupCategory}>CELEBRATION FAVOURITES</Text>
+                        <Text style={styles.eventGroupTitle}>{group.eventTitle.toUpperCase()}</Text>
+                        {group.eventDate && (
+                          <Text style={styles.eventGroupDate}>
+                            {new Date(group.eventDate).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </Text>
+                        )}
+                      </View>
+                      <View style={styles.eventCountPill}>
+                        <Text style={styles.eventCountText}>{group.photos.length} FAVOURITES</Text>
+                      </View>
+                    </View>
+
+                    {/* 2-Column Masonry Grid for this Event's Favourites */}
+                    {renderPhotoListMasonry(
+                      group.photos,
+                      true,
+                      group.eventTitle ? group.eventTitle.toUpperCase() : 'MY FAVOURITES'
+                    )}
+                  </View>
+                );
+              })}
+            </View>
           )
         )}
       </ScrollView>
