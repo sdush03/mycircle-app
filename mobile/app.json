@@ -105,6 +105,7 @@
         "expo-build-properties",
         {
           "ios": {
+            "deploymentTarget": "16.4",
             "useFrameworks": "static",
             "modularHeaders": [
               "GoogleUtilities",
