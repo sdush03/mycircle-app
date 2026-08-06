@@ -98,9 +98,10 @@ function mapPhotoItem(p: any): Photo {
 interface GalleryViewProps {
   onLogout: () => void;
   onChangeEvent: () => void;
+  onScreenProtectionChange?: (shouldPrevent: boolean) => void;
 }
 
-const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }: GalleryViewProps) {
+const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, onScreenProtectionChange }: GalleryViewProps) {
   const insets = useSafeAreaInsets();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [allPhotos, setAllPhotos] = useState<Photo[]>([]);
@@ -988,7 +989,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
     }
   }, [isLoading, availableTabs, activeTab]);
 
-  // Screen Capture Protection: Prevent screenshots if allowDownloads or allowBulkDownloads is disabled
+  // Screen Capture Protection: Notify root layout to apply/release protection
+  // NOTE: preventScreenCaptureAsync must run at root window level (outside Modal)
+  // so the callback bubbles up to _layout.tsx which runs in the main UIWindow.
   useEffect(() => {
     if (isLoading || !eventDetails) return;
 
@@ -998,14 +1001,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
     console.log(`[MYCIRCLE SECURITY 🛡️] PhotoDownloads: ${allowPhotoDownloads} | BulkDownloads: ${allowBulkDownloads} | PreventCapture: ${shouldPrevent}`);
 
-    if (shouldPrevent) {
-      preventScreenCaptureAsync('gallery_protection').catch((err: any) => {
-        console.warn('[MYCIRCLE SECURITY ⚠️] preventScreenCapture error:', err);
-      });
-    } else {
-      allowScreenCaptureAsync('gallery_protection').catch(() => {});
-    }
+    onScreenProtectionChange?.(shouldPrevent);
 
+    // Screenshot listener CAN run inside modal — it just triggers a JS alert
     let listenerSub: any = null;
     if (shouldPrevent) {
       try {
@@ -1023,12 +1021,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         listenerSub.remove();
       }
     };
-  }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
+  }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads, onScreenProtectionChange]);
 
-  // Release screen capture protection when leaving the gallery view
+  // On unmount, release protection at root level
   useEffect(() => {
     return () => {
-      allowScreenCaptureAsync('gallery_protection').catch(() => {});
+      onScreenProtectionChange?.(false);
     };
   }, []);
 

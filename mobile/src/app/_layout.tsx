@@ -22,6 +22,7 @@ import InspirationsScreen from './inspirations';
 import MoodboardScreen from './moodboard';
 import ProfileScreen from './profile';
 import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS } from '../lib/tabEvents';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -95,6 +96,17 @@ function RootLayoutContent() {
   const eventSlug = useAuthStore((state) => state.eventSlug);
 
   const [isReady, setIsReady] = useState(false);
+  const [shouldPreventCapture, setShouldPreventCapture] = useState(false);
+
+  // Apply/release screen capture protection at root window level
+  // (must be here, NOT inside GalleryView Modal, because iOS Modal = separate UIWindow)
+  useEffect(() => {
+    if (shouldPreventCapture) {
+      preventScreenCaptureAsync('gallery_protection');
+    } else {
+      allowScreenCaptureAsync('gallery_protection');
+    }
+  }, [shouldPreventCapture]);
 
   // Load persisted session once on mount
   useEffect(() => {
@@ -371,6 +383,9 @@ function RootLayoutContent() {
             }}
             onChangeEvent={() => {
               useAuthStore.getState().setEventDetails(null, null);
+            }}
+            onScreenProtectionChange={(shouldPrevent) => {
+              setShouldPreventCapture(shouldPrevent);
             }}
           />
         )}
