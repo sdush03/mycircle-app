@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dimensions } from 'react-native';
+import { Dimensions, Platform } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import { 
   useSharedValue, 
@@ -49,9 +49,9 @@ export function useApplePhotosGesture({
   // React state for strict gesture enablement (State 1: NORMAL vs State 2: ZOOMED)
   const [isZoomedState, setIsZoomedState] = useState(false);
 
-  // Sync scale.value > 1.15 to React state & notify parent FlatList
+  // Sync scale.value > 1.01 to React state & notify parent FlatList
   useAnimatedReaction(
-    () => scale.value > 1.15,
+    () => scale.value > 1.01,
     (isZoomed, previous) => {
       if (isZoomed !== previous && previous !== null && previous !== undefined) {
         runOnJS(setIsZoomedState)(isZoomed);
@@ -278,20 +278,20 @@ export function useApplePhotosGesture({
   const singleTapGesture = Gesture.Tap()
     .numberOfTaps(1)
     .maxDuration(300)
-    .maxDistance(45)
+    .maxDistance(25)
     .onEnd(() => {
       'worklet';
-      if (scale.value > 1.15) return;
+      if (scale.value > 1.01) return;
       runOnJS(onToggleControls)();
     });
 
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .maxDelay(350)
-    .maxDistance(45)
+    .maxDelay(Platform.OS === 'android' ? 450 : 350)
+    .maxDistance(Platform.OS === 'android' ? 60 : 35)
     .onEnd((e) => {
       'worklet';
-      if (scale.value > 1.15) {
+      if (scale.value > 1.01) {
         finishGesture();
         scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
         translateX.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
