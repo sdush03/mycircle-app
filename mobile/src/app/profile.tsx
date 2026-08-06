@@ -20,7 +20,7 @@ import { savesService, SavedPhotoItem } from '../services/savesService';
 import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { runOnJS, useSharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import api from '../services/api';
 import {
   FONT_FUTURA,
@@ -121,25 +121,52 @@ export default function ProfileScreen() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   const activeSubTabShared = useSharedValue<ProfileSubTab>(activeSubTab);
+  const tabTranslateX = useSharedValue(0);
+  const startDragX = useSharedValue(0);
+
   useEffect(() => {
     activeSubTabShared.value = activeSubTab;
-  }, [activeSubTab, activeSubTabShared]);
+    const targetX = activeSubTab === 'my_photos' ? 0 : -width;
+    tabTranslateX.value = withTiming(targetX, { duration: 240, easing: Easing.out(Easing.quad) });
+  }, [activeSubTab, activeSubTabShared, tabTranslateX]);
 
   const subTabPanGesture = useMemo(
     () =>
       Gesture.Pan()
         .activeOffsetX([-20, 20])
         .failOffsetY([-15, 15])
+        .onStart(() => {
+          'worklet';
+          startDragX.value = tabTranslateX.value;
+        })
+        .onUpdate((e) => {
+          'worklet';
+          const nextX = startDragX.value + e.translationX;
+          tabTranslateX.value = Math.min(0, Math.max(-width, nextX));
+        })
         .onEnd((e) => {
           'worklet';
-          if (e.translationX < -30 && activeSubTabShared.value === 'my_photos') {
-            runOnJS(setActiveSubTab)('my_favourites');
-          } else if (e.translationX > 30 && activeSubTabShared.value === 'my_favourites') {
-            runOnJS(setActiveSubTab)('my_photos');
+          const threshold = width * 0.25;
+          if (activeSubTabShared.value === 'my_photos') {
+            if (e.translationX < -threshold || e.velocityX < -400) {
+              runOnJS(setActiveSubTab)('my_favourites');
+            } else {
+              tabTranslateX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.quad) });
+            }
+          } else {
+            if (e.translationX > threshold || e.velocityX > 400) {
+              runOnJS(setActiveSubTab)('my_photos');
+            } else {
+              tabTranslateX.value = withTiming(-width, { duration: 200, easing: Easing.out(Easing.quad) });
+            }
           }
         }),
-    [activeSubTabShared]
+    [activeSubTabShared, startDragX, tabTranslateX]
   );
+
+  const subTabAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tabTranslateX.value }],
+  }));
 
   // Event-grouped photos
   const [eventGroups, setEventGroups] = useState<EventMatchedGroup[]>([]);
@@ -553,7 +580,7 @@ export default function ProfileScreen() {
 
         {/* ── Sub-Tab Selector & Content (MY PHOTOS vs MY FAVOURITES) ── */}
         <GestureDetector gesture={subTabPanGesture}>
-          <View style={{ flex: 1 }}>
+          <View style={{ width, overflow: 'hidden' }}>
             <View style={styles.subTabRow}>
               <Pressable
                 style={[styles.subTabBtn, activeSubTab === 'my_photos' && styles.subTabBtnActive]}
@@ -584,113 +611,117 @@ export default function ProfileScreen() {
               </Pressable>
             </View>
 
-            {/* ── Sub-Tab Content ── */}
-            {activeSubTab === 'my_photos' ? (
-              /* MY CELEBRATION PHOTOS CONTENT (Grouped by Events) */
-              loadingPhotos ? (
-                <View style={styles.loadingBox}>
-                  <ActivityIndicator size="small" color="#111111" />
-                </View>
-              ) : eventGroups.length === 0 || totalMatchedCount === 0 ? (
-                <View style={styles.emptyState}>
-                  <View style={styles.emptyIconCircle}>
-                    <Ionicons name="camera-outline" size={30} color="#888888" />
+            {/* ── Side-by-Side 60FPS Animated Sliding Track ── */}
+            <Animated.View style={[{ flexDirection: 'row', width: width * 2, alignItems: 'flex-start' }, subTabAnimatedStyle]}>
+              {/* PAGE 1: MY CELEBRATION PHOTOS */}
+              <View style={{ width }}>
+                {loadingPhotos ? (
+                  <View style={styles.loadingBox}>
+                    <ActivityIndicator size="small" color="#111111" />
                   </View>
-                  <Text style={styles.emptyTitle}>NO MATCHED PHOTOS YET</Text>
-                  <Text style={styles.emptySub}>
-                    Photos matched to your selfie across your celebration events will automatically appear here.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.eventsSection}>
-                  {eventGroups.map((group) => {
-                    if (!group.photos || group.photos.length === 0) return null;
-                    return (
-                      <View key={group.eventSlug} style={styles.eventGroupContainer}>
-                        {/* Event Title Header */}
-                        <View style={styles.eventHeaderRow}>
-                          <View style={styles.eventHeaderInfo}>
-                            <Text style={styles.eventGroupCategory}>CELEBRATION MATCHES</Text>
-                            <Text style={styles.eventGroupTitle}>{group.eventTitle.toUpperCase()}</Text>
-                            {group.eventDate && (
-                              <Text style={styles.eventGroupDate}>
-                                {new Date(group.eventDate).toLocaleDateString(undefined, {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric',
-                                })}
-                              </Text>
-                            )}
-                          </View>
-                          <View style={styles.eventCountPill}>
-                            <Text style={styles.eventCountText}>{group.photos.length} MATCHES</Text>
-                          </View>
-                        </View>
-
-                        {/* 2-Column Featured Story Balanced Masonry Grid for this Event */}
-                        {renderPhotoListMasonry(group.photos, false, group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS')}
-                      </View>
-                    );
-                  })}
-                </View>
-              )
-            ) : (
-              /* MY FAVOURITES CONTENT (Grouped by Events) */
-              loadingSaves ? (
-                <View style={styles.loadingBox}>
-                  <ActivityIndicator size="small" color="#111111" />
-                </View>
-              ) : favouriteEventGroups.length === 0 || totalFavouriteCount === 0 ? (
-                <View style={styles.emptyState}>
-                  <View style={styles.emptyIconCircle}>
-                    <Ionicons name="heart-outline" size={30} color="#888888" />
+                ) : eventGroups.length === 0 || totalMatchedCount === 0 ? (
+                  <View style={styles.emptyState}>
+                    <View style={styles.emptyIconCircle}>
+                      <Ionicons name="camera-outline" size={30} color="#888888" />
+                    </View>
+                    <Text style={styles.emptyTitle}>NO MATCHED PHOTOS YET</Text>
+                    <Text style={styles.emptySub}>
+                      Photos matched to your selfie across your celebration events will automatically appear here.
+                    </Text>
                   </View>
-                  <Text style={styles.emptyTitle}>NO FAVOURITE PHOTOS YET</Text>
-                  <Text style={styles.emptySub}>
-                    Heart or save photos while exploring event stories to curate your personal favourites collection.
-                  </Text>
-                  <Pressable style={styles.exploreBtn} onPress={() => router.replace('/')}>
-                    <Text style={styles.exploreBtnText}>EXPLORE CELEBRATIONS</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.eventsSection}>
-                  {favouriteEventGroups.map((group) => {
-                    if (!group.photos || group.photos.length === 0) return null;
-                    return (
-                      <View key={`fav-${group.eventSlug}`} style={styles.eventGroupContainer}>
-                        {/* Event Title Header */}
-                        <View style={styles.eventHeaderRow}>
-                          <View style={styles.eventHeaderInfo}>
-                            <Text style={styles.eventGroupCategory}>CELEBRATION FAVOURITES</Text>
-                            <Text style={styles.eventGroupTitle}>{group.eventTitle.toUpperCase()}</Text>
-                            {group.eventDate && (
-                              <Text style={styles.eventGroupDate}>
-                                {new Date(group.eventDate).toLocaleDateString(undefined, {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric',
-                                })}
-                              </Text>
-                            )}
+                ) : (
+                  <View style={styles.eventsSection}>
+                    {eventGroups.map((group) => {
+                      if (!group.photos || group.photos.length === 0) return null;
+                      return (
+                        <View key={group.eventSlug} style={styles.eventGroupContainer}>
+                          {/* Event Title Header */}
+                          <View style={styles.eventHeaderRow}>
+                            <View style={styles.eventHeaderInfo}>
+                              <Text style={styles.eventGroupCategory}>CELEBRATION MATCHES</Text>
+                              <Text style={styles.eventGroupTitle}>{group.eventTitle.toUpperCase()}</Text>
+                              {group.eventDate && (
+                                <Text style={styles.eventGroupDate}>
+                                  {new Date(group.eventDate).toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  })}
+                                </Text>
+                              )}
+                            </View>
+                            <View style={styles.eventCountPill}>
+                              <Text style={styles.eventCountText}>{group.photos.length} MATCHES</Text>
+                            </View>
                           </View>
-                          <View style={styles.eventCountPill}>
-                            <Text style={styles.eventCountText}>{group.photos.length} FAVOURITES</Text>
-                          </View>
-                        </View>
 
-                        {/* 2-Column Masonry Grid for this Event's Favourites */}
-                        {renderPhotoListMasonry(
-                          group.photos,
-                          true,
-                          group.eventTitle ? group.eventTitle.toUpperCase() : 'MY FAVOURITES'
-                        )}
-                      </View>
-                    );
-                  })}
-                </View>
-              )
-            )}
+                          {/* 2-Column Featured Story Balanced Masonry Grid for this Event */}
+                          {renderPhotoListMasonry(group.photos, false, group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS')}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              {/* PAGE 2: MY FAVOURITES */}
+              <View style={{ width }}>
+                {loadingSaves ? (
+                  <View style={styles.loadingBox}>
+                    <ActivityIndicator size="small" color="#111111" />
+                  </View>
+                ) : favouriteEventGroups.length === 0 || totalFavouriteCount === 0 ? (
+                  <View style={styles.emptyState}>
+                    <View style={styles.emptyIconCircle}>
+                      <Ionicons name="heart-outline" size={30} color="#888888" />
+                    </View>
+                    <Text style={styles.emptyTitle}>NO FAVOURITE PHOTOS YET</Text>
+                    <Text style={styles.emptySub}>
+                      Heart or save photos while exploring event stories to curate your personal favourites collection.
+                    </Text>
+                    <Pressable style={styles.exploreBtn} onPress={() => router.replace('/')}>
+                      <Text style={styles.exploreBtnText}>EXPLORE CELEBRATIONS</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={styles.eventsSection}>
+                    {favouriteEventGroups.map((group) => {
+                      if (!group.photos || group.photos.length === 0) return null;
+                      return (
+                        <View key={`fav-${group.eventSlug}`} style={styles.eventGroupContainer}>
+                          {/* Event Title Header */}
+                          <View style={styles.eventHeaderRow}>
+                            <View style={styles.eventHeaderInfo}>
+                              <Text style={styles.eventGroupCategory}>CELEBRATION FAVOURITES</Text>
+                              <Text style={styles.eventGroupTitle}>{group.eventTitle.toUpperCase()}</Text>
+                              {group.eventDate && (
+                                <Text style={styles.eventGroupDate}>
+                                  {new Date(group.eventDate).toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  })}
+                                </Text>
+                              )}
+                            </View>
+                            <View style={styles.eventCountPill}>
+                              <Text style={styles.eventCountText}>{group.photos.length} FAVOURITES</Text>
+                            </View>
+                          </View>
+
+                          {/* 2-Column Masonry Grid for this Event's Favourites */}
+                          {renderPhotoListMasonry(
+                            group.photos,
+                            true,
+                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY FAVOURITES'
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            </Animated.View>
           </View>
         </GestureDetector>
       </ScrollView>
