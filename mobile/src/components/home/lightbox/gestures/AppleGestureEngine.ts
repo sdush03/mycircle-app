@@ -75,6 +75,7 @@ export function useApplePhotosGesture({
   // Continuity & pointer tracking state
   const activePointerCount = useSharedValue(0);
   const needsPanReset = useSharedValue(false);
+  const isDoubleTapAnimating = useSharedValue(false);
 
   const logGestureDebug = (msg: string) => {
     console.log(`[MYCIRCLE DEBUG 🔎 GESTURE] ${msg}`);
@@ -85,6 +86,7 @@ export function useApplePhotosGesture({
    */
   const finishGesture = () => {
     'worklet';
+    if (isDoubleTapAnimating.value) return;
     isPinching.value = false;
     const target = getTargetTransform(scale.value, translateX.value, translateY.value, containerW, containerH, width, screenHeight, imageAspect);
     scale.value = withSpring(target.scale, { damping: 28, stiffness: 220, mass: 0.5 });
@@ -299,10 +301,16 @@ export function useApplePhotosGesture({
     .onEnd((e) => {
       'worklet';
       runOnJS(logGestureDebug)(`DOUBLE TAP FIRED | currentScale: ${scale.value.toFixed(2)} | touch: (${e.x.toFixed(0)}, ${e.y.toFixed(0)})`);
+      isDoubleTapAnimating.value = true;
+      const unlockWorklet = (finished?: boolean) => {
+        'worklet';
+        isDoubleTapAnimating.value = false;
+      };
+
       if (scale.value > 1.01) {
-        scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
         translateX.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
         translateY.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
+        scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) }, unlockWorklet);
       } else {
         const targetScale = 2.5;
         const focalX = e.x - width / 2;
@@ -313,9 +321,9 @@ export function useApplePhotosGesture({
 
         const target = getTargetTransform(targetScale, rawTx, rawTy, containerW, containerH, width, screenHeight, imageAspect);
 
-        scale.value = withTiming(target.scale, { duration: 250, easing: Easing.out(Easing.quad) });
         translateX.value = withTiming(target.translateX, { duration: 250, easing: Easing.out(Easing.quad) });
         translateY.value = withTiming(target.translateY, { duration: 250, easing: Easing.out(Easing.quad) });
+        scale.value = withTiming(target.scale, { duration: 250, easing: Easing.out(Easing.quad) }, unlockWorklet);
       }
     });
 
