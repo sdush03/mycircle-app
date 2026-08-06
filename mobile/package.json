@@ -26,7 +26,7 @@
     "expo-linking": "~8.0.12",
     "expo-media-library": "~18.2.1",
     "expo-router": "~6.0.24",
-    "expo-screen-capture": "^57.0.1",
+    "expo-screen-capture": "~8.0.9",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
