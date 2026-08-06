@@ -1,28 +1,29 @@
 /**
  * Safe wrapper around expo-screen-capture.
  * Falls back to no-ops when native module is not linked.
- * Note: requires `cd ios && pod install` + a full native rebuild to activate.
+ * Do NOT use a static import — native module must be loaded via try-require
+ * so that missing native bindings don't crash the app on startup.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 let _mod: any = null;
-if (typeof require !== 'undefined') {
-  try {
-    // NativeModules check first — if the native module isn't registered, skip entirely
-    const { NativeModules } = require('react-native');
-    if (NativeModules?.ExpoScreenCapture) {
-      _mod = require('expo-screen-capture');
-      console.log('[MYCIRCLE SCREEN CAPTURE 🛡️] Native module loaded successfully');
-    } else {
-      console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] ExpoScreenCapture native module not found — rebuild with pod install required');
-    }
-  } catch (e: any) {
-    console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] expo-screen-capture unavailable:', e?.message);
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  _mod = require('expo-screen-capture');
+  if (_mod?.preventScreenCaptureAsync) {
+    console.log('[MYCIRCLE SCREEN CAPTURE 🛡️] expo-screen-capture loaded successfully');
+  } else {
+    console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] expo-screen-capture loaded but preventScreenCaptureAsync missing');
+    _mod = null;
   }
+} catch (e: any) {
+  console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] expo-screen-capture unavailable — rebuild required:', e?.message);
 }
 
 export async function preventScreenCaptureAsync(key: string = 'default'): Promise<void> {
-  if (!_mod?.preventScreenCaptureAsync) return;
+  if (!_mod?.preventScreenCaptureAsync) {
+    console.warn(`[MYCIRCLE SCREEN CAPTURE ⚠️] preventScreenCaptureAsync skipped — module not available`);
+    return;
+  }
   try {
     await _mod.preventScreenCaptureAsync(key);
     console.log(`[MYCIRCLE SCREEN CAPTURE ✅] PREVENTED — key: ${key}`);
@@ -35,6 +36,7 @@ export async function allowScreenCaptureAsync(key: string = 'default'): Promise<
   if (!_mod?.allowScreenCaptureAsync) return;
   try {
     await _mod.allowScreenCaptureAsync(key);
+    console.log(`[MYCIRCLE SCREEN CAPTURE 🔓] ALLOWED — key: ${key}`);
   } catch (_) {}
 }
 
