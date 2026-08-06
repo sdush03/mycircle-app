@@ -105,7 +105,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   const [allPhotos, setAllPhotos] = useState<Photo[]>([]);
   const [totalAllPhotosCount, setTotalAllPhotosCount] = useState<number | null>(null);
   const [eventDetails, setEventDetailsData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<string>('ALL');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (!eventSlug) return 'ALL';
+    const cached = useAuthStore.getState().getGalleryCache(eventSlug);
+    if (cached && cached.hasFullAccess === false) {
+      return 'HIGHLIGHTS';
+    }
+    return 'ALL';
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [allPhotosOffset, setAllPhotosOffset] = useState(0);
@@ -866,14 +873,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   // - Full Access: Lands on ALL
   // - Partial Access: If highlights.count > 0 -> HIGHLIGHTS, else -> MY PHOTOS
   useEffect(() => {
-    if (!isLoading && !hasSetLandingTabRef.current) {
-      hasSetLandingTabRef.current = true;
-      const targetTab = hasFullAccess ? 'ALL' : (highlightsCount > 0 ? 'HIGHLIGHTS' : 'MY PHOTOS');
-      if (activeTab.toUpperCase() !== targetTab.toUpperCase()) {
+    if (!hasSetLandingTabRef.current) {
+      if (hasFullAccess === false) {
+        hasSetLandingTabRef.current = true;
+        const targetTab = highlightsCount > 0 ? 'HIGHLIGHTS' : 'MY PHOTOS';
         setActiveTab(targetTab);
+      } else if (hasFullAccess === true) {
+        hasSetLandingTabRef.current = true;
+        setActiveTab('ALL');
       }
     }
-  }, [isLoading, hasFullAccess, highlightsCount, activeTab]);
+  }, [hasFullAccess, highlightsCount]);
+
+  // Sanitize activeTab: Ensure partial access users never stay on 'ALL' if it's not in availableTabs
+  useEffect(() => {
+    if (availableTabs.length > 0 && !availableTabs.map(t => t.toUpperCase()).includes(activeTab.toUpperCase())) {
+      const fallbackTab = availableTabs.includes('HIGHLIGHTS') ? 'HIGHLIGHTS' : availableTabs[0];
+      setActiveTab(fallbackTab);
+    }
+  }, [availableTabs, activeTab]);
 
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
