@@ -232,17 +232,8 @@ export default function ProfileScreen() {
         } catch (_e2) {}
       }
 
-      // 2. Fetch saved moodboard photos as fallback/supplement
-      let rawSaves: any[] = [];
-      try {
-        const data = await savesService.getSavedPhotos();
-        rawSaves = data || [];
-        setSavedPhotos(rawSaves);
-      } catch (_e) {}
-
       let grandTotal = 0;
       const groups: EventMatchedGroup[] = [];
-      const seenPhotoKeys = new Set<string>();
 
       if (Array.isArray(eventsList) && eventsList.length > 0) {
         for (const ev of eventsList) {
@@ -259,26 +250,8 @@ export default function ProfileScreen() {
             }
           } catch (_e) {}
 
-          // Supplement with any saved moodboard photos matching this event
-          if (rawSaves.length > 0) {
-            const matchedSaves = rawSaves.filter((item) => {
-              return (
-                String(item.eventId || '') === String(ev.id || '') ||
-                String((item as any).event_id || '') === String(ev.id || '') ||
-                String((item as any).eventSlug || '') === String(ev.slug || '')
-              );
-            });
-            for (const sItem of matchedSaves) {
-              const sKey = String(sItem.id || sItem.photoUrl);
-              if (!evFavs.some((f) => String(f.id || f.photoUrl) === sKey)) {
-                evFavs.push({ ...sItem, isLiked: true });
-              }
-            }
-          }
-
           const validPhotos = evFavs.filter((p) => !!getPhotoUri(p));
           if (validPhotos.length > 0) {
-            validPhotos.forEach((p) => seenPhotoKeys.add(String(p.id || p.photoUrl || getPhotoUri(p))));
             grandTotal += validPhotos.length;
 
             groups.push({
@@ -292,28 +265,9 @@ export default function ProfileScreen() {
         }
       }
 
-      // Collect any remaining unassigned moodboard saves into a group
-      const remainingSaves = rawSaves.filter((item) => {
-        const k = String(item.id || item.photoUrl || getPhotoUri(item));
-        return !seenPhotoKeys.has(k);
-      });
-
-      if (remainingSaves.length > 0) {
-        const validRemaining = remainingSaves.map((p) => ({ ...p, isLiked: true })).filter((p) => !!getPhotoUri(p));
-        if (validRemaining.length > 0) {
-          grandTotal += validRemaining.length;
-          groups.push({
-            eventSlug: 'curated-favourites',
-            eventTitle: groups.length > 0 ? 'Curated Favourites' : 'My Favourites',
-            photos: validRemaining,
-          });
-        }
-      }
-
       setFavouriteEventGroups(groups);
       setTotalFavouriteCount(grandTotal);
     } catch (_err) {
-      setSavedPhotos([]);
       setFavouriteEventGroups([]);
       setTotalFavouriteCount(0);
     } finally {
