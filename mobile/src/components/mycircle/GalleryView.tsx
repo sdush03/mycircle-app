@@ -142,6 +142,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   const eventSlug = useAuthStore((state) => state.eventSlug);
   const passcode = useAuthStore((state) => state.passcode);
   const profile = useAuthStore((state) => state.profile);
+  const userEvents = useAuthStore((state) => state.userEvents);
   const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
   const eventTitle = useAuthStore((state) => state.eventTitle);
   const handleScroll = useScrollTabBarCollapse();
@@ -427,9 +428,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         if (ssoRes.data?.token) {
           eventHeadersRef.current = { Authorization: `Bearer ${ssoRes.data.token}` };
           if (ssoRes.data?.guest) {
-            setEventGuest(ssoRes.data.guest);
-            if (typeof ssoRes.data.guest.hasFullAccess === 'boolean') {
-              setGuestAccessLevel(ssoRes.data.guest.hasFullAccess);
+            const g = ssoRes.data.guest;
+            setEventGuest(g);
+            if (typeof g.hasFullAccess === 'boolean') {
+              setGuestAccessLevel(g.hasFullAccess);
             }
           }
         } else if (familyToken) {
@@ -617,13 +619,36 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   const hasFullAccess = guestAccessLevel ?? (profile?.hasFullAccess ?? false);
 
   const isBrideOrGroom = React.useMemo(() => {
-    // 1. Check global user profile
+    // 1. Check global user profile (global role, if set)
     const pRole = (profile?.displayRole || (profile as any)?.role || (profile as any)?.userRole || '').toString().toUpperCase();
     if (['BRIDE', 'GROOM', 'COUPLE'].includes(pRole)) {
       return true;
     }
 
-    // 2. Check event-specific guest object from SSO response
+    // 2. Check per-event role from userEvents list (most reliable — returned by /api/gallery/family/events)
+    if (eventSlug && Array.isArray(userEvents) && userEvents.length > 0) {
+      const thisEvent = userEvents.find((e: any) => {
+        const slug = e.slug || e.eventSlug || e.event?.slug || '';
+        return slug === eventSlug;
+      });
+      if (thisEvent) {
+        const evRole = (
+          thisEvent.guestInfo?.displayRole ||
+          thisEvent.displayRole ||
+          thisEvent.role ||
+          thisEvent.guestRole ||
+          thisEvent.userRole ||
+          thisEvent.guest?.displayRole ||
+          thisEvent.guest?.role ||
+          ''
+        ).toString().toUpperCase();
+        if (['BRIDE', 'GROOM', 'COUPLE'].includes(evRole)) {
+          return true;
+        }
+      }
+    }
+
+    // 3. Check event-specific guest object from SSO response
     if (eventGuest) {
       const gRole = (eventGuest.displayRole || eventGuest.role || eventGuest.relationship || eventGuest.type || '').toString().toUpperCase();
       if (['BRIDE', 'GROOM', 'COUPLE'].includes(gRole)) {
@@ -634,7 +659,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
       }
     }
 
-    // 3. Check eventDetails (participants array, userRole, bride/groom metadata)
+    // 4. Check eventDetails (participants array, userRole, bride/groom metadata)
     if (eventDetails) {
       const eRole = (eventDetails.userRole || eventDetails.guestRole || eventDetails.role || '').toString().toUpperCase();
       if (['BRIDE', 'GROOM', 'COUPLE'].includes(eRole)) {
@@ -652,18 +677,20 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         const match = eventDetails.participants.find((part: any) => {
           const partRole = (part.role || part.displayRole || part.type || '').toString().toUpperCase();
           if (!['BRIDE', 'GROOM', 'COUPLE'].includes(partRole)) return false;
-          
+
           if (userEmail && part.email && part.email.toLowerCase() === userEmail) return true;
           if (userName && part.name && part.name.toLowerCase() === userName) return true;
           if (userPhone && part.phoneNumber && part.phoneNumber.toString() === userPhone) return true;
           return false;
         });
-        if (match) return true;
+        if (match) {
+          return true;
+        }
       }
     }
 
     return false;
-  }, [profile, eventGuest, eventDetails]);
+  }, [profile, userEvents, eventSlug, eventGuest, eventDetails]);
   const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
   const [isTabLoading, setIsTabLoading] = useState(false);
 
