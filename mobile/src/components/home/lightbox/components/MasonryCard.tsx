@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { StyleSheet, View, Text, Pressable } from 'react-native';
+import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
@@ -54,12 +54,11 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const loadStartTimeRef = useRef<number>(0);
 
-  const DEFAULT_BLURHASH = 'L6PZfSi_.AyE_3t7t7R**0o#DGR4';
-  const effectiveBlurhash = blurhash || DEFAULT_BLURHASH;
-
+  // Only pass placeholder if a real blurUri or blurhash exists (don't pass dummy fallback blurhash string
+  // which causes Android's Glide decoder to fail and freeze transparent)
   const placeholderSource = blurUri
     ? { uri: blurUri }
-    : { blurhash: effectiveBlurhash, width: 32, height: 32 };
+    : (blurhash ? { blurhash, width: 32, height: 32 } : undefined);
 
   const effectivePriority = typeof isHighPriority === 'boolean'
     ? (isHighPriority ? "high" : "low")
@@ -84,7 +83,7 @@ export const MasonryCard = React.memo(function MasonryCard({
           recyclingKey={String(cardId)}
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={50}
+          transition={Platform.OS === 'android' ? 0 : 50}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
@@ -142,7 +141,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f3f4f6',
     overflow: 'hidden',
     position: 'relative',
   },
