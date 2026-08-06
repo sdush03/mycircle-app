@@ -49,9 +49,9 @@ export function useApplePhotosGesture({
   // React state for strict gesture enablement (State 1: NORMAL vs State 2: ZOOMED)
   const [isZoomedState, setIsZoomedState] = useState(false);
 
-  // Sync scale.value > 1.01 to React state & notify parent FlatList
+  // Sync scale.value > 1.15 to React state & notify parent FlatList
   useAnimatedReaction(
-    () => scale.value > 1.01,
+    () => scale.value > 1.15,
     (isZoomed, previous) => {
       if (isZoomed !== previous && previous !== null && previous !== undefined) {
         runOnJS(setIsZoomedState)(isZoomed);
@@ -277,33 +277,29 @@ export function useApplePhotosGesture({
   // ── TAP GESTURES (Single tap toggles controls, Double tap focal zoom) ─────
   const singleTapGesture = Gesture.Tap()
     .numberOfTaps(1)
-    .maxDuration(250)
-    .maxDistance(25)
+    .maxDuration(300)
+    .maxDistance(45)
     .onEnd(() => {
       'worklet';
-      if (scale.value > 1.01) return;
+      if (scale.value > 1.15) return;
       runOnJS(onToggleControls)();
     });
 
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .maxDelay(400)
-    .maxDuration(500)
-    .maxDistance(50)
+    .maxDelay(350)
+    .maxDistance(45)
     .onEnd((e) => {
       'worklet';
-      if (scale.value > 1.01) {
+      if (scale.value > 1.15) {
         finishGesture();
         scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
         translateX.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
         translateY.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
       } else {
         const targetScale = 2.5;
-        const touchX = typeof e.x === 'number' && !isNaN(e.x) && e.x > 0 ? e.x : (e.absoluteX ? e.absoluteX : width / 2);
-        const touchY = typeof e.y === 'number' && !isNaN(e.y) && e.y > 0 ? e.y : (e.absoluteY ? e.absoluteY : screenHeight / 2);
-
-        const focalX = touchX - width / 2;
-        const focalY = touchY - screenHeight / 2;
+        const focalX = e.x - width / 2;
+        const focalY = e.y - screenHeight / 2;
 
         const rawTx = focalX * (1 - targetScale);
         const rawTy = focalY * (1 - targetScale);
