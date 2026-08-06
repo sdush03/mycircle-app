@@ -42,20 +42,39 @@ interface EventMatchedGroup {
   photos: any[];
 }
 
-// Helper to extract valid image URI from any backend photo object format
+// Helper to extract thumbnail URI for grid cards (fast loading)
 const getPhotoUri = (p: any): string => {
   if (!p) return '';
   if (typeof p === 'string') return p;
   return (
-    p.r2Url ||
     p.thumbnailUrl ||
-    p.r2_url ||
+    p.thumbnail_url ||
     p.file_url_mobile ||
+    p.r2Url ||
+    p.r2_url ||
     p.file_url ||
     p.url ||
     p.imageUrl ||
     p.photoUrl ||
     p.src ||
+    ''
+  );
+};
+
+// Helper to extract full-resolution 4K URI for Lightbox preview
+const getPhotoFullUri = (p: any): string => {
+  if (!p) return '';
+  if (typeof p === 'string') return p;
+  return (
+    p.r2Url ||
+    p.r2_url ||
+    p.file_url ||
+    p.url ||
+    p.photoUrl ||
+    p.imageUrl ||
+    p.thumbnailUrl ||
+    p.thumbnail_url ||
+    p.file_url_mobile ||
     ''
   );
 };
@@ -342,7 +361,7 @@ export default function ProfileScreen() {
         style={[styles.masonryCard, { aspectRatio: p.cardAspect || 0.75 }]}
         onPress={handlePress}
       >
-        <Image source={{ uri: imgUri }} style={styles.masonryImage} resizeMode="cover" />
+        <Image source={{ uri: imgUri }} style={styles.masonryImage} contentFit="cover" cachePolicy="memory-disk" />
       </Pressable>
     );
   };
@@ -567,9 +586,10 @@ export default function ProfileScreen() {
 
               <View style={styles.lightboxImageContainer}>
                 <Image
-                  source={{ uri: getPhotoUri(selectedPhoto) }}
+                  source={{ uri: getPhotoFullUri(selectedPhoto) }}
                   style={styles.lightboxImage}
-                  resizeMode="contain"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
                 />
               </View>
             </SafeAreaView>
