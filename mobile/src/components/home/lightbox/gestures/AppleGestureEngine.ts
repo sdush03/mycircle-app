@@ -300,7 +300,6 @@ export function useApplePhotosGesture({
       'worklet';
       runOnJS(logGestureDebug)(`DOUBLE TAP FIRED | currentScale: ${scale.value.toFixed(2)} | touch: (${e.x.toFixed(0)}, ${e.y.toFixed(0)})`);
       if (scale.value > 1.01) {
-        finishGesture();
         scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.quad) });
         translateX.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
         translateY.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });

@@ -256,11 +256,21 @@ export function EditorialLightbox({
     });
   }, [heartPopScale, heartPopOpacity]);
 
+  const activeIdxRef = useRef(activeIdx);
+  activeIdxRef.current = activeIdx;
+
+  const isZoomedRef = useRef(isZoomed);
+  isZoomedRef.current = isZoomed;
+
+  const imagesCountRef = useRef(images.length);
+  imagesCountRef.current = images.length;
+
   // Smooth 350ms Bezier collapse back to original bounds on exit
   const handleClose = useCallback(() => {
     pauseAutoHideTimer();
-    updateBoundsForIndex(activeIdx);
-    flatListRef.current?.scrollToOffset({ offset: (width + 18) * activeIdx, animated: false });
+    const curIdx = activeIdxRef.current;
+    updateBoundsForIndex(curIdx);
+    flatListRef.current?.scrollToOffset({ offset: (width + 18) * curIdx, animated: false });
 
     expandProgress.value = withTiming(
       0,
@@ -275,7 +285,7 @@ export function EditorialLightbox({
         }
       }
     );
-  }, [expandProgress, activeIdx, onClose, updateBoundsForIndex, pauseAutoHideTimer]);
+  }, [expandProgress, onClose, updateBoundsForIndex, pauseAutoHideTimer]);
 
   const currentItem = images[activeIdx] || null;
   const currentUrl = currentItem
@@ -631,14 +641,15 @@ export function EditorialLightbox({
         width={width}
         onDoubleTap={handleToggleSave}
         onNavigate={(dir) => {
-          if (dir === 'next' && activeIdx < images.length - 1) {
-            flatListRef.current?.scrollToIndex({ index: activeIdx + 1, animated: true });
-          } else if (dir === 'prev' && activeIdx > 0) {
-            flatListRef.current?.scrollToIndex({ index: activeIdx - 1, animated: true });
+          const curIdx = activeIdxRef.current;
+          const count = imagesCountRef.current;
+          if (dir === 'next' && curIdx < count - 1) {
+            flatListRef.current?.scrollToIndex({ index: curIdx + 1, animated: true });
+          } else if (dir === 'prev' && curIdx > 0) {
+            flatListRef.current?.scrollToIndex({ index: curIdx - 1, animated: true });
           }
         }}
         onZoomChange={(zoomed) => {
-          // FIX 2: Re-appear controls and restart auto-hide timer when zooming back out (zoomed === false)
           setIsZoomed(zoomed);
           if (zoomed) {
             setShowControls(false);
@@ -649,7 +660,7 @@ export function EditorialLightbox({
           }
         }}
         onToggleControls={() => {
-          if (!isZoomed) {
+          if (!isZoomedRef.current) {
             setShowControls((prev) => !prev);
             resetAutoHideTimer();
           }
@@ -662,7 +673,7 @@ export function EditorialLightbox({
         heartPopOpacity={heartPopOpacity}
       />
     ),
-    [activeIdx, images.length, isZoomed, handleClose, handleToggleSave, resetAutoHideTimer, pauseAutoHideTimer]
+    [handleClose, handleToggleSave, resetAutoHideTimer, pauseAutoHideTimer]
   );
 
   if (!visible || images.length === 0) return null;
