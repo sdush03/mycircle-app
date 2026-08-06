@@ -1,41 +1,45 @@
 /**
  * Safe wrapper around expo-screen-capture.
- * Gracefully falls back to no-ops when the native module
- * is not linked (e.g. first build after install, Expo Go).
+ * Uses static import since native module is linked after `npx expo run:ios --device`.
  */
 
-let _module: any = null;
-try {
-  // Dynamic require so Metro bundler includes it but we catch any
-  // native module initialisation errors at runtime
-  _module = require('expo-screen-capture');
-} catch (_) {}
+import * as ExpoScreenCapture from 'expo-screen-capture';
+
+const _available = !!ExpoScreenCapture?.preventScreenCaptureAsync;
+console.log(`[MYCIRCLE SCREEN CAPTURE 🛡️] Module loaded: ${_available}`);
 
 export async function preventScreenCaptureAsync(key: string = 'default'): Promise<void> {
+  console.log(`[MYCIRCLE SCREEN CAPTURE 🛡️] preventScreenCaptureAsync(${key}) called | available: ${_available}`);
+  if (!_available) return;
   try {
-    if (_module?.preventScreenCaptureAsync) {
-      await _module.preventScreenCaptureAsync(key);
-    }
-  } catch (_) {}
+    await ExpoScreenCapture.preventScreenCaptureAsync(key);
+    console.log(`[MYCIRCLE SCREEN CAPTURE ✅] Screen capture PREVENTED for key: ${key}`);
+  } catch (err: any) {
+    console.error(`[MYCIRCLE SCREEN CAPTURE ❌] Failed to prevent: ${err?.message}`, err);
+  }
 }
 
 export async function allowScreenCaptureAsync(key: string = 'default'): Promise<void> {
+  if (!_available) return;
   try {
-    if (_module?.allowScreenCaptureAsync) {
-      await _module.allowScreenCaptureAsync(key);
-    }
-  } catch (_) {}
+    await ExpoScreenCapture.allowScreenCaptureAsync(key);
+    console.log(`[MYCIRCLE SCREEN CAPTURE ✅] Screen capture ALLOWED for key: ${key}`);
+  } catch (err: any) {
+    console.error(`[MYCIRCLE SCREEN CAPTURE ❌] Failed to allow: ${err?.message}`, err);
+  }
 }
 
 export function addScreenshotListener(callback: () => void): { remove: () => void } {
+  if (!_available || typeof ExpoScreenCapture.addScreenshotListener !== 'function') {
+    return { remove: () => {} };
+  }
   try {
-    if (_module?.addScreenshotListener) {
-      return _module.addScreenshotListener(callback);
-    }
-  } catch (_) {}
-  return { remove: () => {} };
+    return ExpoScreenCapture.addScreenshotListener(callback);
+  } catch (_) {
+    return { remove: () => {} };
+  }
 }
 
 export function isAvailable(): boolean {
-  return !!_module?.preventScreenCaptureAsync;
+  return _available;
 }
