@@ -616,31 +616,31 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   });
   const hasFullAccess = guestAccessLevel ?? (profile?.hasFullAccess ?? false);
 
-  const isBrideGroomOrHost = React.useMemo(() => {
+  const isBrideOrGroom = React.useMemo(() => {
     // 1. Check global user profile
     const pRole = (profile?.displayRole || (profile as any)?.role || (profile as any)?.userRole || '').toString().toUpperCase();
-    if (['BRIDE', 'GROOM', 'HOST', 'COUPLE', 'ADMIN', 'OWNER'].includes(pRole)) {
+    if (['BRIDE', 'GROOM', 'COUPLE'].includes(pRole)) {
       return true;
     }
 
     // 2. Check event-specific guest object from SSO response
     if (eventGuest) {
       const gRole = (eventGuest.displayRole || eventGuest.role || eventGuest.relationship || eventGuest.type || '').toString().toUpperCase();
-      if (['BRIDE', 'GROOM', 'HOST', 'COUPLE', 'ADMIN', 'OWNER'].includes(gRole)) {
+      if (['BRIDE', 'GROOM', 'COUPLE'].includes(gRole)) {
         return true;
       }
-      if (eventGuest.isBride || eventGuest.isGroom || eventGuest.isHost || eventGuest.isCouple || eventGuest.isOwner) {
+      if (eventGuest.isBride || eventGuest.isGroom || eventGuest.isCouple) {
         return true;
       }
     }
 
-    // 3. Check eventDetails (participants array, userRole, host, bride/groom metadata)
+    // 3. Check eventDetails (participants array, userRole, bride/groom metadata)
     if (eventDetails) {
       const eRole = (eventDetails.userRole || eventDetails.guestRole || eventDetails.role || '').toString().toUpperCase();
-      if (['BRIDE', 'GROOM', 'HOST', 'COUPLE', 'ADMIN', 'OWNER'].includes(eRole)) {
+      if (['BRIDE', 'GROOM', 'COUPLE'].includes(eRole)) {
         return true;
       }
-      if (eventDetails.isHost || eventDetails.isOwner || eventDetails.isBride || eventDetails.isGroom) {
+      if (eventDetails.isBride || eventDetails.isGroom) {
         return true;
       }
       // Check participants list if present
@@ -651,7 +651,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
         const match = eventDetails.participants.find((part: any) => {
           const partRole = (part.role || part.displayRole || part.type || '').toString().toUpperCase();
-          if (!['BRIDE', 'GROOM', 'HOST', 'COUPLE'].includes(partRole)) return false;
+          if (!['BRIDE', 'GROOM', 'COUPLE'].includes(partRole)) return false;
           
           if (userEmail && part.email && part.email.toLowerCase() === userEmail) return true;
           if (userName && part.name && part.name.toLowerCase() === userName) return true;
@@ -662,13 +662,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
       }
     }
 
-    // 4. Full access level (Bride, Groom, and Event Hosts are granted full gallery access)
-    if (hasFullAccess) {
-      return true;
-    }
-
     return false;
-  }, [profile, eventGuest, eventDetails, hasFullAccess]);
+  }, [profile, eventGuest, eventDetails]);
   const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
   const [isTabLoading, setIsTabLoading] = useState(false);
 
@@ -1352,9 +1347,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
             </View>
           </TouchableOpacity>
 
-          {/* Right Corner Download Button (ALL tabs for BRIDE/GROOM/HOST/FullAccess, or MY PHOTOS / MY FAVOURITES for restricted guests) */}
+          {/* Right Corner Download Button (ALL tabs strictly for BRIDE or GROOM; MY PHOTOS & MY FAVOURITES for all other guests) */}
           {(() => {
-            const isDownloadableTab = isBrideGroomOrHost || (
+            const isDownloadableTab = isBrideOrGroom || (
               activeTab.trim().toUpperCase().includes('MY PHOTO') ||
               activeTab.trim().toUpperCase().includes('MY FAVOURITES') ||
               activeTab.trim().toUpperCase().includes('MY FAVORITE')
@@ -1384,7 +1379,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideGroomOrHost]);
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
