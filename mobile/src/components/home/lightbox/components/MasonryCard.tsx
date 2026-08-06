@@ -80,7 +80,7 @@ export const MasonryCard = React.memo(function MasonryCard({
         (cardRef as any).current = ref;
         if (onRegisterRef) onRegisterRef(cardId, ref);
       }} 
-      style={[cardStyles.masonryCard, { width: '100%', aspectRatio: cardAspect }]} 
+      style={[cardStyles.masonryCard, { width: '100%', height: '100%' }]} 
       onPress={handlePress}
     >
       {activeUri ? (

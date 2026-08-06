@@ -111,10 +111,15 @@ function buildColumns<T>(data: T[]): {
       // Use the actual aspect ratio (works for both landscape and portrait)
       cardHeight = Math.round(COL_WIDTH / realAspect);
     } else {
-      // No dimensions available — use a fixed portrait default (4:5).
-      // A STABLE constant ensures the same photo always gets the same height
-      // regardless of its position in the array (unlike idx % 3).
-      cardHeight = Math.round(COL_WIDTH / (4 / 5));
+      const isLandscape = Boolean(item?.isHorizontal || item?.is_horizontal || (item?.orientation && String(item.orientation).includes('landscape')));
+      let cardAspect = 0.75;
+      if (isLandscape) {
+        cardAspect = 1.5;
+      } else {
+        const cycle = idx % 3;
+        cardAspect = cycle === 0 ? 2 / 3 : (cycle === 1 ? 3 / 4 : 4 / 5);
+      }
+      cardHeight = Math.round(COL_WIDTH / cardAspect);
     }
     // Clamp to prevent extreme cases (e.g. 360° panoramas)
     cardHeight = Math.max(80, Math.min(600, cardHeight));
