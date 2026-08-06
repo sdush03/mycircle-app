@@ -277,7 +277,7 @@ export function useApplePhotosGesture({
   // ── TAP GESTURES (Single tap toggles controls, Double tap focal zoom) ─────
   const singleTapGesture = Gesture.Tap()
     .numberOfTaps(1)
-    .maxDuration(300)
+    .maxDuration(250)
     .maxDistance(25)
     .onEnd(() => {
       'worklet';
@@ -287,8 +287,9 @@ export function useApplePhotosGesture({
 
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
-    .maxDelay(350)
-    .maxDistance(35)
+    .maxDelay(400)
+    .maxDuration(500)
+    .maxDistance(50)
     .onEnd((e) => {
       'worklet';
       if (scale.value > 1.01) {
@@ -298,8 +299,11 @@ export function useApplePhotosGesture({
         translateY.value = withTiming(0, { duration: 250, easing: Easing.out(Easing.quad) });
       } else {
         const targetScale = 2.5;
-        const focalX = e.x - width / 2;
-        const focalY = e.y - screenHeight / 2;
+        const touchX = typeof e.x === 'number' && !isNaN(e.x) && e.x > 0 ? e.x : (e.absoluteX ? e.absoluteX : width / 2);
+        const touchY = typeof e.y === 'number' && !isNaN(e.y) && e.y > 0 ? e.y : (e.absoluteY ? e.absoluteY : screenHeight / 2);
+
+        const focalX = touchX - width / 2;
+        const focalY = touchY - screenHeight / 2;
 
         const rawTx = focalX * (1 - targetScale);
         const rawTy = focalY * (1 - targetScale);
