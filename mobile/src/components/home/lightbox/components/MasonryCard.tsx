@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { StyleSheet, View, Text, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { savePhotoAspect } from '../../../../utils/photoDimensionCache';
+import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
 
 export interface MasonryCardProps {
   img: any;
@@ -30,16 +30,7 @@ export const MasonryCard = React.memo(function MasonryCard({
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
 
-  const realAspect = (typeof img === 'object' && img.width && img.height && Number(img.height) > 0)
-    ? Number(img.width) / Number(img.height)
-    : (typeof img === 'object' && img.aspectRatio && !isNaN(img.aspectRatio) && img.aspectRatio > 0 ? img.aspectRatio : null);
-  const isLandscape = Boolean(realAspect && realAspect > 1.05);
-
-  const cardAspect = (typeof img === 'object' && img.cardAspect)
-    ? img.cardAspect
-    : (isLandscape && realAspect
-      ? realAspect
-      : ((index + (isColumn0 ? 0 : 1)) % 3 === 0 ? 0.67 : ((index + (isColumn0 ? 0 : 1)) % 3 === 1 ? 0.75 : 0.80)));
+  const cardAspect = getPhotoCardAspect(img, index, isColumn0);
 
   const isLiked = typeof img === 'object' && !!img.isLiked;
   const likeCount = typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0;

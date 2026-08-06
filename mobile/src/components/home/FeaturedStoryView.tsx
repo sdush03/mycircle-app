@@ -547,26 +547,28 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
               <View style={styles.masonryGridContainer}>
                 <View style={styles.masonryColumn}>
                   {column0.map((img, idx) => (
-                    <MasonryCard
-                      key={img.id || `col0-${idx}`}
-                      img={img}
-                      index={idx}
-                      isColumn0={true}
-                      onSelect={(bounds) => openLightbox(img, bounds)}
-                      onRegisterRef={registerCardRef}
-                    />
+                    <View key={img.id || `col0-${idx}`} style={{ width: '100%', aspectRatio: img.cardAspect || 0.75 }}>
+                      <MasonryCard
+                        img={img}
+                        index={idx}
+                        isColumn0={true}
+                        onSelect={(bounds) => openLightbox(img, bounds)}
+                        onRegisterRef={registerCardRef}
+                      />
+                    </View>
                   ))}
                 </View>
                 <View style={styles.masonryColumn}>
                   {column1.map((img, idx) => (
-                    <MasonryCard
-                      key={img.id || `col1-${idx}`}
-                      img={img}
-                      index={idx}
-                      isColumn0={false}
-                      onSelect={(bounds) => openLightbox(img, bounds)}
-                      onRegisterRef={registerCardRef}
-                    />
+                    <View key={img.id || `col1-${idx}`} style={{ width: '100%', aspectRatio: img.cardAspect || 0.75 }}>
+                      <MasonryCard
+                        img={img}
+                        index={idx}
+                        isColumn0={false}
+                        onSelect={(bounds) => openLightbox(img, bounds)}
+                        onRegisterRef={registerCardRef}
+                      />
+                    </View>
                   ))}
                 </View>
               </View>
