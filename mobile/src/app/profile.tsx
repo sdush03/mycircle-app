@@ -303,6 +303,7 @@ export default function ProfileScreen() {
     });
 
     const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      fetchMyCelebrationPhotos();
       fetchSavedPhotos();
     });
 
@@ -314,8 +315,9 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      fetchMyCelebrationPhotos();
       fetchSavedPhotos();
-    }, [fetchSavedPhotos])
+    }, [fetchMyCelebrationPhotos, fetchSavedPhotos])
   );
 
   const handleLogout = async () => {

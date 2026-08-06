@@ -26,6 +26,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
+import { tabEvents, EVENT_SAVES_UPDATED } from '../../lib/tabEvents';
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -1279,6 +1280,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         setPhotos((prev) =>
           prev.map((p) => (p.id === photoId ? { ...p, isLiked: serverLiked } : p))
         );
+        tabEvents.emit(EVENT_SAVES_UPDATED);
       }
     } catch (err) {
       console.warn('Failed to toggle photo like:', err);
