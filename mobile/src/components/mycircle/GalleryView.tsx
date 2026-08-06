@@ -427,6 +427,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         );
         if (ssoRes.data?.token) {
           eventHeadersRef.current = { Authorization: `Bearer ${ssoRes.data.token}` };
+          console.log('[MYCIRCLE SSO DEBUG 🔑] Full ssoRes.data response:', JSON.stringify(ssoRes.data));
           if (ssoRes.data?.guest) {
             const g = ssoRes.data.guest;
             setEventGuest(g);
@@ -509,6 +510,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         });
 
         console.log(`[MYCIRCLE DEBUG ✅] Initial Fetch Done in ${fetchDuration}ms | Loaded: ${mapped.length} / ${total} photos | HasMore: ${hasMore}`);
+        console.log(`[MYCIRCLE STORE DEBUG 📦] userEvents count: ${userEvents.length} | userEvents:`, JSON.stringify(userEvents));
         console.log(`[MYCIRCLE USER ROLE 👤] User: "${profile?.name || eventGuest?.name || 'Guest'}" (${profile?.email || eventGuest?.email || 'N/A'}) | GlobalRole: "${profile?.displayRole || 'NONE'}" | EventRole: "${eventGuest?.displayRole || 'NONE'}" | isBrideOrGroom: ${isBrideOrGroom}`);
 
         // Smooth chunked background prefetch of initial batch into native image cache
