@@ -412,6 +412,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     marginBottom: 24,
+    transform: [{ scaleX: -1 }],
   },
   previewBtnContainer: {
     flexDirection: 'row',

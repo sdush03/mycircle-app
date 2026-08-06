@@ -1366,10 +1366,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
         {/* White Brand Logo on Cover */}
         <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
-          <RNImage
-            source={require('../../../assets/images/logo-white.png')}
+          <Image
+            source={require('../../../assets/images/logo-header-white.png')}
             style={styles.coverHeaderLogo}
-            resizeMode="contain"
+            contentFit="contain"
           />
         </View>
 

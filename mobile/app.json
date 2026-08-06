@@ -2,7 +2,7 @@
   "expo": {
     "name": "Misty Visuals",
     "slug": "my-circle",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mycircle",
@@ -42,7 +42,7 @@
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
-      "versionCode": 5,
+      "versionCode": 7,
       "googleServicesFile": "./google-services.json",
       "splash": {
         "image": "./assets/images/splash-android-icon.png",
@@ -79,7 +79,6 @@
         {
           "backgroundColor": "#ffffff",
           "image": "./assets/images/logo-black.png",
-          "imageWidth": 160,
           "resizeMode": "contain"
         }
       ],

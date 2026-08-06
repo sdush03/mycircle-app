@@ -10,6 +10,7 @@ import {
   Dimensions,
   BackHandler,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -461,10 +462,10 @@ export default function CollectionGridView({
               <Pressable style={styles.backButton} onPress={handleBackPress}>
                 <Text style={styles.backIcon}>←</Text>
               </Pressable>
-              <Image
-                source={require('@/assets/images/logo-black.png')}
+              <ExpoImage
+                source={require('@/assets/images/logo-header-black.png')}
                 style={styles.headerLogo}
-                resizeMode="contain"
+                contentFit="contain"
               />
               <View style={{ width: 40 }} />
             </View>

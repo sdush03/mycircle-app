@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox, Dimensions } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Tabs, router, useSegments } from 'expo-router';
@@ -343,10 +344,10 @@ function RootLayoutContent() {
             <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
             {/* Global Header — Centered Logo */}
             <View style={[styles.globalHeader, { height: headerHeight, paddingTop: topInset }]}>
-              <Image
-                source={require('@/assets/images/logo-black.png')}
+              <ExpoImage
+                source={require('@/assets/images/logo-header-black.png')}
                 style={styles.headerLogo}
-                resizeMode="contain"
+                contentFit="contain"
               />
               {activeTabIndex === TAB_ORDER.indexOf('profile') && (
                 <Pressable

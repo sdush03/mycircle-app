@@ -477,10 +477,10 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
             />
             {/* White Logo on Cover (positioned exactly where app header logo is) */}
             <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
-              <RNImage
-                source={require('../../../assets/images/logo-white.png')}
+              <Image
+                source={require('../../../assets/images/logo-header-white.png')}
                 style={styles.coverHeaderLogo}
-                resizeMode="contain"
+                contentFit="contain"
               />
             </View>
             <LinearGradient
