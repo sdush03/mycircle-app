@@ -25,11 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-
-let ScreenCapture: any = null;
-try {
-  ScreenCapture = require('expo-screen-capture');
-} catch (_) {}
+import { preventScreenCaptureAsync, allowScreenCaptureAsync, addScreenshotListener } from 'expo-screen-capture';
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -1002,23 +998,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
 
     console.log(`[MYCIRCLE SECURITY 🛡️] PhotoDownloads: ${allowPhotoDownloads} | BulkDownloads: ${allowBulkDownloads} | PreventCapture: ${shouldPrevent}`);
 
-    if (ScreenCapture) {
-      if (shouldPrevent) {
-        ScreenCapture.preventScreenCaptureAsync?.('gallery_protection').catch((err: any) => {
-          console.warn('[MYCIRCLE SECURITY ⚠️] preventScreenCapture error:', err);
-        });
-      } else {
-        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
-      }
+    if (shouldPrevent) {
+      preventScreenCaptureAsync('gallery_protection').catch((err: any) => {
+        console.warn('[MYCIRCLE SECURITY ⚠️] preventScreenCapture error:', err);
+      });
+    } else {
+      allowScreenCaptureAsync('gallery_protection').catch(() => {});
     }
 
     let listenerSub: any = null;
-    if (shouldPrevent && ScreenCapture && typeof ScreenCapture.addScreenshotListener === 'function') {
+    if (shouldPrevent) {
       try {
-        listenerSub = ScreenCapture.addScreenshotListener(() => {
+        listenerSub = addScreenshotListener(() => {
           Alert.alert(
             'Screenshots Restricted 🛡️',
-            'Screenshots and screen recordings are disabled for this private event gallery by the studio host.'
+            'Screenshots are disabled for this private event gallery by the studio host.'
           );
         });
       } catch (_) {}
@@ -1034,9 +1028,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
   // Release screen capture protection when leaving the gallery view
   useEffect(() => {
     return () => {
-      if (ScreenCapture) {
-        ScreenCapture.allowScreenCaptureAsync?.('gallery_protection').catch(() => {});
-      }
+      allowScreenCaptureAsync('gallery_protection').catch(() => {});
     };
   }, []);
 
