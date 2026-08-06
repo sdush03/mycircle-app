@@ -1439,6 +1439,29 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
     );
   }, [isEndOfTabReached, activeTab]);
 
+  const handleDeletePhoto = useCallback(async (photoItem: any) => {
+    if (!photoItem || !photoItem.id) return;
+    try {
+      const photoId = photoItem.id;
+      const headers = eventHeadersRef.current || (useAuthStore.getState().token ? { Authorization: `Bearer ${useAuthStore.getState().token}` } : {});
+      await guestApi.delete(`/api/gallery/public/events/${eventSlug}/photos/${photoId}`, {
+        headers
+      });
+
+      setAllPhotos((prev) => prev.filter((p: any) => p.id !== photoId));
+      setTabCache((prev) => {
+        const nextCache: Record<string, Photo[]> = {};
+        for (const [key, list] of Object.entries(prev)) {
+          nextCache[key] = list.filter((p: any) => p.id !== photoId);
+        }
+        return nextCache;
+      });
+    } catch (err: any) {
+      console.error('[MYCIRCLE DELETE ERROR ❌]', err);
+      throw new Error(err?.response?.data?.error || err?.message || 'Failed to delete photo.');
+    }
+  }, [eventSlug]);
+
   return (
     <Modal
       visible={!!eventSlug}
@@ -1593,43 +1616,45 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         </View>
       ) : null}
 
-      {/* ── 4. Universal Editorial Lightbox Component ── */}
-      {activeImageIndex !== null && (() => {
-        let activeTabTotalCount: number | undefined = undefined;
-        if (activeTab === 'MY PHOTOS') {
-          activeTabTotalCount = photos.length;
-        } else if (activeTab === 'MY FAVOURITES') {
-          activeTabTotalCount = favoritesCount;
-        } else if (activeTab === 'ALL') {
-          activeTabTotalCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
-        } else {
-          const normKey = activeTab.trim().toUpperCase();
-          activeTabTotalCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
-        }
-        if (!activeTabTotalCount || activeTabTotalCount <= 0) {
-          activeTabTotalCount = activeList.length;
-        }
+        {/* ── 4. Universal Editorial Lightbox Component ── */}
+        {activeImageIndex !== null && (() => {
+          let activeTabTotalCount: number | undefined = undefined;
+          if (activeTab === 'MY PHOTOS') {
+            activeTabTotalCount = photos.length;
+          } else if (activeTab === 'MY FAVOURITES') {
+            activeTabTotalCount = favoritesCount;
+          } else if (activeTab === 'ALL') {
+            activeTabTotalCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+          } else {
+            const normKey = activeTab.trim().toUpperCase();
+            activeTabTotalCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+          }
+          if (!activeTabTotalCount || activeTabTotalCount <= 0) {
+            activeTabTotalCount = activeList.length;
+          }
 
-        return (
-          <EditorialLightbox
-            visible={activeImageIndex !== null}
-            images={activeList}
-            initialIndex={activeImageIndex}
-            initialBounds={selectedBounds}
-            onGetBoundsForIndex={getBoundsForIndex}
-            onToggleLike={handleToggleLike}
-            likeTargetName="My Favourites"
-            enableDownload={true}
-            totalCount={activeTabTotalCount}
-            onClose={() => {
-              setActiveImageIndex(null);
-              setSelectedBounds(null);
-            }}
-            title={cleanTitle}
-            subtitle={activeTab.toUpperCase()}
-          />
-        );
-      })()}
+          return (
+            <EditorialLightbox
+              visible={activeImageIndex !== null}
+              images={activeList}
+              initialIndex={activeImageIndex}
+              initialBounds={selectedBounds}
+              onGetBoundsForIndex={getBoundsForIndex}
+              onToggleLike={handleToggleLike}
+              likeTargetName="My Favourites"
+              enableDownload={true}
+              totalCount={activeTabTotalCount}
+              enableDelete={isBrideOrGroom}
+              onDeletePhoto={handleDeletePhoto}
+              onClose={() => {
+                setActiveImageIndex(null);
+                setSelectedBounds(null);
+              }}
+              title={cleanTitle}
+              subtitle={activeTab.toUpperCase()}
+            />
+          );
+        })()}
     </GestureHandlerRootView>
   </Modal>
   );

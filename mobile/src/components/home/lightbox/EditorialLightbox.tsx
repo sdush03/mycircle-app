@@ -66,6 +66,8 @@ export interface EditorialLightboxProps {
   subtitle?: string;
   enableDownload?: boolean;
   totalCount?: number;
+  enableDelete?: boolean;
+  onDeletePhoto?: (item: any) => Promise<boolean | void>;
 }
 
 export function EditorialLightbox({
@@ -82,6 +84,8 @@ export function EditorialLightbox({
   subtitle,
   enableDownload = false,
   totalCount,
+  enableDelete = false,
+  onDeletePhoto,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -346,6 +350,43 @@ export function EditorialLightbox({
       showToast('Photo saved to Moodboard ✨');
       await savesService.savePhoto(currentUrl);
     }
+  };
+
+  const handleDeletePress = async () => {
+    if (!currentItem || !onDeletePhoto) return;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+    Alert.alert(
+      'Delete Photo',
+      'Are you sure you want to delete this photo from the gallery? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Photo',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (images.length > 1) {
+                const hasNext = activeIdx < images.length - 1;
+                const targetIdx = hasNext ? activeIdx + 1 : activeIdx - 1;
+                flatListRef.current?.scrollToOffset({ offset: (width + 18) * targetIdx, animated: true });
+                setTimeout(async () => {
+                  await onDeletePhoto(currentItem);
+                  showToast('Photo deleted');
+                }, 200);
+              } else {
+                await onDeletePhoto(currentItem);
+                showToast('Photo deleted');
+                handleClose();
+              }
+            } catch (err: any) {
+              Alert.alert('Delete Failed', err?.message || 'Could not delete photo.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleShare = async () => {
@@ -813,6 +854,19 @@ export function EditorialLightbox({
                     >
                       <Feather name="share-2" size={18} color="#ffffff" />
                     </Pressable>
+
+                    {enableDelete && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.lightboxIconOnlyBtn,
+                          pressed && { opacity: 0.6 },
+                        ]}
+                        onPress={handleDeletePress}
+                        hitSlop={14}
+                      >
+                        <Feather name="trash-2" size={18} color="#f87171" />
+                      </Pressable>
+                    )}
                   </View>
                 </View>
               </LinearGradient>
