@@ -779,8 +779,9 @@ export default function ProfileScreen() {
       {showSelfieModal && (
         <Modal
           visible={showSelfieModal}
-          animationType="slide"
-          transparent={false}
+          animationType="fade"
+          transparent={true}
+          statusBarTranslucent={true}
           onRequestClose={() => setShowSelfieModal(false)}
         >
           <CameraViewScreen
