@@ -25,7 +25,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import * as ScreenCapture from 'expo-screen-capture';
+
+let ScreenCapture: any = null;
+try {
+  ScreenCapture = require('expo-screen-capture');
+} catch (_) {}
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -993,14 +997,18 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
     const allowPhotoDownloads = eventDetails?.allowDownloads ?? true;
     const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
 
-    if (!allowPhotoDownloads || !allowBulkDownloads) {
-      ScreenCapture.preventScreenCaptureAsync().catch(() => {});
-    } else {
-      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+    if (ScreenCapture) {
+      if (!allowPhotoDownloads || !allowBulkDownloads) {
+        ScreenCapture.preventScreenCaptureAsync?.().catch(() => {});
+      } else {
+        ScreenCapture.allowScreenCaptureAsync?.().catch(() => {});
+      }
     }
 
     return () => {
-      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+      if (ScreenCapture) {
+        ScreenCapture.allowScreenCaptureAsync?.().catch(() => {});
+      }
     };
   }, [eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads]);
 
