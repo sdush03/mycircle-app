@@ -435,6 +435,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
               setGuestAccessLevel(g.hasFullAccess);
             }
           }
+          // Fetch detailed guest profile from server (which includes displayRole from database)
+          guestApi.get(`/api/gallery/public/events/${eventSlug}/profile`, {
+            headers: eventHeadersRef.current
+          }).then((profRes) => {
+            if (profRes.data?.profile) {
+              console.log('[MYCIRCLE PROFILE FETCH ✅] Received guest profile:', JSON.stringify(profRes.data.profile));
+              setEventGuest((prev: any) => ({ ...prev, ...profRes.data.profile }));
+            }
+          }).catch((pErr) => {
+            console.warn('[MYCIRCLE PROFILE FETCH ⚠️] Profile fetch error:', pErr);
+          });
         } else if (familyToken) {
           eventHeadersRef.current = { Authorization: `Bearer ${familyToken}` };
         }
