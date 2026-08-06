@@ -1276,16 +1276,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
             </View>
           </TouchableOpacity>
 
-          {/* Right Corner Download Button (ALL tabs for BRIDE/GROOM/HOST, or MY PHOTOS / MY FAVOURITES for GUESTS) */}
+          {/* Right Corner Download Button (ALL tabs strictly for BRIDE or GROOM, or MY PHOTOS / MY FAVOURITES for everyone else) */}
           {(() => {
-            const isBrideOrGroomOrHost = Boolean(
-              hasFullAccess ||
+            const isBrideOrGroom = Boolean(
               profile?.displayRole === 'BRIDE' ||
               profile?.displayRole === 'GROOM' ||
               (profile as any)?.role === 'BRIDE' ||
               (profile as any)?.role === 'GROOM'
             );
-            const isDownloadableTab = isBrideOrGroomOrHost || (
+            const isDownloadableTab = isBrideOrGroom || (
               activeTab.trim().toUpperCase().includes('MY PHOTO') ||
               activeTab.trim().toUpperCase().includes('MY FAVOURITES') ||
               activeTab.trim().toUpperCase().includes('MY FAVORITE')
@@ -1315,7 +1314,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, hasFullAccess, profile]);
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, profile]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
