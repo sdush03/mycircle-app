@@ -25,7 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { preventScreenCaptureAsync, allowScreenCaptureAsync, addScreenshotListener } from 'expo-screen-capture';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync, addScreenshotListener } from '../../utils/screenCapture';
 import {
   GestureHandlerRootView,
   GestureDetector,
