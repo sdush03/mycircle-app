@@ -722,7 +722,7 @@ export function EditorialLightbox({
                 snapToAlignment="center"
                 decelerationRate="fast"
                 snapToInterval={width + 18}
-                scrollEnabled={!isZoomed}
+                scrollEnabled={true}
                 showsHorizontalScrollIndicator={false}
                 initialScrollIndex={initialIndex}
                 contentOffset={{ x: (width + 18) * initialIndex, y: 0 }}

@@ -105,7 +105,10 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
 
   React.useEffect(() => {
     setCurrentUri(fullUri || thumbnailUri);
-  }, [fullUri, thumbnailUri]);
+    scale.value = 1;
+    translateX.value = 0;
+    translateY.value = 0;
+  }, [fullUri, thumbnailUri, scale, translateX, translateY]);
 
   const loadStartRef = useRef<number>(0);
 
