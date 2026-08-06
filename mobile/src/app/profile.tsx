@@ -19,6 +19,7 @@ import { useAuthStore } from '../store/authStore';
 import { savesService, SavedPhotoItem } from '../services/savesService';
 import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
+import CameraViewScreen from '../components/mycircle/CameraView';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import api from '../services/api';
@@ -119,6 +120,7 @@ export default function ProfileScreen() {
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>('my_photos');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSelfieModal, setShowSelfieModal] = useState(false);
 
   const activeSubTabShared = useSharedValue<ProfileSubTab>(activeSubTab);
   const tabTranslateX = useSharedValue(0);
@@ -559,15 +561,20 @@ export default function ProfileScreen() {
       >
         {/* ── User Avatar & Info Card ── */}
         <View style={styles.profileHeaderCard}>
-          {profile?.selfieUrl ? (
-            <Image source={{ uri: profile.selfieUrl }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.avatarCircle}>
-              <Text style={styles.avatarText}>
-                {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
-              </Text>
+          <Pressable style={styles.avatarTouchable} onPress={() => setShowSelfieModal(true)}>
+            {profile?.selfieUrl ? (
+              <Image source={{ uri: profile.selfieUrl }} style={styles.avatarImage} />
+            ) : (
+              <View style={styles.avatarCircle}>
+                <Text style={styles.avatarText}>
+                  {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
+                </Text>
+              </View>
+            )}
+            <View style={styles.avatarCameraBadge}>
+              <Ionicons name="camera" size={12} color="#ffffff" />
             </View>
-          )}
+          </Pressable>
 
           <View style={styles.userMetaInfo}>
             <Text style={styles.userNameText}>{profile?.name || 'Circle Member'}</Text>
@@ -744,6 +751,17 @@ export default function ProfileScreen() {
 
             <View style={styles.sheetDivider} />
 
+            <Pressable
+              style={styles.sheetOptionBtn}
+              onPress={() => {
+                setShowSettingsModal(false);
+                setShowSelfieModal(true);
+              }}
+            >
+              <Ionicons name="camera-outline" size={20} color="#111111" />
+              <Text style={styles.sheetOptionText}>Update Selfie</Text>
+            </Pressable>
+
             <Pressable style={styles.sheetOptionBtn} onPress={handleLogout}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.logoutBtnText}>Log Out</Text>
@@ -756,6 +774,25 @@ export default function ProfileScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      {/* ── UPDATE SELFIE CAMERA MODAL ── */}
+      {showSelfieModal && (
+        <Modal
+          visible={showSelfieModal}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => setShowSelfieModal(false)}
+        >
+          <CameraViewScreen
+            onSuccess={() => {
+              setShowSelfieModal(false);
+              fetchMyCelebrationPhotos();
+              fetchSavedPhotos();
+            }}
+            onCancel={() => setShowSelfieModal(false)}
+          />
+        </Modal>
+      )}
 
       {/* ── SAVED MOODBOARD Shared Universal Editorial Lightbox Modal ── */}
       {selectedSavedIdx !== null && (
@@ -807,6 +844,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     gap: 16,
+  },
+  avatarTouchable: {
+    position: 'relative',
+  },
+  avatarCameraBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#111111',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#ffffff',
   },
   avatarImage: {
     width: 64,
@@ -1047,6 +1100,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingVertical: 14,
+  },
+  sheetOptionText: {
+    fontSize: 14,
+    fontFamily: FONT_MONTSERRAT_MEDIUM,
+    color: '#111111',
   },
   logoutBtnText: {
     fontSize: 14,
