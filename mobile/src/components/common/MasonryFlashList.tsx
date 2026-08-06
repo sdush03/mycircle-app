@@ -27,11 +27,11 @@ const COL_WIDTH = Math.floor((SCREEN_WIDTH - 24) / 2);
 const CARD_GAP = 6;                            // vertical gap between cards
 
 // Pool: max simultaneous native Views per column.
-// 40 slots × 2 columns = 80 total Views regardless of list size (vs 10,000+)
-const POOL_PER_COL = 40;
+// Pool: max simultaneous native Views per column.
+// 60 slots × 2 columns = 120 total Views regardless of list size (vs 10,000+)
+const POOL_PER_COL = 60;
 
 // How many px beyond the viewport to keep rendered (pre-fetch buffer).
-// Larger = fewer glitches during fast flings (items stay protected longer)
 const OVERSCAN = 1500;
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
@@ -111,15 +111,10 @@ function buildColumns<T>(data: T[]): {
       // Use the actual aspect ratio (works for both landscape and portrait)
       cardHeight = Math.round(COL_WIDTH / realAspect);
     } else {
-      const isLandscape = Boolean(item?.isHorizontal || item?.is_horizontal || (item?.orientation && String(item.orientation).includes('landscape')));
-      let cardAspect = 0.75;
-      if (isLandscape) {
-        cardAspect = 1.5;
-      } else {
-        const cycle = idx % 3;
-        cardAspect = cycle === 0 ? 2 / 3 : (cycle === 1 ? 3 / 4 : 4 / 5);
-      }
-      cardHeight = Math.round(COL_WIDTH / cardAspect);
+      // No dimensions available — use a fixed portrait default (4:5).
+      // A STABLE constant ensures the same photo always gets the same height
+      // regardless of its position in the array (unlike idx % 3).
+      cardHeight = Math.round(COL_WIDTH / (4 / 5));
     }
     // Clamp to prevent extreme cases (e.g. 360° panoramas)
     cardHeight = Math.max(80, Math.min(600, cardHeight));
@@ -155,7 +150,7 @@ function assignSlots<T>(
   const minY = gridScrollY - OVERSCAN;
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
 
-  // 1. Find all visible item indices
+  // 1. Find all visible item indices inside the overscan range
   const visibleSet = new Set<number>();
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
@@ -194,20 +189,28 @@ function assignSlots<T>(
     }
   }
 
-  // 3. Assign free slots to visible items that don’t have a slot yet
-  let fi = 0;
-  let unassignedViewportGaps = 0;
-  for (const itemIdx of visibleSet) {
-    if (occupied.has(itemIdx)) continue;
-    if (fi >= free.length) {
-      // Pool exhausted! Check if this unassigned item is inside the active viewport window
-      const item = items[itemIdx];
-      if (item && item.topY + item.height >= gridScrollY && item.topY <= gridScrollY + SCREEN_HEIGHT) {
-        unassignedViewportGaps++;
-        console.warn(`[MYCIRCLE GAP DEBUG ⚠️] UNRENDERED GAP! Item #${item.originalIndex + 1} (gridTop: ${item.topY}px, h: ${item.height}px) is visible inside viewport (gridY: ${Math.round(gridScrollY)}px) BUT HAS NO SLOT AVAILABLE! Pool (${poolSize}) exhausted!`);
-      }
-      continue;
+  // 3. Collect unassigned items and SORT BY VIEWPORT CENTER PROXIMITY
+  //    This guarantees on-screen items get slots FIRST before off-screen overscan items!
+  const unassigned: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (visibleSet.has(i) && !occupied.has(i)) {
+      unassigned.push(i);
     }
+  }
+
+  const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
+  unassigned.sort((a, b) => {
+    const itemA = items[a];
+    const itemB = items[b];
+    const centerA = itemA.topY + itemA.height / 2;
+    const centerB = itemB.topY + itemB.height / 2;
+    return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
+  });
+
+  // 4. Assign free slots to unassigned items (on-screen center items get assigned FIRST)
+  let fi = 0;
+  for (const itemIdx of unassigned) {
+    if (fi >= free.length) break;
     const slotIdx = free[fi++];
     const newItem = items[itemIdx];
     const newTop = newItem.topY;
@@ -220,11 +223,7 @@ function assignSlots<T>(
     }
   }
 
-  if (unassignedViewportGaps > 0) {
-    console.warn(`[MYCIRCLE GAP DEBUG 🚨] TOTAL ${unassignedViewportGaps} VISIBLE ITEMS IN VIEWPORT WERE LEFT AS BLANK GAPS due to slot pool exhaustion!`);
-  }
-
-  // 4. Park remaining free slots off-screen
+  // 5. Park remaining free slots off-screen
   while (fi < free.length) {
     const slotIdx = free[fi++];
     if (next[slotIdx].colItemIdx !== -1) {
@@ -232,7 +231,7 @@ function assignSlots<T>(
     }
   }
 
-  // 5. Bail out if every slot reference is identical
+  // 6. Bail out if every slot reference is identical
   for (let s = 0; s < next.length; s++) {
     if (next[s] !== prevSlots[s]) return next;
   }
