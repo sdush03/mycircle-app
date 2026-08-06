@@ -65,6 +65,7 @@ export interface EditorialLightboxProps {
   title?: string;
   subtitle?: string;
   enableDownload?: boolean;
+  totalCount?: number;
 }
 
 export function EditorialLightbox({
@@ -80,6 +81,7 @@ export function EditorialLightbox({
   title = 'MISTY VISUALS',
   subtitle,
   enableDownload = false,
+  totalCount,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -750,16 +752,21 @@ export function EditorialLightbox({
                 pointerEvents="box-none"
               >
                 <View style={{ alignItems: 'center', width: '100%' }}>
-                  {/* High-Fashion Format Counter: e.g. "01 // 24" */}
-                  <View style={styles.lightboxCounterContainer}>
-                    <Text style={styles.lightboxCounterCurrent}>
-                      {String(activeIdx + 1).padStart(2, '0')}
-                    </Text>
-                    <Text style={styles.lightboxCounterDivider}>//</Text>
-                    <Text style={styles.lightboxCounterTotal}>
-                      {String(images.length).padStart(2, '0')}
-                    </Text>
-                  </View>
+                  {/* High-Fashion Format Counter: e.g. "01 // 180" */}
+                  {(() => {
+                    const displayTotal = typeof totalCount === 'number' && totalCount > 0 ? totalCount : images.length;
+                    return (
+                      <View style={styles.lightboxCounterContainer}>
+                        <Text style={styles.lightboxCounterCurrent}>
+                          {displayTotal <= 99 ? String(activeIdx + 1).padStart(2, '0') : String(activeIdx + 1)}
+                        </Text>
+                        <Text style={styles.lightboxCounterDivider}>//</Text>
+                        <Text style={styles.lightboxCounterTotal}>
+                          {displayTotal <= 99 ? String(displayTotal).padStart(2, '0') : displayTotal.toLocaleString()}
+                        </Text>
+                      </View>
+                    );
+                  })()}
 
                   <Text style={styles.lightboxCategoryText}>{getDisplaySubtitle()}</Text>
 

@@ -1594,24 +1594,42 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent }:
       ) : null}
 
       {/* ── 4. Universal Editorial Lightbox Component ── */}
-      {activeImageIndex !== null && (
-        <EditorialLightbox
-          visible={activeImageIndex !== null}
-          images={activeList}
-          initialIndex={activeImageIndex}
-          initialBounds={selectedBounds}
-          onGetBoundsForIndex={getBoundsForIndex}
-          onToggleLike={handleToggleLike}
-          likeTargetName="My Favourites"
-          enableDownload={true}
-          onClose={() => {
-            setActiveImageIndex(null);
-            setSelectedBounds(null);
-          }}
-          title={cleanTitle}
-          subtitle={activeTab.toUpperCase()}
-        />
-      )}
+      {activeImageIndex !== null && (() => {
+        let activeTabTotalCount: number | undefined = undefined;
+        if (activeTab === 'MY PHOTOS') {
+          activeTabTotalCount = photos.length;
+        } else if (activeTab === 'MY FAVOURITES') {
+          activeTabTotalCount = favoritesCount;
+        } else if (activeTab === 'ALL') {
+          activeTabTotalCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+        } else {
+          const normKey = activeTab.trim().toUpperCase();
+          activeTabTotalCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+        }
+        if (!activeTabTotalCount || activeTabTotalCount <= 0) {
+          activeTabTotalCount = activeList.length;
+        }
+
+        return (
+          <EditorialLightbox
+            visible={activeImageIndex !== null}
+            images={activeList}
+            initialIndex={activeImageIndex}
+            initialBounds={selectedBounds}
+            onGetBoundsForIndex={getBoundsForIndex}
+            onToggleLike={handleToggleLike}
+            likeTargetName="My Favourites"
+            enableDownload={true}
+            totalCount={activeTabTotalCount}
+            onClose={() => {
+              setActiveImageIndex(null);
+              setSelectedBounds(null);
+            }}
+            title={cleanTitle}
+            subtitle={activeTab.toUpperCase()}
+          />
+        );
+      })()}
     </GestureHandlerRootView>
   </Modal>
   );
