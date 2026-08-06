@@ -20,7 +20,7 @@ import { savesService, SavedPhotoItem } from '../services/savesService';
 import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import { runOnJS, useSharedValue } from 'react-native-reanimated';
 import api from '../services/api';
 import {
   FONT_FUTURA,
@@ -120,8 +120,10 @@ export default function ProfileScreen() {
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>('my_photos');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
-  const activeSubTabRef = useRef(activeSubTab);
-  activeSubTabRef.current = activeSubTab;
+  const activeSubTabShared = useSharedValue<ProfileSubTab>(activeSubTab);
+  useEffect(() => {
+    activeSubTabShared.value = activeSubTab;
+  }, [activeSubTab, activeSubTabShared]);
 
   const subTabPanGesture = useMemo(
     () =>
@@ -130,13 +132,13 @@ export default function ProfileScreen() {
         .failOffsetY([-15, 15])
         .onEnd((e) => {
           'worklet';
-          if (e.translationX < -40 && activeSubTabRef.current === 'my_photos') {
+          if (e.translationX < -40 && activeSubTabShared.value === 'my_photos') {
             runOnJS(setActiveSubTab)('my_favourites');
-          } else if (e.translationX > 40 && activeSubTabRef.current === 'my_favourites') {
+          } else if (e.translationX > 40 && activeSubTabShared.value === 'my_favourites') {
             runOnJS(setActiveSubTab)('my_photos');
           }
         }),
-    []
+    [activeSubTabShared]
   );
 
   // Event-grouped photos
