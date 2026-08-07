@@ -15,6 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import * as Haptics from 'expo-haptics';
@@ -123,7 +124,10 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
 
   const loadRecentEvents = async () => {
     try {
-      const storedStr = await SecureStore.getItemAsync(JOINED_EVENTS_KEY);
+      let storedStr = await AsyncStorage.getItem('@mycircle_joined_events_list');
+      if (!storedStr) {
+        storedStr = await SecureStore.getItemAsync(JOINED_EVENTS_KEY);
+      }
       if (storedStr) {
         const parsed = JSON.parse(storedStr);
         if (Array.isArray(parsed)) {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import api from '../services/api';
 
@@ -158,14 +159,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       (ev) => String(ev.slug || ev.id) !== String(eventSlugOrId)
     );
     set({ userEvents: updatedEvents });
+
+    const profile = get().profile;
+
     try {
-      await SecureStore.setItemAsync('joined_events_list', JSON.stringify(updatedEvents));
+      await AsyncStorage.setItem('@mycircle_joined_events_list', JSON.stringify(updatedEvents));
+      await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
     } catch (_e) {}
 
     // Notify backend server of WhatsApp-style status: 'LEFT' participant state
     try {
       await api.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, {
         status: 'LEFT',
+        email: profile?.email || undefined,
+        phoneNumber: profile?.phoneNumber || undefined,
       });
     } catch (_e) {}
   },
