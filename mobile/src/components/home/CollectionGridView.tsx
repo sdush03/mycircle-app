@@ -307,7 +307,6 @@ export default function CollectionGridView({
 
   const selectCategoryWithPush = React.useCallback((catName: string) => {
     if (isClickBusyRef.current) return;
-    Haptics.selectionAsync().catch(() => {});
     isClickBusyRef.current = true;
     setTimeout(() => { isClickBusyRef.current = false; }, 400);
 

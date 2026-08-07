@@ -4,6 +4,7 @@ import {
   View,
   Text,
   ScrollView,
+  RefreshControl,
   Pressable,
   ActivityIndicator,
   Dimensions,
@@ -119,6 +120,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isRefreshingGallery, setIsRefreshingGallery] = useState(false);
   const [allPhotosOffset, setAllPhotosOffset] = useState(0);
   const [hasMorePhotos, setHasMorePhotos] = useState(true);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -545,6 +547,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   };
 
+  const handleRefreshGallery = async () => {
+    setIsRefreshingGallery(true);
+    try {
+      await fetchPhotos();
+    } catch (_) {
+    } finally {
+      setIsRefreshingGallery(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  };
+
   const loadMorePhotos = async () => {
     if (isFetchingMoreRef.current || isLoadingMore || isLoading || !eventSlug) return;
 
@@ -918,7 +931,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (currentIdx >= 0 && currentIdx < availableTabs.length - 1) {
       const nextTab = availableTabs[currentIdx + 1];
       changeTabWithScrollMemory(nextTab, true);
-      Haptics.selectionAsync().catch(() => {});
     }
   }, [availableTabs, changeTabWithScrollMemory]);
 
@@ -927,7 +939,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (currentIdx > 0) {
       const prevTab = availableTabs[currentIdx - 1];
       changeTabWithScrollMemory(prevTab, true);
-      Haptics.selectionAsync().catch(() => {});
     }
   }, [availableTabs, changeTabWithScrollMemory]);
 
@@ -1078,7 +1089,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       setIsBatchDownloading(true);
       setBatchDownloadProgress({ current: 0, total: listToDownload.length });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
       const cacheDir = (((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') as string).replace(/\/+$/, '');
 
@@ -1536,6 +1547,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             renderHeroCover={renderHeroCover}
             renderStickyHeader={renderStickyHeader}
             ListFooterComponent={renderFooter()}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshingGallery}
+                onRefresh={handleRefreshGallery}
+                tintColor="#ffffff"
+              />
+            }
             renderItem={({ item, index, isColumn0 }) => (
               item.isSkeleton ? (
                 <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />

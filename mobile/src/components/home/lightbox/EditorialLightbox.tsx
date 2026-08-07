@@ -145,9 +145,10 @@ export function EditorialLightbox({
       // 60-120fps smooth opening: Wait for native Modal mount & layout pass to complete before animating expansion
       animTimer = setTimeout(() => {
         requestAnimationFrame(() => {
-          expandProgress.value = withTiming(1, {
-            duration: 320,
-            easing: Easing.bezier(0.16, 1, 0.3, 1),
+          expandProgress.value = withSpring(1, {
+            damping: 25,
+            stiffness: 250,
+            mass: 0.8,
           });
         });
       }, Platform.OS === 'android' ? 45 : 30);
@@ -182,9 +183,9 @@ export function EditorialLightbox({
     }
   }, [onGetBoundsForIndex, thumbX, thumbY, thumbW, thumbH]);
 
-  // Update target bounds whenever active index changes (and auto-scroll background page if offscreen)
+  // Update target bounds whenever active index changes after initial open
   useEffect(() => {
-    if (visible) {
+    if (visible && expandProgress.value >= 0.9) {
       updateBoundsForIndex(activeIdx);
     }
   }, [visible, activeIdx, updateBoundsForIndex]);
@@ -351,7 +352,7 @@ export function EditorialLightbox({
       }
     } else {
       try {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } catch {}
       const updated = new Set(savedUrls);
       updated.add(currentUrl);
@@ -416,9 +417,6 @@ export function EditorialLightbox({
   };
 
   const handleDownload = async () => {
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
     console.log('[DOWNLOAD DEBUG 🚀] handleDownload invoked!');
     if (!enableDownload) {
       console.warn('[DOWNLOAD DEBUG ⚠️] enableDownload is false!');
@@ -478,6 +476,7 @@ export function EditorialLightbox({
           link.click();
           document.body.removeChild(link);
           setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           showToast('Photo downloaded!');
           console.log('[DOWNLOAD DEBUG ✅] Web Download successful!');
         } catch (webErr: any) {
@@ -539,6 +538,7 @@ export function EditorialLightbox({
               console.log('[DOWNLOAD DEBUG 📱 STEP 4] Calling MediaLibrary.saveToLibraryAsync...');
               await (MediaLibrary as any).saveToLibraryAsync(downloadedFileUri);
               console.log('[DOWNLOAD DEBUG ✅ STEP 4 SUCCESS] Photo saved via saveToLibraryAsync!');
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               showToast('Photo saved to Photos! ✨');
               return;
             } else if (typeof MediaLibrary.createAssetAsync === 'function') {
@@ -546,6 +546,7 @@ export function EditorialLightbox({
               const asset = await MediaLibrary.createAssetAsync(downloadedFileUri);
               console.log('[DOWNLOAD DEBUG ✅ STEP 4 SUCCESS] Created Asset:', JSON.stringify(asset));
               if (asset) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
                 showToast('Photo saved to Photos! ✨');
                 return;
               }

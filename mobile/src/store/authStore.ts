@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { Image } from 'expo-image';
+import api from '../services/api';
 
 const TOKEN_KEY = 'user_session_token';
 const PROFILE_KEY = 'user_profile_data';
@@ -49,6 +50,7 @@ interface AuthState {
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
   updateProfile: (profile: Partial<GuestProfile>) => Promise<void>;
   setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null, openedFrom?: 'home' | 'mycircle' | null) => void;
+  leaveEvent: (eventSlugOrId: string | number) => Promise<void>;
   loadStoredAuth: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -111,16 +113,61 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  setEventDetails: (eventSlug, passcode, eventCoverUrl = null, eventTitle = null, openedFrom = null) => {
+  setEventDetails: (
+    eventSlug: string | null,
+    passcode: string | null,
+    eventCoverUrl?: string | null,
+    eventTitle?: string | null,
+    openedFrom?: 'home' | 'mycircle' | null
+  ) => {
+    if (!eventSlug) {
+      set({
+        eventSlug: null,
+        passcode: null,
+        eventCoverUrl: null,
+        eventTitle: null,
+        openedFrom: null,
+      });
+      return;
+    }
+
     if (eventCoverUrl) {
       Image.prefetch(eventCoverUrl);
     }
-    set({ eventSlug, passcode, eventCoverUrl, eventTitle, openedFrom });
-    if (eventSlug) {
-      import('../services/galleryPrefetch').then((m) => {
-        m.prefetchEventGalleryData(eventSlug, passcode);
-      }).catch(() => {});
-    }
+
+    const currentOpenedFrom = get().openedFrom;
+    const currentCoverUrl = get().eventCoverUrl;
+    const currentTitle = get().eventTitle;
+
+    set({
+      eventSlug,
+      passcode,
+      eventCoverUrl: eventCoverUrl !== undefined ? eventCoverUrl : currentCoverUrl,
+      eventTitle: eventTitle !== undefined ? eventTitle : currentTitle,
+      openedFrom: openedFrom !== undefined ? openedFrom : (currentOpenedFrom || 'mycircle'),
+    });
+
+    import('../services/galleryPrefetch').then((m) => {
+      m.prefetchEventGalleryData(eventSlug, passcode);
+    }).catch(() => {});
+  },
+
+  leaveEvent: async (eventSlugOrId: string | number) => {
+    const currentEvents = get().userEvents;
+    const updatedEvents = currentEvents.filter(
+      (ev) => String(ev.slug || ev.id) !== String(eventSlugOrId)
+    );
+    set({ userEvents: updatedEvents });
+    try {
+      await SecureStore.setItemAsync('joined_events_list', JSON.stringify(updatedEvents));
+    } catch (_e) {}
+
+    // Notify backend server of WhatsApp-style status: 'LEFT' participant state
+    try {
+      await api.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, {
+        status: 'LEFT',
+      });
+    } catch (_e) {}
   },
 
   loadStoredAuth: async () => {

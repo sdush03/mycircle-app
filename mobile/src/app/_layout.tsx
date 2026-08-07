@@ -162,7 +162,6 @@ function RootLayoutContent() {
         activeTabSharedIndex.value = 0;
         tabTranslateX.value = 0;
         router.replace('/');
-        Haptics.selectionAsync().catch(() => {});
         return true; // Consume event, user is now on Home tab
       }
 
@@ -239,7 +238,6 @@ function RootLayoutContent() {
       setActiveTabIndex(nextIdx);
       activeTabSharedIndex.value = nextIdx;
       tabTranslateX.value = 0;
-      Haptics.selectionAsync().catch(() => {});
     }
   }, [activeTabIndex, eventSlug]);
 
@@ -250,7 +248,6 @@ function RootLayoutContent() {
       setActiveTabIndex(prevIdx);
       activeTabSharedIndex.value = prevIdx;
       tabTranslateX.value = 0;
-      Haptics.selectionAsync().catch(() => {});
     }
   }, [activeTabIndex, eventSlug]);
 
@@ -384,9 +381,7 @@ function RootLayoutContent() {
         {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
         {eventSlug && (
           <GalleryView
-            onLogout={() => {
-              Haptics.selectionAsync().catch(() => {});
-            }}
+            onLogout={() => {}}
             onChangeEvent={() => {
               useAuthStore.getState().setEventDetails(null, null);
             }}
@@ -403,7 +398,6 @@ function RootLayoutContent() {
           onSelectTab={(tabName) => {
             const newIdx = TAB_ORDER.indexOf(tabName);
             if (newIdx >= 0 && newIdx !== activeTabIndex) {
-              Haptics.selectionAsync().catch(() => {});
               setActiveTabIndex(newIdx);
               tabTranslateX.value = 0;
               activeTabSharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
@@ -464,7 +458,6 @@ function CustomFloatingTabBar({ activeTab, isCollapsed, bottomInset, profile, on
   const setTabBarCollapsed = useAuthStore((state) => state.setTabBarCollapsed);
 
   const handleTabPress = (tabName: 'index' | 'mycircle' | 'moodboard' | 'profile') => {
-    Haptics.selectionAsync().catch(() => {});
     setTabBarCollapsed(false);
     onSelectTab(tabName);
   };

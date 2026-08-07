@@ -4,6 +4,7 @@ import {
   View, 
   Text, 
   ScrollView, 
+  RefreshControl,
   Image, 
   Pressable, 
   Platform, 
@@ -19,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useAuthStore } from '../store/authStore';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
+import * as Haptics from 'expo-haptics';
 import api from '../services/api';
 
 import { Linking } from 'react-native';
@@ -74,6 +76,7 @@ const VIBES = ['All', 'Luxury', 'Destination', 'Intimate', 'Traditional'];
 export default function HomeScreen() {
   const { token, profile, setEventDetails, userEvents: events, setUserEvents: setEvents, eventSlug, openedFrom, logout } = useAuthStore();
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedVibe, setSelectedVibe] = useState('All');
 
   // Modals for full articles / portfolios / moodboards
@@ -317,11 +320,34 @@ export default function HomeScreen() {
           }
         }
       } catch (e) {
-        console.warn('Failed to fetch website inspirations:', e);
       }
     };
     fetchWebsiteData();
   }, [parseFullStoryPayload]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        fetchUserEvents(),
+        (async () => {
+          try {
+            const storiesRes = await fetch('https://www.mistyvisuals.com/api/website/stories');
+            if (storiesRes.ok) {
+              const storiesData = await storiesRes.json();
+              if (Array.isArray(storiesData) && storiesData.length > 0) {
+                setWebsiteStories(storiesData);
+              }
+            }
+          } catch (_) {}
+        })(),
+      ]);
+    } catch (_) {
+    } finally {
+      setRefreshing(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  };
 
   // Fetch joined wedding events if authenticated
   const fetchUserEvents = useCallback(async () => {
@@ -790,6 +816,13 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#111111"
+          />
+        }
       >
         {/* ── 1. Hero Card (Minimalist Architectural — Editorial Copy) ── */}
         {singleHeroCard && (

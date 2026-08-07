@@ -281,7 +281,7 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         </View>
 
         <Pressable style={styles.button} onPress={takePicture}>
-          <Text style={styles.buttonText}>📸 SNAP SELFIE</Text>
+          <Text style={styles.buttonText} numberOfLines={1}>📸 SNAP SELFIE</Text>
         </Pressable>
       </Pressable>
     </Pressable>
@@ -374,7 +374,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 2,
+    letterSpacing: 1,
   },
   cameraContainer: {
     width: 220,

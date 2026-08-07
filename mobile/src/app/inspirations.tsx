@@ -4,6 +4,7 @@ import {
   View,
   Text,
   ScrollView,
+  RefreshControl,
   Image,
   Pressable,
   Dimensions,
@@ -12,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
+import * as Haptics from 'expo-haptics';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -82,6 +84,7 @@ export default function InspirationsScreen() {
   const [journalArticles, setJournalArticles] = useState<any[]>(DEFAULT_JOURNAL_ARTICLES);
   const [selectedVibe, setSelectedVibe] = useState<string>('All');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
   // Modal states
   const [selectedStory, setSelectedStory] = useState<any | null>(null);
@@ -126,6 +129,36 @@ export default function InspirationsScreen() {
     fetchData();
     return () => { isMounted = false; };
   }, []);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const [inspoRes, storyRes, articleRes] = await Promise.allSettled([
+        fetch('https://www.mistyvisuals.com/api/app/inspirations'),
+        fetch('https://www.mistyvisuals.com/api/website/stories'),
+        fetch('https://www.mistyvisuals.com/api/website/articles')
+      ]);
+
+      if (inspoRes.status === 'fulfilled' && inspoRes.value.ok) {
+        const inspoData = await inspoRes.value.json();
+        if (Array.isArray(inspoData)) setWebsiteInspirations(inspoData);
+      }
+
+      if (storyRes.status === 'fulfilled' && storyRes.value.ok) {
+        const storyData = await storyRes.value.json();
+        if (Array.isArray(storyData)) setWebsiteStories(storyData);
+      }
+
+      if (articleRes.status === 'fulfilled' && articleRes.value.ok) {
+        const articleData = await articleRes.value.json();
+        if (Array.isArray(articleData) && articleData.length > 0) setJournalArticles(articleData);
+      }
+    } catch (_) {
+    } finally {
+      setRefreshing(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  };
 
   // Vibe Category Cards generated dynamically from websiteInspirations & websiteStories
   const vibeCategoryCards = React.useMemo(() => {
@@ -175,6 +208,13 @@ export default function InspirationsScreen() {
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#111111"
+          />
+        }
       >
         {/* ── 1. Page Hero Banner ── */}
         <View style={styles.heroSection}>

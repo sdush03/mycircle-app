@@ -153,21 +153,24 @@ export default function JoinCelebrationModal({
       await saveEventToRecent(slug, eventData.title || slug);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       
-      // Close modal smoothly FIRST before setting event details to avoid unmount animation hang
+      const onAnimationComplete = () => {
+        setIsSubmitting(false);
+        setModalVisible(false);
+        onClose();
+        setEventDetails(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
+        tabEvents.emit(EVENT_JOINED_CELEBRATION);
+        tabEvents.emit(EVENT_SAVES_UPDATED);
+        if (onSuccess) {
+          onSuccess(slug, passcode);
+        }
+      };
+
       backdropOpacity.value = withTiming(0, { duration: 150 });
       sheetTranslateY.value = withTiming(
         height,
         { duration: 180, easing: Easing.in(Easing.poly(3)) },
         () => {
-          runOnJS(setIsSubmitting)(false);
-          runOnJS(setModalVisible)(false);
-          runOnJS(onClose)();
-          runOnJS(setEventDetails)(slug, passcode, eventData.coverPhotoMobileUrl || eventData.coverPhotoUrl, eventData.title, 'home');
-          tabEvents.emit(EVENT_JOINED_CELEBRATION);
-          tabEvents.emit(EVENT_SAVES_UPDATED);
-          if (onSuccess) {
-            runOnJS(onSuccess)(slug, passcode);
-          }
+          runOnJS(onAnimationComplete)();
         }
       );
     } catch (err: any) {
@@ -241,20 +244,25 @@ export default function JoinCelebrationModal({
   };
 
   const handleBarCodeScanned = ({ data }: { data: string }) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setShowScanner(false);
     parseAndJoinUrl(data);
   };
 
   const handleClose = () => {
+    const onCloseComplete = () => {
+      setShowScanner(false);
+      setEventInput('');
+      setModalVisible(false);
+      onClose();
+    };
+
     backdropOpacity.value = withTiming(0, { duration: 200 });
     sheetTranslateY.value = withTiming(
       height,
       { duration: 220, easing: Easing.in(Easing.poly(3)) },
       () => {
-        runOnJS(setShowScanner)(false);
-        runOnJS(setEventInput)('');
-        runOnJS(setModalVisible)(false);
-        runOnJS(onClose)();
+        runOnJS(onCloseComplete)();
       }
     );
   };

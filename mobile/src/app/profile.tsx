@@ -4,6 +4,7 @@ import {
   View,
   Text,
   ScrollView,
+  RefreshControl,
   Image as RNImage,
   Pressable,
   Dimensions,
@@ -105,7 +106,17 @@ const balancePhotosIntoColumns = (photosList: any[], aspectMap: { [url: string]:
       cardAspect = cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5;
     }
 
-    const photoWithAspect = { ...photo, aspectRatio: cardAspect, cardAspect, globalIndex: index };
+    const rawId = photo.id || photo.photoUrl || photo.url || photo.uri || photo.r2Url || photo.r2_url || photoUri;
+    const cardKey = rawId ? `card-${rawId}` : `card-photo-${index}`;
+
+    const photoWithAspect = {
+      ...photo,
+      aspectRatio: cardAspect,
+      cardAspect,
+      globalIndex: index,
+      cardKey,
+    };
+
     const heightContribution = 1 / cardAspect;
     const shortestIdx = colHeights[0] <= colHeights[1] ? 0 : 1;
     cols[shortestIdx].push(photoWithAspect);
@@ -114,6 +125,15 @@ const balancePhotosIntoColumns = (photosList: any[], aspectMap: { [url: string]:
 
   return { column0: cols[0], column1: cols[1] };
 };
+
+function getProfileCardKey(p: any, fallbackIdx: number, groupTitle: string = ''): string {
+  if (!p) return `card-${groupTitle}-${fallbackIdx}`;
+  if (p.id !== undefined && p.id !== null) return `card-${p.id}`;
+  const uri = getPhotoUri(p) || getPhotoFullUri(p);
+  if (uri) return `card-${uri}`;
+  const idx = p.globalIndex !== undefined ? p.globalIndex : fallbackIdx;
+  return `card-${groupTitle}-${idx}`;
+}
 
 export default function ProfileScreen() {
   const handleScroll = useScrollTabBarCollapse();
@@ -171,36 +191,32 @@ export default function ProfileScreen() {
     transform: [{ translateX: tabTranslateX.value }],
   }));
 
-  // Event-grouped photos
   const [eventGroups, setEventGroups] = useState<EventMatchedGroup[]>([]);
   const [totalMatchedCount, setTotalMatchedCount] = useState<number>(0);
   const [loadingPhotos, setLoadingPhotos] = useState<boolean>(true);
 
-  // Saved Favourites photos grouped by event
   const [savedPhotos, setSavedPhotos] = useState<SavedPhotoItem[]>([]);
   const [favouriteEventGroups, setFavouriteEventGroups] = useState<EventMatchedGroup[]>([]);
   const [totalFavouriteCount, setTotalFavouriteCount] = useState<number>(0);
   const [loadingSaves, setLoadingSaves] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // MY CELEBRATION PHOTOS Featured Story Lightbox state & bounds
   const [selectedMyPhotoIdx, setSelectedMyPhotoIdx] = useState<number | null>(null);
   const [selectedMyPhotoBounds, setSelectedMyPhotoBounds] = useState<LightboxBounds | null>(null);
   const [selectedMyPhotoList, setSelectedMyPhotoList] = useState<any[]>([]);
   const [selectedMyPhotoTitle, setSelectedMyPhotoTitle] = useState<string>('MY CELEBRATION PHOTOS');
 
-  // SAVED MOODBOARD Featured Story Lightbox state & bounds
   const [selectedSavedIdx, setSelectedSavedIdx] = useState<number | null>(null);
   const [selectedSavedBounds, setSelectedSavedBounds] = useState<LightboxBounds | null>(null);
+  const [selectedSavedList, setSelectedSavedList] = useState<any[]>([]);
+  const [selectedSavedTitle, setSelectedSavedTitle] = useState<string>('CELEBRATION FAVOURITES');
 
-  // Fetch celebration events & matched photos grouped by event
   const fetchMyCelebrationPhotos = useCallback(async () => {
     setLoadingPhotos(true);
     try {
-      // 1. Fetch user's joined celebration events
       const eventsRes = await api.get('/api/gallery/family/events');
       const eventsList = eventsRes.data?.events || [];
 
-      // 2. Fetch all matched photos for user from my-photos endpoint as fallback/supplement
       let allMatched: any[] = [];
       try {
         const myPhotosRes = await api.get(`/api/my-photos?t=${Date.now()}`);
@@ -226,31 +242,28 @@ export default function ProfileScreen() {
             }
           } catch (_e) {}
 
-          // Fallback: match from allMatched list if event endpoint returned empty
           if (evPhotos.length === 0 && allMatched.length > 0) {
             evPhotos = allMatched.filter(
-              (p) =>
-                String(p.eventSlug || '') === String(ev.slug || '') ||
-                String(p.eventId || '') === String(ev.id || '') ||
-                String(p.event_id || '') === String(ev.id || '')
+              (p) => String(p.eventId || p.event_id) === String(ev.id) || p.eventSlug === ev.slug
             );
           }
 
           const validPhotos = evPhotos.filter((p) => !!getPhotoUri(p));
-          grandTotal += validPhotos.length;
+          if (validPhotos.length > 0) {
+            grandTotal += validPhotos.length;
 
-          groups.push({
-            eventSlug: ev.slug,
-            eventTitle: ev.title || ev.name || 'Celebration',
-            eventDate: ev.date || ev.eventDate,
-            coverImage: ev.coverImage || ev.imageUrl,
-            photos: validPhotos,
-          });
+            groups.push({
+              eventSlug: ev.slug || `event-${ev.id}`,
+              eventTitle: ev.title || ev.name || 'Celebration',
+              eventDate: ev.date || ev.eventDate,
+              coverImage: ev.coverImage || ev.imageUrl,
+              photos: validPhotos,
+            });
+          }
         }
       }
 
-      // Fallback: if no events created groups, render allMatched as single celebration group
-      if (grandTotal === 0 && allMatched.length > 0) {
+      if (groups.length === 0 && allMatched.length > 0) {
         const validPhotos = allMatched.filter((p) => !!getPhotoUri(p));
         grandTotal = validPhotos.length;
         groups.push({
@@ -273,7 +286,6 @@ export default function ProfileScreen() {
   const fetchSavedPhotos = useCallback(async () => {
     setLoadingSaves(true);
     try {
-      // 1. Fetch user's joined celebration events
       let eventsList: any[] = [];
       try {
         const eventsRes = await api.get('/api/gallery/family/events');
@@ -291,7 +303,6 @@ export default function ProfileScreen() {
       if (Array.isArray(eventsList) && eventsList.length > 0) {
         for (const ev of eventsList) {
           let evFavs: any[] = [];
-          // Fetch event-wise liked/favourited photos for this event
           try {
             const favRes = await api.get(`/api/gallery/public/events/${ev.slug}/favorites`);
             const raw =
@@ -328,45 +339,33 @@ export default function ProfileScreen() {
     }
   }, []);
 
-  const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        fetchMyCelebrationPhotos(),
+        fetchSavedPhotos(),
+      ]);
+    } catch (_) {
+    } finally {
+      setRefreshing(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  };
 
-  useEffect(() => {
-    savedPhotos.forEach((item) => {
-      const url = getPhotoUri(item);
-      if (url && !aspectMap[url]) {
-        RNImage.getSize(
-          url,
-          (w, h) => {
-            if (w > 0 && h > 0) {
-              setAspectMap((prev) => ({ ...prev, [url]: w / h }));
-            }
-          },
-          () => {}
-        );
-      }
-    });
-  }, [savedPhotos]);
+  const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
 
   useEffect(() => {
     fetchMyCelebrationPhotos();
     fetchSavedPhotos();
 
-    const unsubscribe = tabEvents.on(TAB_OPEN_PROFILE_SETTINGS, () => {
-      setShowSettingsModal(true);
-    });
-
-    const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, () => {
-      fetchMyCelebrationPhotos();
-      fetchSavedPhotos();
-    });
-
+    const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, fetchSavedPhotos);
     const unsubJoined = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
       fetchMyCelebrationPhotos();
       fetchSavedPhotos();
     });
 
     return () => {
-      unsubscribe();
       unsubSaves();
       unsubJoined();
     };
@@ -410,16 +409,18 @@ export default function ProfileScreen() {
   const cardRefs = useRef<{ [key: string]: View | null }>({});
 
   const getBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
-    if (idx < 0 || idx >= savedPhotos.length) return;
-    const p = savedPhotos[idx];
+    const list = selectedSavedList.length > 0 ? selectedSavedList : savedPhotos;
+    if (idx < 0 || idx >= list.length) return;
+    const p = list[idx];
     if (!p) return;
-    const cardId = p.id || (p as any).uri || `photo-${idx}`;
+    const cardId = (p as any).cardKey || getProfileCardKey(p, idx, 'saved');
     const targetCard = cardRefs.current[cardId];
 
     if (targetCard) {
       targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
         if (cardWidth > 0 && cardHeight > 0) {
-          if (y < 80 || y + cardHeight > Dimensions.get('screen').height - 60) {
+          const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
+          if (isOffScreen) {
             targetCard.measureLayout(
               mainScrollRef.current as any,
               (left, top, w, h) => {
@@ -441,19 +442,20 @@ export default function ProfileScreen() {
         }
       });
     }
-  }, [savedPhotos]);
+  }, [selectedSavedList, savedPhotos]);
 
   const getMyPhotoBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
     if (idx < 0 || idx >= selectedMyPhotoList.length) return;
     const p = selectedMyPhotoList[idx];
     if (!p) return;
-    const cardId = p.id || (p as any).uri || `photo-${idx}`;
+    const cardId = p.cardKey || getProfileCardKey(p, idx, selectedMyPhotoTitle);
     const targetCard = cardRefs.current[cardId];
 
     if (targetCard) {
       targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
         if (cardWidth > 0 && cardHeight > 0) {
-          if (y < 80 || y + cardHeight > Dimensions.get('screen').height - 60) {
+          const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
+          if (isOffScreen) {
             targetCard.measureLayout(
               mainScrollRef.current as any,
               (left, top, w, h) => {
@@ -475,7 +477,7 @@ export default function ProfileScreen() {
         }
       });
     }
-  }, [selectedMyPhotoList]);
+  }, [selectedMyPhotoList, selectedMyPhotoTitle]);
 
   const renderMasonryCard = (
     p: any,
@@ -485,41 +487,45 @@ export default function ProfileScreen() {
     groupTitle: string = ''
   ) => {
     const imgUri = getPhotoUri(p);
-    const cardId = p.id || p.uri || `photo-${index}`;
+    const targetIndex = p.globalIndex !== undefined ? p.globalIndex : index;
+    const cardId = p.cardKey || getProfileCardKey(p, targetIndex, isSavedTab ? 'saved' : groupTitle);
 
     const handlePress = () => {
       const ref = cardRefs.current[cardId];
       if (isSavedTab) {
         if (ref) {
           ref.measureInWindow((x, y, w, h) => {
+            setSelectedSavedList(photosList);
+            setSelectedSavedTitle(groupTitle || 'CELEBRATION FAVOURITES');
             setSelectedSavedBounds({ x, y, width: w, height: h });
-            setSelectedSavedIdx(p.globalIndex ?? index);
+            setSelectedSavedIdx(targetIndex);
           });
         } else {
+          setSelectedSavedList(photosList);
+          setSelectedSavedTitle(groupTitle || 'CELEBRATION FAVOURITES');
           setSelectedSavedBounds(null);
-          setSelectedSavedIdx(p.globalIndex ?? index);
+          setSelectedSavedIdx(targetIndex);
         }
       } else {
-        const itemIdx = photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : index;
         if (ref) {
           ref.measureInWindow((x, y, w, h) => {
             setSelectedMyPhotoList(photosList);
             setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
             setSelectedMyPhotoBounds({ x, y, width: w, height: h });
-            setSelectedMyPhotoIdx(itemIdx);
+            setSelectedMyPhotoIdx(targetIndex);
           });
         } else {
           setSelectedMyPhotoList(photosList);
           setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
           setSelectedMyPhotoBounds(null);
-          setSelectedMyPhotoIdx(itemIdx);
+          setSelectedMyPhotoIdx(targetIndex);
         }
       }
     };
 
     return (
       <Pressable
-        key={p.id || index}
+        key={cardId}
         ref={(ref) => {
           if (cardId) cardRefs.current[cardId] = ref;
         }}
@@ -531,7 +537,6 @@ export default function ProfileScreen() {
     );
   };
 
-  // Render 2-column Featured Story balanced masonry grid
   const renderPhotoListMasonry = (photosList: any[], isSavedTab: boolean = false, title: string = '') => {
     const { column0, column1 } = balancePhotosIntoColumns(photosList, aspectMap);
 
@@ -539,12 +544,12 @@ export default function ProfileScreen() {
       <View style={styles.masonryGridContainer}>
         <View style={styles.masonryColumn}>
           {column0.map((p, idx) =>
-            renderMasonryCard(p, photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : idx * 2, isSavedTab, photosList, title)
+            renderMasonryCard(p, p.globalIndex ?? idx * 2, isSavedTab, photosList, title)
           )}
         </View>
         <View style={styles.masonryColumn}>
           {column1.map((p, idx) =>
-            renderMasonryCard(p, photosList.indexOf(p) !== -1 ? photosList.indexOf(p) : idx * 2 + 1, isSavedTab, photosList, title)
+            renderMasonryCard(p, p.globalIndex ?? idx * 2 + 1, isSavedTab, photosList, title)
           )}
         </View>
       </View>
@@ -559,6 +564,13 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.scrollContent}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#ffffff"
+          />
+        }
       >
         {/* ── User Avatar & Info Card ── */}
         <View style={styles.profileHeaderCard}>
@@ -793,7 +805,7 @@ export default function ProfileScreen() {
       {selectedSavedIdx !== null && (
         <EditorialLightbox
           visible={selectedSavedIdx !== null}
-          images={savedPhotos}
+          images={selectedSavedList.length > 0 ? selectedSavedList : savedPhotos}
           initialIndex={selectedSavedIdx}
           initialBounds={selectedSavedBounds}
           onGetBoundsForIndex={getBoundsForIndex}
@@ -802,7 +814,7 @@ export default function ProfileScreen() {
             setSelectedSavedBounds(null);
           }}
           onUnsave={handleUnsaveFromProfile}
-          title="SAVED MOODBOARD"
+          title={selectedSavedTitle || 'CELEBRATION FAVOURITES'}
         />
       )}
 

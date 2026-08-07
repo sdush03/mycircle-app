@@ -6,8 +6,10 @@ import {
   Pressable,
   ActivityIndicator,
   ScrollView,
+  RefreshControl,
   Dimensions,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -15,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '../../store/authStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
+import * as Haptics from 'expo-haptics';
 import api from '../../services/api';
 import { useFocusEffect } from 'expo-router';
 import { tabEvents, EVENT_JOINED_CELEBRATION } from '../../lib/tabEvents';
@@ -46,11 +49,13 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
   const setUserEvents = useAuthStore((state) => state.setUserEvents);
   const events = userEvents;
   const [isLoading, setIsLoading] = useState<boolean>(userEvents.length === 0);
+  const [refreshing, setRefreshing] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
 
   const handleScroll = useScrollTabBarCollapse();
 
   const setEventDetails = useAuthStore((state) => state.setEventDetails);
+  const leaveEvent = useAuthStore((state) => state.leaveEvent);
   const profile = useAuthStore((state) => state.profile);
 
   // Load user's joined events from backend API + fallback to SecureStore
@@ -75,6 +80,12 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
       if (userEvents.length === 0) {
         setIsLoading(true);
       }
+
+      const token = useAuthStore.getState().token;
+      if (!token) {
+        loadRecentEvents();
+        return;
+      }
       
       // 1. Fetch live events list from family endpoint
       const res = await api.get('/api/gallery/family/events');
@@ -89,11 +100,24 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
         // Fallback to recent events from SecureStore
         loadRecentEvents();
       }
-    } catch (e) {
-      console.warn('Failed to fetch family events list, falling back to local storage:', e);
+    } catch (e: any) {
+      if (e?.response?.status !== 401) {
+        console.warn('Failed to fetch family events list, falling back to local storage:', e);
+      }
       loadRecentEvents();
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetchEvents();
+    } catch (_) {
+    } finally {
+      setRefreshing(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
   };
 
@@ -148,6 +172,26 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
     onSuccess(slug, ev.passcode || null);
   };
 
+  const handleLongPressEvent = (ev: any) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const title = ev.title || ev.name || 'this celebration';
+    Alert.alert(
+      'Leave Celebration',
+      `Are you sure you want to leave "${title}"? You can re-join anytime with the invite passcode or QR code.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave',
+          style: 'destructive',
+          onPress: async () => {
+            await leaveEvent(ev.slug || ev.id);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -175,6 +219,13 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
           contentContainerStyle={styles.gridContainer}
           onScroll={handleScroll}
           scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#000000"
+            />
+          }
         >
           {events.length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -211,6 +262,8 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
                       pressed && styles.cardPressed,
                     ]}
                     onPress={() => handleSelectEvent(ev)}
+                    onLongPress={() => handleLongPressEvent(ev)}
+                    delayLongPress={450}
                   >
                     {coverUrl ? (
                       <Image source={{ uri: coverUrl }} style={styles.cardCoverImage} contentFit="cover" />

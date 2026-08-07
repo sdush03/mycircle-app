@@ -22,12 +22,10 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
   const handlePhoneNumberChange = (text: string) => {
     setErrorMsg('');
     setPhoneNumber(text);
-    Haptics.selectionAsync().catch(() => {});
   };
 
   const handleCountryCodeChange = (text: string) => {
     setErrorMsg('');
-    Haptics.selectionAsync().catch(() => {});
     if (!text.startsWith('+')) {
       const clean = text.replace(/\D/g, '');
       setCountryCode('+' + clean);

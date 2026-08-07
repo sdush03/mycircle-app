@@ -78,6 +78,7 @@ export interface MasonryFlashListProps<T = any> {
   onEndReachedThreshold?: number;
   mainScrollRef?: any;
   contentContainerStyle?: any;
+  refreshControl?: any;
 }
 
 // ─── Layout computation ───────────────────────────────────────────────────────
@@ -273,6 +274,7 @@ export function MasonryFlashList<T = any>({
   onEndReached,
   onEndReachedThreshold = 0.8,
   mainScrollRef,
+  refreshControl,
 }: MasonryFlashListProps<T>) {
 
   // ─── Pre-compute all card positions (runs once per data change) ────────────
@@ -365,6 +367,7 @@ export function MasonryFlashList<T = any>({
       stickyHeaderIndices={renderStickyHeader ? [1] : undefined}
       style={styles.scrollView}
       contentContainerStyle={styles.contentContainer}
+      refreshControl={refreshControl}
     >
       {/* Child 0: Hero cover — scrolls away naturally */}
       {renderHeroCover ? renderHeroCover() : null}
