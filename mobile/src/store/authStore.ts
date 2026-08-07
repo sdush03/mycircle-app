@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
-import api from '../services/api';
 
 const TOKEN_KEY = 'user_session_token';
 const PROFILE_KEY = 'user_profile_data';
@@ -169,7 +168,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     // Notify backend server of WhatsApp-style status: 'LEFT' participant state
     try {
-      await api.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, {
+      const apiService = require('../services/api').default;
+      await apiService.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, {
         status: 'LEFT',
         email: profile?.email || undefined,
         phoneNumber: profile?.phoneNumber || undefined,
