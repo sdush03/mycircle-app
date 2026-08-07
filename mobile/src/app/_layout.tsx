@@ -22,7 +22,7 @@ import HomeScreen from './index';
 import InspirationsScreen from './inspirations';
 import MoodboardScreen from './moodboard';
 import ProfileScreen from './profile';
-import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS } from '../lib/tabEvents';
+import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS, TAB_SCROLL_TO_TOP_HOME } from '../lib/tabEvents';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -397,10 +397,14 @@ function RootLayoutContent() {
           profile={profile}
           onSelectTab={(tabName) => {
             const newIdx = TAB_ORDER.indexOf(tabName);
-            if (newIdx >= 0 && newIdx !== activeTabIndex) {
-              setActiveTabIndex(newIdx);
-              tabTranslateX.value = 0;
-              activeTabSharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
+            if (newIdx >= 0) {
+              if (newIdx !== activeTabIndex) {
+                setActiveTabIndex(newIdx);
+                tabTranslateX.value = 0;
+                activeTabSharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
+              } else if (tabName === 'index') {
+                tabEvents.emit(TAB_SCROLL_TO_TOP_HOME);
+              }
             }
           }}
         />

@@ -58,7 +58,7 @@ import AllStoriesView from '../components/home/AllStoriesView';
 import GalleryView from '../components/mycircle/GalleryView';
 import { formatUniversalGalleryImages } from '@/utils/masonryHelper';
 import JoinCelebrationModal from '../components/JoinCelebrationModal';
-import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
+import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_SCROLL_TO_TOP_HOME, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -126,12 +126,17 @@ export default function HomeScreen() {
     return () => subscription.remove();
   }, [selectedStory, selectedArticle, playingFilmId, selectedMoodboardId, isMoodboardsOpen, isInspirationsOpen, isAllStoriesOpen, isJoinCelebrationModalOpen]);
 
-  // Tab bar event listeners — My Moodboard + Inspirations tabs
+  const mainScrollRef = React.useRef<ScrollView>(null);
+
+  // Tab bar event listeners — My Moodboard + Inspirations + Scroll to Top
   useEffect(() => {
     const offMoodboards   = tabEvents.on(TAB_OPEN_MOODBOARDS,   () => setIsMoodboardsOpen(true));
     // Inspirations tab → opens dedicated Inspirations view
     const offInspirations = tabEvents.on(TAB_OPEN_INSPIRATIONS, () => setIsInspirationsOpen(true));
-    return () => { offMoodboards(); offInspirations(); };
+    const offScrollTop    = tabEvents.on(TAB_SCROLL_TO_TOP_HOME, () => {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
+    return () => { offMoodboards(); offInspirations(); offScrollTop(); };
   }, []);
 
   // Tier 2 Editorial Rotation History: tracks lastShownAt per hero type
@@ -812,6 +817,7 @@ export default function HomeScreen() {
       <StatusBar barStyle="dark-content" />
       
       <ScrollView
+        ref={mainScrollRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
