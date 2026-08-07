@@ -338,7 +338,7 @@ export default function JoinCelebrationModal({
             </View>
           ) : (
             /* Main Form View */
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formBody}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formBody} keyboardShouldPersistTaps="handled">
               <Text style={styles.inputLabel}>
                 Scan the event QR code or enter your 6-character invite code / event link.
               </Text>
