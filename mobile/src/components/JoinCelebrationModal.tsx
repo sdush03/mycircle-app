@@ -182,6 +182,7 @@ export default function JoinCelebrationModal({
   };
 
   const parseAndJoinUrl = async (inputStr: string) => {
+    Keyboard.dismiss();
     const trimmed = inputStr.trim();
     if (!trimmed) return;
 
