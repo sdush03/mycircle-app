@@ -18,6 +18,7 @@ import {
   Image as RNImage,
 } from 'react-native';
 import { Image } from 'expo-image';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MasonryFlashList } from '../common/MasonryFlashList';
 import { getPhotoAspect } from '../../utils/photoDimensionCache';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -128,6 +129,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const [isScrolledPastHero, setIsScrolledPastHero] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ current: number; total: number } | null>(null);
+  const [lockedPhotoIds, setLockedPhotoIds] = useState<Set<number>>(new Set());
 
 
 
@@ -721,8 +723,102 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     return false;
   }, [profile, userEvents, eventSlug, eventGuest, eventDetails]);
+
   const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
   const [isTabLoading, setIsTabLoading] = useState(false);
+
+  // Load locked photo IDs: Populate from API-returned photos (isPrivate flag) when photos load,
+  // and use AsyncStorage as a local cache for optimistic UI before the first API round-trip.
+  useEffect(() => {
+    const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+    AsyncStorage.getItem(storageKey).then((saved) => {
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setLockedPhotoIds(new Set(parsed.map((id: any) => Number(id))));
+          }
+        } catch (_e) {}
+      }
+    }).catch(() => {});
+  }, [eventSlug]);
+
+  // Sync isPrivate flags returned by the API into lockedPhotoIds state
+  useEffect(() => {
+    const privateFromApi = [...allPhotos, ...Object.values(tabCache).flat()]
+      .filter((p: any) => p.isPrivate === true)
+      .map((p: any) => Number(p.id));
+
+    if (privateFromApi.length === 0) return;
+
+    setLockedPhotoIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      privateFromApi.forEach((id) => {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+      AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next))).catch(() => {});
+      return next;
+    });
+  }, [allPhotos, eventSlug]);
+
+  // Toggle Lock/Unlock handler for Bride & Groom - calls real backend API
+  const handleToggleLockPhoto = useCallback(async (photo: any) => {
+    if (!photo || typeof photo.id === 'undefined') return;
+    const photoId = Number(photo.id);
+    const isCurrentlyLocked = lockedPhotoIds.has(photoId) || !!(photo.isLocked || photo.isPrivate);
+    const newPrivateState = !isCurrentlyLocked;
+
+    // Optimistic update immediately for instant UI feedback
+    setLockedPhotoIds((prev) => {
+      const next = new Set(prev);
+      if (newPrivateState) {
+        next.add(photoId);
+      } else {
+        next.delete(photoId);
+      }
+      const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+      AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next))).catch(() => {});
+      return next;
+    });
+
+    photo.isLocked = newPrivateState;
+    photo.isPrivate = newPrivateState;
+    setTabCache({});
+
+    // Sync to backend
+    try {
+      await guestApi.patch(
+        `/api/gallery/public/events/${eventSlug}/photos/${photoId}/privacy`,
+        { isPrivate: newPrivateState },
+        { headers: eventHeadersRef.current }
+      );
+    } catch (err: any) {
+      // Rollback optimistic update on API failure
+      setLockedPhotoIds((prev) => {
+        const next = new Set(prev);
+        if (newPrivateState) {
+          next.delete(photoId);
+        } else {
+          next.add(photoId);
+        }
+        const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+        AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next))).catch(() => {});
+        return next;
+      });
+      photo.isLocked = isCurrentlyLocked;
+      photo.isPrivate = isCurrentlyLocked;
+      setTabCache({});
+      console.warn('[LOCK PHOTO ⚠️] API sync failed, rolled back:', err?.message);
+    }
+  }, [eventSlug, lockedPhotoIds]);
+
+  // tabCache and isTabLoading are declared above the sync effects that reference them
 
   const favoritesCount = React.useMemo(() => {
     if (tabCache['MY FAVOURITES']) {
@@ -829,7 +925,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     });
 
     ceremonyTabsSet.forEach((tab) => {
-      if (tab !== 'ALL' && tab !== 'MY PHOTOS' && tab !== 'MY FAVOURITES') {
+      if (tab !== 'ALL' && tab !== 'MY PHOTOS' && tab !== 'MY FAVOURITES' && !tab.includes('LOCKED')) {
         if (hasFullAccess || tab === 'HIGHLIGHTS') {
           if (!list.includes(tab)) {
             list.push(tab);
@@ -838,8 +934,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
+    // 5. LOCKED Tab (Only visible to Bride & Groom)
+    if (isBrideOrGroom) {
+      list.push('LOCKED 🔐');
+    }
+
     return list;
-  }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos]);
+  }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos, isBrideOrGroom]);
 
   const scrollToY = useCallback((targetY: number) => {
     try {
@@ -1036,34 +1137,59 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const activeList = React.useMemo(() => {
     const currentUpper = activeTab.toUpperCase();
-    if (currentUpper === 'MY PHOTOS') {
-      return photos;
-    }
-    if (currentUpper === 'MY FAVOURITES') {
-      if (tabCache['MY FAVOURITES']) {
-        return tabCache['MY FAVOURITES'];
-      }
+    const isLockedTab = currentUpper.includes('LOCKED');
+
+    const isPhotoLocked = (p: any) => {
+      const pId = Number(p?.id);
+      return lockedPhotoIds.has(pId) || !!(p?.isLocked || p?.isPrivate);
+    };
+
+    if (isLockedTab) {
       const combined: Photo[] = [];
       const seenIds = new Set<number>();
       [...allPhotos, ...photos, ...Object.values(tabCache).flat()].forEach((p) => {
-        if (p.isLiked && !seenIds.has(p.id)) {
+        if (isPhotoLocked(p) && !seenIds.has(p.id)) {
           seenIds.add(p.id);
-          combined.push(p);
+          combined.push({
+            ...p,
+            isLocked: true,
+            isPrivate: true,
+          });
         }
       });
       return combined;
     }
-    if (currentUpper === 'ALL') {
-      return allPhotos;
+
+    let sourceList: Photo[] = [];
+    if (currentUpper === 'MY PHOTOS') {
+      sourceList = photos;
+    } else if (currentUpper === 'MY FAVOURITES') {
+      if (tabCache['MY FAVOURITES']) {
+        sourceList = tabCache['MY FAVOURITES'];
+      } else {
+        const combined: Photo[] = [];
+        const seenIds = new Set<number>();
+        [...allPhotos, ...photos, ...Object.values(tabCache).flat()].forEach((p) => {
+          if (p.isLiked && !seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            combined.push(p);
+          }
+        });
+        sourceList = combined;
+      }
+    } else if (currentUpper === 'ALL') {
+      sourceList = allPhotos;
+    } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
+      sourceList = tabCache[currentUpper];
+    } else {
+      sourceList = allPhotos.filter((p: any) => {
+        if (!p.tabName) return false;
+        return p.tabName.trim().toUpperCase() === currentUpper;
+      });
     }
-    if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
-      return tabCache[currentUpper];
-    }
-    return allPhotos.filter((p: any) => {
-      if (!p.tabName) return false;
-      return p.tabName.trim().toUpperCase() === currentUpper;
-    });
-  }, [activeTab, photos, allPhotos, tabCache]);
+
+    return sourceList.filter((p) => !isPhotoLocked(p));
+  }, [activeTab, photos, allPhotos, tabCache, lockedPhotoIds]);
 
   activeListRef.current = activeList;
 
@@ -1403,15 +1529,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const renderStickyHeader = useCallback(() => {
     let activeTabCount: number | null = null;
-    if (activeTab === 'MY PHOTOS') {
-      activeTabCount = photos.length;
+    if (activeTab.toUpperCase().includes('LOCKED')) {
+      activeTabCount = activeList.length;
+    } else if (activeTab === 'MY PHOTOS') {
+      activeTabCount = activeList.length;
     } else if (activeTab === 'MY FAVOURITES') {
-      activeTabCount = favoritesCount;
+      activeTabCount = activeList.length;
     } else if (activeTab === 'ALL') {
-      activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+      activeTabCount = activeList.length;
     } else {
-      const normKey = activeTab.trim().toUpperCase();
-      activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+      activeTabCount = activeList.length;
     }
 
     return (
@@ -1677,7 +1804,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         {/* ── 4. Universal Editorial Lightbox Component ── */}
         {activeImageIndex !== null && (() => {
           let activeTabTotalCount: number | undefined = undefined;
-          if (activeTab === 'MY PHOTOS') {
+          if (activeTab.toUpperCase().includes('LOCKED')) {
+            activeTabTotalCount = activeList.length;
+          } else if (activeTab === 'MY PHOTOS') {
             activeTabTotalCount = photos.length;
           } else if (activeTab === 'MY FAVOURITES') {
             activeTabTotalCount = favoritesCount;
@@ -1704,6 +1833,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               totalCount={activeTabTotalCount}
               enableDelete={isBrideOrGroom}
               onDeletePhoto={handleDeletePhoto}
+              enableLock={isBrideOrGroom}
+              onToggleLockPhoto={handleToggleLockPhoto}
               onClose={() => {
                 setActiveImageIndex(null);
                 setSelectedBounds(null);

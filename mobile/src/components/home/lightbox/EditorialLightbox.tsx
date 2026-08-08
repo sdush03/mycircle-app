@@ -68,6 +68,8 @@ export interface EditorialLightboxProps {
   totalCount?: number;
   enableDelete?: boolean;
   onDeletePhoto?: (item: any) => Promise<boolean | void>;
+  enableLock?: boolean;
+  onToggleLockPhoto?: (item: any) => Promise<boolean | void>;
 }
 
 export function EditorialLightbox({
@@ -86,6 +88,8 @@ export function EditorialLightbox({
   totalCount,
   enableDelete = false,
   onDeletePhoto,
+  enableLock = false,
+  onToggleLockPhoto,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -398,6 +402,21 @@ export function EditorialLightbox({
         },
       ]
     );
+  };
+
+  const handleLockPress = async () => {
+    const currentItem = images[activeIdx];
+    if (!currentItem || !onToggleLockPhoto) return;
+    try {
+      try {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch {}
+      const isCurrentlyLocked = !!(currentItem.isLocked || currentItem.isPrivate);
+      await onToggleLockPhoto(currentItem);
+      showToast(isCurrentlyLocked ? 'Photo restored to Gallery 🔓' : 'Moved to Locked Vault 🔐');
+    } catch (_err) {
+      showToast('Could not update photo privacy');
+    }
   };
 
   const handleShare = async () => {
@@ -860,6 +879,23 @@ export function EditorialLightbox({
                     >
                       <Feather name="share-2" size={18} color="#ffffff" />
                     </Pressable>
+
+                    {enableLock && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.lightboxIconOnlyBtn,
+                          pressed && { opacity: 0.6 },
+                        ]}
+                        onPress={handleLockPress}
+                        hitSlop={14}
+                      >
+                        <Ionicons
+                          name={images[activeIdx]?.isLocked || images[activeIdx]?.isPrivate ? "lock-closed" : "lock-open-outline"}
+                          size={19}
+                          color={images[activeIdx]?.isLocked || images[activeIdx]?.isPrivate ? "#FFD700" : "#ffffff"}
+                        />
+                      </Pressable>
+                    )}
 
                     {enableDelete && (
                       <Pressable

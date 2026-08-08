@@ -153,29 +153,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   leaveEvent: async (eventSlugOrId: string | number) => {
+    console.log('[LEAVE EVENT 🚪] Triggered for:', eventSlugOrId);
+
     const currentEvents = get().userEvents;
     const updatedEvents = currentEvents.filter(
       (ev) => String(ev.slug || ev.id) !== String(eventSlugOrId)
     );
     set({ userEvents: updatedEvents });
+    console.log('[LEAVE EVENT 🚪] Removed from local state. Events remaining:', updatedEvents.length);
 
     const profile = get().profile;
+    console.log('[LEAVE EVENT 🚪] Profile:', {
+      email: profile?.email,
+      phoneNumber: profile?.phoneNumber,
+      id: profile?.id,
+    });
 
     try {
       await AsyncStorage.setItem('@mycircle_joined_events_list', JSON.stringify(updatedEvents));
       await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
-    } catch (_e) {}
+      console.log('[LEAVE EVENT 🚪] AsyncStorage updated successfully');
+    } catch (storageErr: any) {
+      console.warn('[LEAVE EVENT ⚠️] AsyncStorage write failed:', storageErr?.message);
+    }
 
     // Notify backend server of WhatsApp-style status: 'LEFT' participant state
     try {
       const apiService = require('../services/api').default;
-      await apiService.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, {
+      const payload = {
         status: 'LEFT',
         email: profile?.email || undefined,
         phoneNumber: profile?.phoneNumber || undefined,
-      });
-    } catch (_e) {}
+      };
+      console.log('[LEAVE EVENT 🚪] Calling API:', `/api/gallery/public/events/${eventSlugOrId}/leave`);
+      console.log('[LEAVE EVENT 🚪] Payload:', JSON.stringify(payload));
+      const response = await apiService.post(`/api/gallery/public/events/${eventSlugOrId}/leave`, payload);
+      console.log('[LEAVE EVENT ✅] Server response:', JSON.stringify(response?.data));
+    } catch (apiErr: any) {
+      console.error('[LEAVE EVENT ❌] API call failed:', apiErr?.message);
+      console.error('[LEAVE EVENT ❌] Response data:', JSON.stringify(apiErr?.response?.data));
+      console.error('[LEAVE EVENT ❌] Status code:', apiErr?.response?.status);
+    }
   },
+
 
   loadStoredAuth: async () => {
     try {
