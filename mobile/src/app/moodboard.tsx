@@ -16,7 +16,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { savesService, SavedPhotoItem } from '../services/savesService';
 import { useAuthStore } from '../store/authStore';
-import { tabEvents, EVENT_SAVES_UPDATED } from '../lib/tabEvents';
+import { tabEvents, EVENT_SAVES_UPDATED, TAB_SCROLL_TO_TOP_MOODBOARD } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
 import { getPhotoAspect } from '../utils/photoDimensionCache';
@@ -58,8 +58,12 @@ export default function MoodboardScreen() {
   useEffect(() => {
     fetchSaves();
     const unsub = tabEvents.on(EVENT_SAVES_UPDATED, fetchSaves);
+    const unsubScroll = tabEvents.on(TAB_SCROLL_TO_TOP_MOODBOARD, () => {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
     return () => {
       unsub();
+      unsubScroll();
     };
   }, [fetchSaves]);
 

@@ -22,7 +22,16 @@ import HomeScreen from './index';
 import InspirationsScreen from './inspirations';
 import MoodboardScreen from './moodboard';
 import ProfileScreen from './profile';
-import { tabEvents, TAB_OPEN_MOODBOARDS, TAB_OPEN_INSPIRATIONS, TAB_OPEN_PROFILE_SETTINGS, TAB_SCROLL_TO_TOP_HOME } from '../lib/tabEvents';
+import {
+  tabEvents,
+  TAB_OPEN_MOODBOARDS,
+  TAB_OPEN_INSPIRATIONS,
+  TAB_OPEN_PROFILE_SETTINGS,
+  TAB_SCROLL_TO_TOP_HOME,
+  TAB_SCROLL_TO_TOP_MYCIRCLE,
+  TAB_SCROLL_TO_TOP_MOODBOARD,
+  TAB_SCROLL_TO_TOP_PROFILE,
+} from '../lib/tabEvents';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -402,8 +411,11 @@ function RootLayoutContent() {
                 setActiveTabIndex(newIdx);
                 tabTranslateX.value = 0;
                 activeTabSharedIndex.value = withTiming(newIdx, { duration: 200, easing: Easing.out(Easing.quad) });
-              } else if (tabName === 'index') {
-                tabEvents.emit(TAB_SCROLL_TO_TOP_HOME);
+              } else {
+                if (tabName === 'index') tabEvents.emit(TAB_SCROLL_TO_TOP_HOME);
+                else if (tabName === 'mycircle') tabEvents.emit(TAB_SCROLL_TO_TOP_MYCIRCLE);
+                else if (tabName === 'moodboard') tabEvents.emit(TAB_SCROLL_TO_TOP_MOODBOARD);
+                else if (tabName === 'profile') tabEvents.emit(TAB_SCROLL_TO_TOP_PROFILE);
               }
             }
           }}

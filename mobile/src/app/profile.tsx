@@ -19,7 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { useAuthStore } from '../store/authStore';
 import { savesService, SavedPhotoItem } from '../services/savesService';
-import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION } from '../lib/tabEvents';
+import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION, TAB_SCROLL_TO_TOP_PROFILE } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import CameraViewScreen from '../components/mycircle/CameraView';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -364,10 +364,14 @@ export default function ProfileScreen() {
       fetchMyCelebrationPhotos();
       fetchSavedPhotos();
     });
+    const unsubScroll = tabEvents.on(TAB_SCROLL_TO_TOP_PROFILE, () => {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
 
     return () => {
       unsubSaves();
       unsubJoined();
+      unsubScroll();
     };
   }, [fetchMyCelebrationPhotos, fetchSavedPhotos]);
 

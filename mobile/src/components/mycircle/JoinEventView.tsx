@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -21,7 +21,7 @@ import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import * as Haptics from 'expo-haptics';
 import api from '../../services/api';
 import { useFocusEffect } from 'expo-router';
-import { tabEvents, EVENT_JOINED_CELEBRATION } from '../../lib/tabEvents';
+import { tabEvents, EVENT_JOINED_CELEBRATION, TAB_SCROLL_TO_TOP_MYCIRCLE } from '../../lib/tabEvents';
 import JoinCelebrationModal from '../JoinCelebrationModal';
 import {
   FONT_FUTURA,
@@ -59,14 +59,20 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
   const leaveEvent = useAuthStore((state) => state.leaveEvent);
   const profile = useAuthStore((state) => state.profile);
 
+  const mainScrollRef = useRef<ScrollView>(null);
+
   // Load user's joined events from backend API + fallback to SecureStore
   useEffect(() => {
     fetchEvents();
     const unsub = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
       fetchEvents();
     });
+    const unsubScroll = tabEvents.on(TAB_SCROLL_TO_TOP_MYCIRCLE, () => {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
     return () => {
       unsub();
+      unsubScroll();
     };
   }, []);
 
@@ -219,6 +225,7 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
         </View>
       ) : (
         <ScrollView
+          ref={mainScrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.gridContainer}
           onScroll={handleScroll}
