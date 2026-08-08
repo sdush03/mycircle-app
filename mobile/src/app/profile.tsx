@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Image as RNImage,
   Pressable,
+  TouchableOpacity,
   Dimensions,
   Modal,
   ActivityIndicator,
@@ -367,11 +368,16 @@ export default function ProfileScreen() {
     const unsubScroll = tabEvents.on(TAB_SCROLL_TO_TOP_PROFILE, () => {
       mainScrollRef.current?.scrollTo({ y: 0, animated: true });
     });
+    const unsubSettings = tabEvents.on(TAB_OPEN_PROFILE_SETTINGS, () => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      setShowSettingsModal(true);
+    });
 
     return () => {
       unsubSaves();
       unsubJoined();
       unsubScroll();
+      unsubSettings();
     };
   }, [fetchMyCelebrationPhotos, fetchSavedPhotos]);
 
@@ -759,9 +765,11 @@ export default function ProfileScreen() {
         visible={showSettingsModal}
         transparent
         animationType="fade"
+        statusBarTranslucent={true}
         onRequestClose={() => setShowSettingsModal(false)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setShowSettingsModal(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowSettingsModal(false)} />
           <View style={styles.actionSheetContainer}>
             <View style={styles.sheetHandle} />
 
@@ -772,17 +780,17 @@ export default function ProfileScreen() {
 
             <View style={styles.sheetDivider} />
 
-            <Pressable style={styles.sheetOptionBtn} onPress={handleLogout}>
+            <TouchableOpacity style={styles.sheetOptionBtn} activeOpacity={0.7} onPress={handleLogout}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.logoutBtnText}>Log Out</Text>
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable style={styles.sheetOptionBtn} onPress={() => setShowSettingsModal(false)}>
+            <TouchableOpacity style={styles.sheetOptionBtn} activeOpacity={0.7} onPress={() => setShowSettingsModal(false)}>
               <Ionicons name="close-circle-outline" size={20} color="#666666" />
               <Text style={styles.cancelBtnText}>Cancel</Text>
-            </Pressable>
+            </TouchableOpacity>
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {/* ── UPDATE SELFIE CAMERA MODAL ── */}

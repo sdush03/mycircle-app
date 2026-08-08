@@ -358,8 +358,11 @@ function RootLayoutContent() {
               {activeTabIndex === TAB_ORDER.indexOf('profile') && (
                 <Pressable
                   style={styles.headerSettingsBtn}
-                  onPress={() => tabEvents.emit(TAB_OPEN_PROFILE_SETTINGS)}
-                  hitSlop={12}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    tabEvents.emit(TAB_OPEN_PROFILE_SETTINGS);
+                  }}
+                  hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 >
                   <Ionicons name="menu-outline" size={26} color="#111111" />
                 </Pressable>
@@ -629,6 +632,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
     position: 'relative',
+    zIndex: 999,
   },
   headerLogo: {
     height: 38,
@@ -640,6 +644,7 @@ const styles = StyleSheet.create({
     right: 18,
     bottom: 12,
     padding: 4,
+    zIndex: 1000,
   },
   tabAvatarImage: {
     width: 22,
