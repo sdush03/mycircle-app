@@ -57,11 +57,11 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.title}>REGISTER YOUR FACE</Text>
           <Text style={styles.subtitle}>
-            We need camera access to take a live selfie for AI face matching.
+            Camera access is required to take a live selfie for AI face matching. Your selfie is processed on our secure in-house servers and stored in Cloudflare R2 solely to match your event photos.
           </Text>
           <View style={styles.divider} />
           <Pressable style={styles.button} onPress={requestPermission}>
-            <Text style={styles.buttonText}>Grant Permission</Text>
+            <Text style={styles.buttonText}>Grant Permission & Consent</Text>
           </Pressable>
         </Pressable>
       </Pressable>
@@ -75,7 +75,7 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.title}>REGISTER YOUR FACE</Text>
           <Text style={styles.subtitle}>
-            Misty Visuals uses AI face matching to instantly find your photos in the wedding gallery.
+            Misty Visuals uses in-house AI face matching to instantly find your photos in the event gallery. By proceeding, you consent to secure selfie processing on our servers.
           </Text>
 
           <View style={styles.divider} />
