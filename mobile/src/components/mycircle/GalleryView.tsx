@@ -1532,13 +1532,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (activeTab.toUpperCase().includes('LOCKED')) {
       activeTabCount = activeList.length;
     } else if (activeTab === 'MY PHOTOS') {
-      activeTabCount = activeList.length;
+      activeTabCount = photos.length;
     } else if (activeTab === 'MY FAVOURITES') {
-      activeTabCount = activeList.length;
+      activeTabCount = favoritesCount;
     } else if (activeTab === 'ALL') {
-      activeTabCount = activeList.length;
+      activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
     } else {
-      activeTabCount = activeList.length;
+      const normKey = activeTab.trim().toUpperCase();
+      activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
     }
 
     return (
