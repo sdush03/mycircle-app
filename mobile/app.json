@@ -43,7 +43,7 @@
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
-      "versionCode": 8,
+      "versionCode": 7,
       "googleServicesFile": "./google-services.json",
       "splash": {
         "image": "./assets/images/splash-android-icon.png",
