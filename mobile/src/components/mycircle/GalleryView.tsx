@@ -1760,16 +1760,24 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             >
               {availableTabs.map((tabName, tabIdx) => {
                 const isActive = activeTab.toUpperCase() === tabName.toUpperCase();
+                const isLockedTab = tabName.toUpperCase().includes('LOCKED');
                 let tabCount: number | null = null;
-                if (tabName === 'MY PHOTOS') {
-                  tabCount = photos.length;
+
+                if (isLockedTab) {
+                  // LOCKED tab: count = number of locked photo IDs we know about
+                  tabCount = lockedPhotoIds.size;
+                } else if (tabName === 'MY PHOTOS') {
+                  tabCount = Math.max(0, photos.length - photos.filter((p: any) => lockedPhotoIds.has(Number(p.id))).length);
                 } else if (tabName === 'MY FAVOURITES') {
-                  tabCount = favoritesCount;
+                  tabCount = Math.max(0, favoritesCount - [...allPhotos, ...photos].filter((p: any) => p.isLiked && lockedPhotoIds.has(Number(p.id))).length);
                 } else if (tabName === 'ALL') {
-                  tabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+                  const rawAll = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+                  tabCount = Math.max(0, rawAll - lockedPhotoIds.size);
                 } else {
                   const normKey = tabName.trim().toUpperCase();
-                  tabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+                  const rawCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
+                  const lockedInTab = allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey && lockedPhotoIds.has(Number(p.id))).length;
+                  tabCount = Math.max(0, rawCount - lockedInTab);
                 }
 
                 return (
