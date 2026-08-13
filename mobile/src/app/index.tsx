@@ -441,33 +441,34 @@ export default function HomeScreen() {
     );
   };
 
-  // Lifecycle Stage Resolver:
-  // 1. Primary Source of Truth: `ev.stage`
-  // 2. Legacy Migration Fallback: executed ONLY if `ev.stage` is null/undefined
+  // Lifecycle Stage Resolver — canonical order: LIVE > UPCOMING > CURATING > READY > HIGHLIGHTS
+  // 1. Primary Source of Truth: `ev.stage` from the backend API
+  // 2. Legacy Date/Count Fallback: executed ONLY if `ev.stage` is null/undefined
   const resolveCanonicalStage = (ev: any, today: Date): 'UPCOMING' | 'LIVE' | 'READY' | 'HIGHLIGHTS' | 'CURATING' => {
-    const hasHighlightsPhotos = (ev.highlightsPhotoCount || 0) > 0;
-
-    // 1. Primary Source of Truth (HIGHLIGHTS requires at least 1 highlight photo)
-    if ((ev.stage === 'HIGHLIGHTS' || ev.highlightsReady || ev.isHighlights) && hasHighlightsPhotos) {
-      return 'HIGHLIGHTS';
-    }
-    if (ev.stage && ev.stage !== 'HIGHLIGHTS') {
-      return ev.stage;
-    }
-
     const eventDate = new Date(ev.date);
     const isToday = isSameDay(eventDate, today);
+    const hasHighlightsPhotos = (ev.highlightsPhotoCount || 0) > 0;
+    const photosUploaded = ev.photosUploaded || 0;
 
-    if (eventDate > today && !isToday) {
-      return 'UPCOMING';
-    }
-    if (isToday) {
-      return 'LIVE';
-    }
-    if (eventDate < today && !isToday && (ev.matchedCount || 0) === 0) {
-      return 'CURATING';
+    // 1. Primary Source of Truth: trust ev.stage from backend
+    if (ev.stage) {
+      // HIGHLIGHTS requires at least 1 published highlight photo; degrade to READY if none yet
+      if (ev.stage === 'HIGHLIGHTS') {
+        return hasHighlightsPhotos ? 'HIGHLIGHTS' : 'READY';
+      }
+      return ev.stage; // LIVE | UPCOMING | CURATING | READY — trusted as-is
     }
 
+    // Legacy fallback — only reached when ev.stage is null/undefined
+    // Order strictly follows lifecycle: LIVE > UPCOMING > CURATING > READY > HIGHLIGHTS
+    if (isToday) return 'LIVE';
+    if (eventDate > today) return 'UPCOMING';
+    // Legacy boolean flags (old API shape — evaluated after time-sensitive stages)
+    if (ev.highlightsReady || ev.isHighlights) {
+      return hasHighlightsPhotos ? 'HIGHLIGHTS' : 'READY';
+    }
+    if (photosUploaded === 0) return 'CURATING';
+    if (hasHighlightsPhotos) return 'HIGHLIGHTS';
     return 'READY';
   };
 
@@ -478,41 +479,30 @@ export default function HomeScreen() {
     return Math.round((d1.getTime() - d2.getTime()) / 86400000);
   };
 
-  // Helper for My Circle card status subtext (Editorial Lifecycle Presentation)
+  // Helper for My Circle card status subtext — delegates to resolveCanonicalStage
+  // Lifecycle order: LIVE > UPCOMING > CURATING > READY > HIGHLIGHTS
   const getMyCircleStatusCopy = (ev: any, today: Date): string => {
+    const stage = resolveCanonicalStage(ev, today);
     const eventDate = new Date(ev.date);
-    const isToday = isSameDay(eventDate, today);
-    const hasHighlightsPhotos = (ev.highlightsPhotoCount || 0) > 0;
 
-    // 1. HIGHLIGHTS (Requires at least 1 published highlight photo)
-    if ((ev.stage === 'HIGHLIGHTS' || ev.highlightsReady || ev.isHighlights) && hasHighlightsPhotos) {
-      return 'Highlights are ready to relive';
-    }
-
-    // 2. LIVE / TODAY (Takes precedence if event is today)
-    if (ev.stage === 'LIVE' || isToday) {
-      return 'Celebration is happening today';
-    }
-
-    // 3. UPCOMING
-    if (ev.stage === 'UPCOMING' || eventDate > today) {
-      const days = getCalendarDaysDifference(eventDate, today);
-      if (days <= 0) {
+    switch (stage) {
+      case 'LIVE':
         return 'Celebration is happening today';
+      case 'UPCOMING': {
+        const days = getCalendarDaysDifference(eventDate, today);
+        if (days <= 0) return 'Celebration is happening today';
+        if (days === 1) return 'Wedding tomorrow';
+        return `Wedding in ${days} days`;
       }
-      if (days === 1) {
-        return 'Wedding tomorrow';
-      }
-      return `Wedding in ${days} days`;
+      case 'CURATING':
+        return 'Currently curating your memories';
+      case 'READY':
+        return 'Your gallery is ready to explore';
+      case 'HIGHLIGHTS':
+        return 'Highlights are ready to relive';
+      default:
+        return 'Your gallery is ready to explore';
     }
-
-    // 4. CURATING (Begins AFTER wedding day, continues until first gallery is available)
-    if (ev.stage === 'CURATING' || (eventDate < today && !isToday && (ev.matchedCount || 0) === 0 && ev.stage !== 'READY')) {
-      return 'Currently curating your memories';
-    }
-
-    // 5. READY
-    return 'Your gallery is ready to explore';
   };
 
   // ─── Scalable Two-Tier Hero Resolver Engine ────────────────────────────────

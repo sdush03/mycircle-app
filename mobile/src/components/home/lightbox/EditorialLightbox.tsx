@@ -396,7 +396,8 @@ export function EditorialLightbox({
                 handleClose();
               }
             } catch (err: any) {
-              Alert.alert('Delete Failed', err?.message || 'Could not delete photo.');
+              console.error('[DELETE DEBUG ❌] Delete photo failed:', err);
+              Alert.alert('Delete Failed', 'Could not delete this photo. Please try again.');
             }
           },
         },
@@ -531,7 +532,7 @@ export function EditorialLightbox({
           }
         } catch (dlErr: any) {
           console.error('[DOWNLOAD DEBUG ❌ STEP 2 DOWNLOAD CRASH]:', dlErr);
-          Alert.alert('Download File Error', `FileSystem.downloadAsync error: ${dlErr?.message || String(dlErr)}`);
+          Alert.alert('Download Error', 'We couldn\'t download this photo. Please try again.');
         }
 
         if (!downloadedFileUri) {
@@ -595,7 +596,7 @@ export function EditorialLightbox({
       }
     } catch (err: any) {
       console.error('[DOWNLOAD DEBUG ❌ UNHANDLED TOP-LEVEL CRASH]:', err);
-      Alert.alert('Download Error', `Unhandled error in handleDownload: ${err?.message || String(err)}`);
+      Alert.alert('Download Error', 'Something went wrong while downloading. Please try again.');
       showToast('Save failed');
     } finally {
       setIsDownloading(false);

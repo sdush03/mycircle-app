@@ -267,11 +267,11 @@ function evalFaceMatches(params: HeroResolverParams): HeroCard | null {
 }
 
 function evalGalleryReady(params: HeroResolverParams): HeroCard | null {
-  const { events: evts, today: now, galleryReadyHeroData: grData } = params;
+  const { events: evts, galleryReadyHeroData: grData } = params;
   const nowMs = Date.now();
   for (const ev of evts) {
-    const photoCount = ev.totalPhotoCount || ev.matchedCount || 0;
-    if (ev.stage === 'READY' || (photoCount > 0 && ev.stage !== 'HIGHLIGHTS')) {
+    if (ev.stage === 'READY') {
+      const photoCount = ev.totalPhotoCount || ev.matchedCount || 0;
       const entry = grData[ev.slug];
       if (!entry) return null;
       const hasNewPhotos = photoCount > entry.lastSeenCount;

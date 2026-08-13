@@ -150,26 +150,34 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
     }
   };
 
-  // Helper for My Circle card status subtext (Editorial Lifecycle Presentation)
+  // Helper for My Circle card status subtext — lifecycle order: LIVE > UPCOMING > CURATING > READY > HIGHLIGHTS
   const getMyCircleStatusCopy = (ev: any): string => {
     const eventDate = new Date(ev.date);
     const today = new Date();
     const isToday = eventDate.toDateString() === today.toDateString();
     const hasHighlightsPhotos = (ev.highlightsPhotoCount || 0) > 0;
+    const photosUploaded = ev.photosUploaded || 0;
 
-    if ((ev.stage === 'HIGHLIGHTS' || ev.highlightsReady || ev.isHighlights) && hasHighlightsPhotos) {
-      return 'Highlights ready';
-    }
-    if (ev.stage === 'LIVE' || isToday) {
-      return 'Celebration today';
-    }
-    if (ev.stage === 'UPCOMING' || eventDate > today) {
-      return 'Upcoming celebration';
-    }
-    if (ev.stage === 'CURATING') {
-      return 'Curating memories';
+    // Derive canonical stage — trust backend ev.stage; fall back to date/count logic if absent
+    // Order strictly follows lifecycle: LIVE > UPCOMING > CURATING > READY > HIGHLIGHTS
+    let stage = ev.stage as string | undefined;
+    if (!stage) {
+      if (isToday) stage = 'LIVE';
+      else if (eventDate > today) stage = 'UPCOMING';
+      // Legacy boolean flags (old API shape — evaluated after time-sensitive stages)
+      else if (ev.highlightsReady || ev.isHighlights) stage = hasHighlightsPhotos ? 'HIGHLIGHTS' : 'READY';
+      else if (photosUploaded === 0) stage = 'CURATING';
+      else if (hasHighlightsPhotos) stage = 'HIGHLIGHTS';
+      else stage = 'READY';
+    } else if (stage === 'HIGHLIGHTS' && !hasHighlightsPhotos) {
+      // HIGHLIGHTS requires at least 1 published highlight photo; degrade to READY if none yet
+      stage = 'READY';
     }
 
+    if (stage === 'LIVE' || isToday) return 'Celebration today';
+    if (stage === 'UPCOMING') return 'Upcoming celebration';
+    if (stage === 'CURATING') return 'Curating memories';
+    if (stage === 'HIGHLIGHTS') return 'Highlights ready';
     return 'Gallery ready';
   };
 

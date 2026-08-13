@@ -191,8 +191,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.log('[LEAVE EVENT ✅] Server response:', JSON.stringify(response?.data));
     } catch (apiErr: any) {
       console.error('[LEAVE EVENT ❌] API call failed:', apiErr?.message);
-      console.error('[LEAVE EVENT ❌] Response data:', JSON.stringify(apiErr?.response?.data));
-      console.error('[LEAVE EVENT ❌] Status code:', apiErr?.response?.status);
+      console.error('[LEAVE EVENT ❌] Status:', apiErr?.response?.status, '| Endpoint: /events/' + eventSlugOrId + '/leave');
+
     }
   },
 
