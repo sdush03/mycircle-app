@@ -1,7 +1,7 @@
 {
   "name": "mobile",
   "main": "expo-router/entry",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "dependencies": {
     "@expo-google-fonts/jost": "^0.4.2",
     "@expo-google-fonts/montserrat": "^0.4.2",
