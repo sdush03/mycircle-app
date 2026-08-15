@@ -398,6 +398,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
       {step === 'phone' && (
         <PhoneView
           onSuccess={handlePhoneComplete}
+          onSkip={handlePhoneComplete}
           onCancel={async () => {
             await useAuthStore.getState().logout();
             setStep('login');

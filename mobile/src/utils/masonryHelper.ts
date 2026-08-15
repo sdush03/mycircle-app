@@ -1,3 +1,5 @@
+import { getThumbnailUrl, getFullPhotoUrl } from './imageUrl';
+
 export function formatUniversalGalleryImages(
   rawImages: any[],
   fallbackTitle: string = 'GALLERY',
@@ -15,7 +17,7 @@ export function formatUniversalGalleryImages(
       return {
         originalIndex: idx,
         id: `photo-${idx}-${p.slice(-10)}`,
-        uri: p,
+        uri: getThumbnailUrl(p, 400),
         fullUri: p,
         blurUri: null,
         width: null,
@@ -27,32 +29,8 @@ export function formatUniversalGalleryImages(
       };
     }
 
-    const thumbUri =
-      p.file_url_thumb ||
-      p.file_url_mobile ||
-      p.thumbnail_url ||
-      p.thumbnailUrl ||
-      p.mobile_url ||
-      p.thumb_url ||
-      p.preview_url ||
-      p.r2Url ||
-      p.file_url ||
-      p.uri ||
-      p.src ||
-      p.url ||
-      '';
-
-    const fullUri =
-      p.file_url ||
-      p.r2Url ||
-      p.file_url_mobile ||
-      p.file_url_thumb ||
-      p.thumbnail_url ||
-      p.fullUri ||
-      p.uri ||
-      p.src ||
-      p.url ||
-      '';
+    const thumbUri = getThumbnailUrl(p, 400);
+    const fullUri = getFullPhotoUrl(p);
 
     let originalAspect: number | null = null;
     if (p.aspect_ratio || p.aspectRatio) {

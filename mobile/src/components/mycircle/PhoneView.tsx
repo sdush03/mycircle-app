@@ -6,10 +6,11 @@ import api from '../../services/api';
 
 interface PhoneViewProps {
   onSuccess: () => void;
+  onSkip?: () => void;
   onCancel?: () => void;
 }
 
-export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
+export default function PhoneView({ onSuccess, onSkip, onCancel }: PhoneViewProps) {
   const [countryCode, setCountryCode] = useState('+91');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -133,6 +134,27 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
     }
   };
 
+  const handleSkip = async () => {
+    try {
+      setIsSubmitting(true);
+      await updateProfile({ phoneNumber: 'skipped' });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      if (onSkip) {
+        onSkip();
+      } else {
+        onSuccess();
+      }
+    } catch (err) {
+      if (onSkip) {
+        onSkip();
+      } else {
+        onSuccess();
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <Pressable style={styles.overlay} onPress={onCancel}>
       <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
@@ -187,6 +209,19 @@ export default function PhoneView({ onSuccess, onCancel }: PhoneViewProps) {
           ) : (
             <Text style={styles.buttonText}>Continue</Text>
           )}
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.skipBtn,
+            pressed && styles.skipBtnPressed,
+            isSubmitting && styles.skipBtnDisabled,
+          ]}
+          onPress={handleSkip}
+          disabled={isSubmitting}
+          hitSlop={{ top: 10, bottom: 10, left: 15, right: 15 }}
+        >
+          <Text style={styles.skipBtnText}>Skip for now</Text>
         </Pressable>
       </Pressable>
     </Pressable>
@@ -301,6 +336,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 2,
+  },
+  skipBtn: {
+    marginTop: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  skipBtnPressed: {
+    opacity: 0.5,
+  },
+  skipBtnDisabled: {
+    opacity: 0.3,
+  },
+  skipBtnText: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.45)',
+    fontWeight: '400',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
   },
   backBtn: {
     marginTop: 20,

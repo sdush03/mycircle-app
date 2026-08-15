@@ -1,6 +1,7 @@
 import api, { guestApi } from './api';
 import { Image } from 'expo-image';
 import { useAuthStore } from '../store/authStore';
+import { getThumbnailUrl, getFullPhotoUrl } from '../utils/imageUrl';
 
 export const prefetchEventGalleryData = async (eventSlug: string, passcode?: string | null) => {
   if (!eventSlug) return;
@@ -35,8 +36,8 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
     ]);
 
     const mapPhotoItem = (p: any) => {
-      const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
-      const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
+      const fullUri = getFullPhotoUrl(p);
+      const thumbUri = getThumbnailUrl(p, 400);
       return {
         id: p.id,
         r2Url: thumbUri,

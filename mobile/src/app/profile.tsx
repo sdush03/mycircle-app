@@ -26,6 +26,7 @@ import CameraViewScreen from '../components/mycircle/CameraView';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import api from '../services/api';
+import { getThumbnailUrl, getFullPhotoUrl } from '../utils/imageUrl';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -50,39 +51,12 @@ interface EventMatchedGroup {
 
 // Helper to extract thumbnail URI for grid cards (fast loading)
 const getPhotoUri = (p: any): string => {
-  if (!p) return '';
-  if (typeof p === 'string') return p;
-  return (
-    p.thumbnailUrl ||
-    p.thumbnail_url ||
-    p.file_url_mobile ||
-    p.r2Url ||
-    p.r2_url ||
-    p.file_url ||
-    p.url ||
-    p.imageUrl ||
-    p.photoUrl ||
-    p.src ||
-    ''
-  );
+  return getThumbnailUrl(p, 400);
 };
 
 // Helper to extract full-resolution 4K URI for Lightbox preview
 const getPhotoFullUri = (p: any): string => {
-  if (!p) return '';
-  if (typeof p === 'string') return p;
-  return (
-    p.r2Url ||
-    p.r2_url ||
-    p.file_url ||
-    p.url ||
-    p.photoUrl ||
-    p.imageUrl ||
-    p.thumbnailUrl ||
-    p.thumbnail_url ||
-    p.file_url_mobile ||
-    ''
-  );
+  return getFullPhotoUrl(p);
 };
 
 // Column Balancing Algorithm — EXACTLY matching FeaturedStoryView

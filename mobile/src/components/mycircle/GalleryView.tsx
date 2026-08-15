@@ -21,6 +21,7 @@ import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MasonryFlashList } from '../common/MasonryFlashList';
 import { getPhotoAspect } from '../../utils/photoDimensionCache';
+import { getThumbnailUrl, getFullPhotoUrl } from '../../utils/imageUrl';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -76,8 +77,8 @@ interface Photo {
 }
 
 function mapPhotoItem(p: any): Photo {
-  const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
-  const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
+  const fullUri = getFullPhotoUrl(p);
+  const thumbUri = getThumbnailUrl(p, 400);
   const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
   const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
   const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
@@ -388,15 +389,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // 0. Check Stale-While-Revalidate (SWR) cache for 0ms instant gallery launch
       const cached = useAuthStore.getState().getGalleryCache(eventSlug);
       if (cached && cached.photos && cached.photos.length > 0) {
-        setAllPhotos(cached.photos);
-        allPhotosOffsetRef.current = cached.photos.length;
-        setAllPhotosOffset(cached.photos.length);
+        const normalizedPhotos = cached.photos.map(mapPhotoItem);
+        setAllPhotos(normalizedPhotos);
+        allPhotosOffsetRef.current = normalizedPhotos.length;
+        setAllPhotosOffset(normalizedPhotos.length);
         if (cached.details) setEventDetailsData(cached.details);
         if (cached.total !== undefined) setTotalAllPhotosCount(cached.total);
-        if (cached.matched) setPhotos(cached.matched);
+        if (cached.matched) setPhotos(cached.matched.map(mapPhotoItem));
         if (cached.headers) eventHeadersRef.current = cached.headers;
         if (typeof cached.hasFullAccess === 'boolean') setGuestAccessLevel(cached.hasFullAccess);
-        if (cached.tabCache) setTabCache(cached.tabCache);
+        const tabCacheData = cached.tabCache;
+        if (tabCacheData) {
+          const normalizedTabCache: Record<string, Photo[]> = {};
+          Object.keys(tabCacheData).forEach((k) => {
+            normalizedTabCache[k] = (tabCacheData[k] || []).map(mapPhotoItem);
+          });
+          setTabCache(normalizedTabCache);
+        }
         setIsLoading(false); // 0ms INSTANT OPEN ON FRAME 1!
       } else {
         setIsLoading(true);
@@ -852,8 +861,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       );
       const rawList = res.data.photos || (Array.isArray(res.data) ? res.data : []);
       const mapPhotoItem = (p: any): Photo => {
-        const thumbUri = p.thumbnailUrl || p.thumbnail_url || p.r2Url || p.r2_url || p.file_url_mobile || p.file_url || p.url || '';
-        const fullUri = p.r2Url || p.r2_url || p.file_url || p.url || thumbUri;
+        const fullUri = getFullPhotoUrl(p);
+        const thumbUri = getThumbnailUrl(p, 400);
         const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
         const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
         const aspectRatio = w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null);
