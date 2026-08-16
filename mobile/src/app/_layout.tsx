@@ -99,7 +99,7 @@ function RootLayoutContent() {
   const isCollapsed = useAuthStore((state) => state.isTabBarCollapsed);
   const token = useAuthStore((state) => state.token);
   const profile = useAuthStore((state) => state.profile);
-  const isPhoneSkipped = useAuthStore((state) => state.isPhoneSkipped);
+  const isPhoneSkipped = Platform.OS === 'ios' && useAuthStore((state) => state.isPhoneSkipped);
   const isLoading = useAuthStore((state) => state.isLoading);
   const loadStoredAuth = useAuthStore((state) => state.loadStoredAuth);
   const updateProfile = useAuthStore((state) => state.updateProfile);

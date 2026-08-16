@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, View, Text, TextInput, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../services/api';
@@ -202,18 +202,20 @@ export default function PhoneView({ onSuccess, onSkip, onCancel }: PhoneViewProp
           )}
         </Pressable>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.skipBtn,
-            pressed && styles.skipBtnPressed,
-            isSubmitting && styles.skipBtnDisabled,
-          ]}
-          onPress={handleSkip}
-          disabled={isSubmitting}
-          hitSlop={{ top: 10, bottom: 10, left: 15, right: 15 }}
-        >
-          <Text style={styles.skipBtnText}>Skip for now</Text>
-        </Pressable>
+        {Platform.OS === 'ios' && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.skipBtn,
+              pressed && styles.skipBtnPressed,
+              isSubmitting && styles.skipBtnDisabled,
+            ]}
+            onPress={handleSkip}
+            disabled={isSubmitting}
+            hitSlop={{ top: 10, bottom: 10, left: 15, right: 15 }}
+          >
+            <Text style={styles.skipBtnText}>Skip for now</Text>
+          </Pressable>
+        )}
       </Pressable>
     </Pressable>
   );

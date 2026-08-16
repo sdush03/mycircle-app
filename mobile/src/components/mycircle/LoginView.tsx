@@ -53,13 +53,13 @@ interface LoginViewProps {
 export default function LoginView({ onSuccess, startAnimation = true }: LoginViewProps) {
   const profile = useAuthStore((state) => state.profile);
   const token = useAuthStore((state) => state.token);
-  const isPhoneSkipped = useAuthStore((state) => state.isPhoneSkipped);
+  const isPhoneSkipped = Platform.OS === 'ios' && useAuthStore((state) => state.isPhoneSkipped);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [webModal, setWebModal] = useState<{ url: string; title: string } | null>(null);
 
   const hasValidPhoneNumber = Boolean(profile?.phoneNumber && profile.phoneNumber !== 'skipped');
 
-  // Onboarding step after auth: login → phone (if missing & not skipped this session) → selfie (if missing) → done
+  // Onboarding step after auth: login → phone (if missing & not skipped on iOS) → selfie (if missing) → done
   const [step, setStep] = useState<'login' | 'phone' | 'selfie'>(() => {
     if (token && profile) {
       if (!hasValidPhoneNumber && !isPhoneSkipped) return 'phone';
@@ -234,7 +234,8 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
 
       // Enforce onboarding steps before entering the app
       const hasPhone = Boolean(profile.phoneNumber && profile.phoneNumber !== 'skipped');
-      if (!hasPhone && !useAuthStore.getState().isPhoneSkipped) {
+      const isPhoneSkippedThisSession = Platform.OS === 'ios' && useAuthStore.getState().isPhoneSkipped;
+      if (!hasPhone && !isPhoneSkippedThisSession) {
         setStep('phone');
       } else if (!profile.hasSelfie) {
         setStep('selfie');

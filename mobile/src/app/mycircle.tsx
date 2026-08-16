@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, ActivityIndicator, Alert, BackHandler } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Alert, BackHandler, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 
@@ -23,7 +23,7 @@ export default function MyCircleScreen() {
   const token = useAuthStore((s) => s.token);
   const profile = useAuthStore((s) => s.profile);
   const isLoading = useAuthStore((s) => s.isLoading);
-  const isPhoneSkipped = useAuthStore((s) => s.isPhoneSkipped);
+  const isPhoneSkipped = Platform.OS === 'ios' && useAuthStore((s) => s.isPhoneSkipped);
   const eventSlug = useAuthStore((s) => s.eventSlug);
   const passcode = useAuthStore((s) => s.passcode);
   const openedFrom = useAuthStore((s) => s.openedFrom);
