@@ -19,6 +19,7 @@ export default function PhoneView({ onSuccess, onSkip, onCancel }: PhoneViewProp
   const profile = useAuthStore((state) => state.profile);
   const eventSlug = useAuthStore((state) => state.eventSlug);
   const updateProfile = useAuthStore((state) => state.updateProfile);
+  const setPhoneSkipped = useAuthStore((state) => state.setPhoneSkipped);
 
   const handlePhoneNumberChange = (text: string) => {
     setErrorMsg('');
@@ -122,6 +123,7 @@ export default function PhoneView({ onSuccess, onSkip, onCancel }: PhoneViewProp
       
       // Update local profile state
       await updateProfile({ phoneNumber: fullPhoneNumber });
+      setPhoneSkipped(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       onSuccess();
     } catch (err: any) {
@@ -134,24 +136,13 @@ export default function PhoneView({ onSuccess, onSkip, onCancel }: PhoneViewProp
     }
   };
 
-  const handleSkip = async () => {
-    try {
-      setIsSubmitting(true);
-      await updateProfile({ phoneNumber: 'skipped' });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      if (onSkip) {
-        onSkip();
-      } else {
-        onSuccess();
-      }
-    } catch (err) {
-      if (onSkip) {
-        onSkip();
-      } else {
-        onSuccess();
-      }
-    } finally {
-      setIsSubmitting(false);
+  const handleSkip = () => {
+    setPhoneSkipped(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (onSkip) {
+      onSkip();
+    } else {
+      onSuccess();
     }
   };
 

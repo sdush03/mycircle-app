@@ -23,6 +23,7 @@ export default function MyCircleScreen() {
   const token = useAuthStore((s) => s.token);
   const profile = useAuthStore((s) => s.profile);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const isPhoneSkipped = useAuthStore((s) => s.isPhoneSkipped);
   const eventSlug = useAuthStore((s) => s.eventSlug);
   const passcode = useAuthStore((s) => s.passcode);
   const openedFrom = useAuthStore((s) => s.openedFrom);
@@ -181,8 +182,9 @@ export default function MyCircleScreen() {
     return <LoginView onSuccess={() => {}} />;
   }
 
-  // 2. Set Phone Number (no OTP)
-  if (!profile?.phoneNumber) {
+  // 2. Set Phone Number (if not filled and not skipped this session)
+  const hasValidPhoneNumber = Boolean(profile?.phoneNumber && profile.phoneNumber !== 'skipped');
+  if (!hasValidPhoneNumber && !isPhoneSkipped) {
     return <PhoneView onSuccess={() => {}} />;
   }
 

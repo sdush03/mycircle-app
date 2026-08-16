@@ -99,6 +99,7 @@ function RootLayoutContent() {
   const isCollapsed = useAuthStore((state) => state.isTabBarCollapsed);
   const token = useAuthStore((state) => state.token);
   const profile = useAuthStore((state) => state.profile);
+  const isPhoneSkipped = useAuthStore((state) => state.isPhoneSkipped);
   const isLoading = useAuthStore((state) => state.isLoading);
   const loadStoredAuth = useAuthStore((state) => state.loadStoredAuth);
   const updateProfile = useAuthStore((state) => state.updateProfile);
@@ -335,8 +336,9 @@ function RootLayoutContent() {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 
-  // 3. Enforce mandatory onboarding — catches users with saved sessions who haven't completed profile
-  if (!profile?.phoneNumber || !profile?.hasSelfie) {
+  // 3. Enforce onboarding — catches users with saved sessions who haven't completed profile or skipped phone this session
+  const hasValidPhoneNumber = Boolean(profile?.phoneNumber && profile.phoneNumber !== 'skipped');
+  if ((!hasValidPhoneNumber && !isPhoneSkipped) || !profile?.hasSelfie) {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 

@@ -35,6 +35,7 @@ interface AuthState {
   profile: GuestProfile | null;
   userEvents: any[];
   isLoading: boolean;
+  isPhoneSkipped: boolean;
   eventSlug: string | null;
   passcode: string | null;
   eventCoverUrl: string | null;
@@ -42,6 +43,7 @@ interface AuthState {
   openedFrom: 'home' | 'mycircle' | null;
   isTabBarCollapsed: boolean;
   galleryCache: Record<string, GalleryCacheEntry>;
+  setPhoneSkipped: (skipped: boolean) => void;
   setTabBarCollapsed: (collapsed: boolean) => void;
   setUserEvents: (events: any[]) => void;
   setGalleryCache: (eventSlug: string, data: Partial<GalleryCacheEntry>) => void;
@@ -60,6 +62,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   profile: null,
   userEvents: [],
   isLoading: true,
+  isPhoneSkipped: false,
   eventSlug: null,
   passcode: null,
   eventCoverUrl: null,
@@ -68,6 +71,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isTabBarCollapsed: false,
   galleryCache: {},
   
+  setPhoneSkipped: (skipped) => set({ isPhoneSkipped: skipped }),
   setTabBarCollapsed: (collapsed) => set({ isTabBarCollapsed: collapsed }),
   setUserEvents: (events) => set({ userEvents: events }),
   setGalleryCache: (eventSlug, data) => {
@@ -201,12 +205,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const token = await SecureStore.getItemAsync(TOKEN_KEY);
       const profileStr = await SecureStore.getItemAsync(PROFILE_KEY);
-      const profile = profileStr ? JSON.parse(profileStr) : null;
-      set({ token, profile, isLoading: false });
+      let profile: GuestProfile | null = profileStr ? JSON.parse(profileStr) : null;
+      if (profile && profile.phoneNumber === 'skipped') {
+        profile.phoneNumber = null;
+      }
+      set({ token, profile, isLoading: false, isPhoneSkipped: false });
     } catch (e) {
       // SecureStore may fail on simulator builds without keychain entitlements — this is expected.
       console.warn('SecureStore unavailable, starting with no stored session:', e);
-      set({ isLoading: false });
+      set({ isLoading: false, isPhoneSkipped: false });
     }
   },
 
@@ -221,7 +228,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } catch (_) {
         // Native module may not be available in all environments (e.g. Expo Go)
       }
-      set({ token: null, profile: null, isLoading: false, eventSlug: null, passcode: null });
+      set({ token: null, profile: null, isLoading: false, eventSlug: null, passcode: null, isPhoneSkipped: false });
     } catch (e) {
       console.error('Error deleting auth state', e);
     }
