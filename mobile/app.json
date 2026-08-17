@@ -15,7 +15,7 @@
     "ios": {
       "icon": "./assets/images/ios-icon.png",
       "bundleIdentifier": "com.mistyvisuals.mycircle",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "supportsTablet": true,
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
