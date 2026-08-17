@@ -7,7 +7,6 @@ import {
   RefreshControl,
   Image as RNImage,
   Pressable,
-  TouchableOpacity,
   Dimensions,
   Modal,
   ActivityIndicator,
@@ -23,6 +22,7 @@ import { savesService, SavedPhotoItem } from '../services/savesService';
 import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION, TAB_SCROLL_TO_TOP_PROFILE } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import CameraViewScreen from '../components/mycircle/CameraView';
+import SettingsModal from '../components/profile/SettingsModal';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import api from '../services/api';
@@ -361,12 +361,6 @@ export default function ProfileScreen() {
       fetchSavedPhotos();
     }, [fetchMyCelebrationPhotos, fetchSavedPhotos])
   );
-
-  const handleLogout = async () => {
-    setShowSettingsModal(false);
-    await logout();
-    router.replace('/');
-  };
 
   const getRoleLabel = () => {
     if (profile?.displayRole === 'BRIDE') return '👑 BRIDE';
@@ -734,38 +728,13 @@ export default function ProfileScreen() {
         </GestureDetector>
       </ScrollView>
 
-      {/* ── Instagram-Style 3-Lines Settings & Logout Modal Sheet ── */}
-      <Modal
+      {/* ── Full-Screen Settings, Preferences & Account Management Modal ── */}
+      <SettingsModal
         visible={showSettingsModal}
-        transparent
-        animationType="fade"
-        statusBarTranslucent={true}
-        onRequestClose={() => setShowSettingsModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowSettingsModal(false)} />
-          <View style={styles.actionSheetContainer}>
-            <View style={styles.sheetHandle} />
-
-            <View style={styles.sheetUserHeader}>
-              <Text style={styles.sheetUserName}>{profile?.name || 'Account Settings'}</Text>
-              <Text style={styles.sheetUserRole}>{getRoleLabel()}</Text>
-            </View>
-
-            <View style={styles.sheetDivider} />
-
-            <TouchableOpacity style={styles.sheetOptionBtn} activeOpacity={0.7} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={20} color="#ef4444" />
-              <Text style={styles.logoutBtnText}>Log Out</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.sheetOptionBtn} activeOpacity={0.7} onPress={() => setShowSettingsModal(false)}>
-              <Ionicons name="close-circle-outline" size={20} color="#666666" />
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setShowSettingsModal(false)}
+        onRetakeSelfie={() => setShowSelfieModal(true)}
+        totalMatchedPhotos={totalMatchedCount}
+      />
 
       {/* ── UPDATE SELFIE CAMERA MODAL ── */}
       {showSelfieModal && (
@@ -1047,68 +1016,6 @@ const styles = StyleSheet.create({
   masonryImage: {
     width: '100%',
     height: '100%',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  actionSheetContainer: {
-    backgroundColor: '#ffffff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    paddingTop: 12,
-  },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#dddddd',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  sheetUserHeader: {
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  sheetUserName: {
-    fontSize: 16,
-    fontFamily: FONT_FUTURA_BOLD,
-    color: '#111111',
-  },
-  sheetUserRole: {
-    fontSize: 10,
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    color: '#888888',
-    marginTop: 2,
-  },
-  sheetDivider: {
-    height: 1,
-    backgroundColor: '#eeeeee',
-    marginBottom: 8,
-  },
-  sheetOptionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 14,
-  },
-  sheetOptionText: {
-    fontSize: 14,
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    color: '#111111',
-  },
-  logoutBtnText: {
-    fontSize: 14,
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    color: '#ef4444',
-  },
-  cancelBtnText: {
-    fontSize: 14,
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    color: '#666666',
   },
   lightboxOverlay: {
     flex: 1,
