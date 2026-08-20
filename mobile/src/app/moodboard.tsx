@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { savesService, SavedPhotoItem } from '../services/savesService';
@@ -50,7 +49,6 @@ export default function MoodboardScreen() {
 
   // Manual Upload Modal state
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
-  const [selectedUploadUri, setSelectedUploadUri] = useState<string | null>(null);
 
   const effectiveDisplayRole = React.useMemo(() => {
     // 1. Check global profile displayRole or role
@@ -215,31 +213,6 @@ export default function MoodboardScreen() {
       return true;
     });
   }, [saves, isCoupleRole, isMine, selectedFilter, selectedTag]);
-
-  // Launch camera roll picker
-  const handleOpenImagePicker = async () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        alert('Permission to access photos is required to upload inspirations.');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false,
-        quality: 0.9,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        setSelectedUploadUri(result.assets[0].uri);
-        setShowUploadModal(true);
-      }
-    } catch (err: any) {
-      console.error('[moodboard] Error launching image picker:', err);
-    }
-  };
 
   const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
 
@@ -430,7 +403,10 @@ export default function MoodboardScreen() {
             {/* Quick Header + Upload Button */}
             <Pressable
               style={styles.headerAddBtn}
-              onPress={handleOpenImagePicker}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                setShowUploadModal(true);
+              }}
               hitSlop={8}
             >
               <Ionicons name="add" size={18} color="#ffffff" />
@@ -544,7 +520,13 @@ export default function MoodboardScreen() {
             </Text>
 
             <View style={styles.emptyActionsRow}>
-              <Pressable style={styles.emptyUploadBtn} onPress={handleOpenImagePicker}>
+              <Pressable
+                style={styles.emptyUploadBtn}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  setShowUploadModal(true);
+                }}
+              >
                 <Ionicons name="cloud-upload-outline" size={16} color="#ffffff" />
                 <Text style={styles.emptyUploadBtnText}>UPLOAD INSPIRATION</Text>
               </Pressable>
@@ -571,7 +553,10 @@ export default function MoodboardScreen() {
       {/* ── Floating Action Button (+ Upload Inspiration) ── */}
       <Pressable
         style={styles.fabUploadButton}
-        onPress={handleOpenImagePicker}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          setShowUploadModal(true);
+        }}
         android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
       >
         <Ionicons name="add" size={22} color="#ffffff" />
@@ -581,11 +566,9 @@ export default function MoodboardScreen() {
       {/* ── Add Inspiration Modal ── */}
       <AddInspirationModal
         visible={showUploadModal}
-        imageUri={selectedUploadUri}
         displayRole={effectiveDisplayRole}
         onClose={() => {
           setShowUploadModal(false);
-          setSelectedUploadUri(null);
         }}
         onSuccess={(_item) => {
           fetchSaves();
