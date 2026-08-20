@@ -681,8 +681,13 @@ export function EditorialLightbox({
     if (subtitle) return subtitle.toUpperCase();
     let cat = '';
     if (currentItem && typeof currentItem === 'object') {
-      if (currentItem.category) cat = String(currentItem.category).toUpperCase();
-      else if (currentItem.eventTitle) cat = String(currentItem.eventTitle).toUpperCase();
+      if (Array.isArray(currentItem.tags) && currentItem.tags.length > 0) {
+        cat = currentItem.tags.join('  ');
+      } else if (currentItem.category) {
+        cat = String(currentItem.category).toUpperCase();
+      } else if (currentItem.eventTitle) {
+        cat = String(currentItem.eventTitle).toUpperCase();
+      }
     }
     const mainTitle = title.toUpperCase();
     if (cat && cat !== mainTitle) {

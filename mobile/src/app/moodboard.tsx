@@ -9,9 +9,11 @@ import {
   ActivityIndicator,
   RefreshControl,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { savesService, SavedPhotoItem } from '../services/savesService';
@@ -19,6 +21,7 @@ import { useAuthStore } from '../store/authStore';
 import { tabEvents, EVENT_SAVES_UPDATED, TAB_SCROLL_TO_TOP_MOODBOARD } from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
+import { AddInspirationModal } from '../components/moodboard/AddInspirationModal';
 import { getPhotoAspect } from '../utils/photoDimensionCache';
 import {
   FONT_FUTURA,
@@ -28,6 +31,7 @@ import {
   FONT_MONTSERRAT_SEMIBOLD,
   FONT_JOST_REGULAR,
   FONT_JOST_MEDIUM,
+  FONT_JOST_SEMIBOLD,
 } from '../constants/fonts';
 
 type MoodboardFilterType = 'all' | 'mine' | 'partner';
@@ -40,8 +44,13 @@ export default function MoodboardScreen() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [selectedFilter, setSelectedFilter] = useState<MoodboardFilterType>('all');
+  const [selectedTag, setSelectedTag] = useState<string>('ALL');
   const [selectedPhotoIdx, setSelectedPhotoIdx] = useState<number | null>(null);
   const [selectedBounds, setSelectedBounds] = useState<LightboxBounds | null>(null);
+
+  // Manual Upload Modal state
+  const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [selectedUploadUri, setSelectedUploadUri] = useState<string | null>(null);
 
   const effectiveDisplayRole = React.useMemo(() => {
     // 1. Check global profile displayRole or role
@@ -110,14 +119,6 @@ export default function MoodboardScreen() {
 
   useEffect(() => {
     fetchSaves();
-    const unsub = tabEvents.on(EVENT_SAVES_UPDATED, fetchSaves);
-    const unsubScroll = tabEvents.on(TAB_SCROLL_TO_TOP_MOODBOARD, () => {
-      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
-    });
-    return () => {
-      unsub();
-      unsubScroll();
-    };
   }, [fetchSaves]);
 
   useFocusEffect(
@@ -126,27 +127,37 @@ export default function MoodboardScreen() {
     }, [fetchSaves])
   );
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchSaves();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  };
-
-  const handleUnsave = (item: SavedPhotoItem) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-    setSaves((prevSaves) => {
-      const nextSaves = prevSaves.filter((s) => s.id !== item.id);
-      if (selectedPhotoIdx !== null) {
-        if (nextSaves.length === 0) {
-          setSelectedPhotoIdx(null);
-        } else {
-          const targetIdx = Math.min(selectedPhotoIdx, nextSaves.length - 1);
-          setSelectedPhotoIdx(targetIdx);
-        }
-      }
-      return nextSaves;
+  useEffect(() => {
+    const unsub = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      fetchSaves();
     });
-  };
+    return () => unsub();
+  }, [fetchSaves]);
+
+  useEffect(() => {
+    const unsub = tabEvents.on(TAB_SCROLL_TO_TOP_MOODBOARD, () => {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
+    return () => unsub();
+  }, []);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchSaves();
+  }, [fetchSaves]);
+
+  const handleUnsave = useCallback(async (item: any) => {
+    const photoUrl = item.photoUrl || item.r2Url || item.uri || item.file_url;
+    const photoId = item.id;
+    const success = await savesService.unsavePhoto(photoUrl, photoId);
+    if (success) {
+      setSaves((prev) => prev.filter((s) => s.id !== photoId && s.photoUrl !== photoUrl));
+      if (selectedPhotoIdx !== null) {
+        setSelectedPhotoIdx(null);
+        setSelectedBounds(null);
+      }
+    }
+  }, [selectedPhotoIdx]);
 
   // Check if item belongs to current user
   const isMine = useCallback((item: SavedPhotoItem) => {
@@ -166,18 +177,69 @@ export default function MoodboardScreen() {
     return false;
   }, [profile, effectiveDisplayRole]);
 
-  const filteredSaves = saves.filter((item) => {
-    if (!isCoupleRole) return isMine(item);
+  // Extract all distinct tags present across saves
+  const availableTags = React.useMemo(() => {
+    const tagsFound = new Set<string>();
+    saves.forEach((item) => {
+      if (Array.isArray(item.tags)) {
+        item.tags.forEach((t) => {
+          if (t && typeof t === 'string' && t.trim()) {
+            tagsFound.add(t.trim());
+          }
+        });
+      }
+    });
+    return ['ALL', ...Array.from(tagsFound)];
+  }, [saves]);
 
-    // Couple filter: only show photos saved by the Bride, Groom, or current user
-    const itemRole = (item.savedBy?.displayRole || '').toString().toUpperCase();
-    const isCoupleItem = isMine(item) || ['BRIDE', 'GROOM'].includes(itemRole);
-    if (!isCoupleItem) return false;
+  // Filter saves by couple/mine/partner AND by selected tag
+  const filteredSaves = React.useMemo(() => {
+    return saves.filter((item) => {
+      if (!isCoupleRole) {
+        if (!isMine(item)) return false;
+      } else {
+        const itemRole = (item.savedBy?.displayRole || '').toString().toUpperCase();
+        const isCoupleItem = isMine(item) || ['BRIDE', 'GROOM'].includes(itemRole);
+        if (!isCoupleItem) return false;
 
-    if (selectedFilter === 'mine') return isMine(item);
-    if (selectedFilter === 'partner') return !isMine(item);
-    return true;
-  });
+        if (selectedFilter === 'mine' && !isMine(item)) return false;
+        if (selectedFilter === 'partner' && isMine(item)) return false;
+      }
+
+      // Tag filter
+      if (selectedTag !== 'ALL') {
+        const itemTags = Array.isArray(item.tags) ? item.tags : [];
+        if (!itemTags.includes(selectedTag)) return false;
+      }
+
+      return true;
+    });
+  }, [saves, isCoupleRole, isMine, selectedFilter, selectedTag]);
+
+  // Launch camera roll picker
+  const handleOpenImagePicker = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        alert('Permission to access photos is required to upload inspirations.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setSelectedUploadUri(result.assets[0].uri);
+        setShowUploadModal(true);
+      }
+    } catch (err: any) {
+      console.error('[moodboard] Error launching image picker:', err);
+    }
+  };
 
   const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
 
@@ -198,7 +260,7 @@ export default function MoodboardScreen() {
     });
   }, [saves]);
 
-  // Shortest Column Height Balancing algorithm — EXACTLY matching FeaturedStoryView
+  // Shortest Column Height Balancing algorithm
   const { column0, column1 } = React.useMemo(() => {
     const cols: [any[], any[]] = [[], []];
     const colHeights = [0, 0];
@@ -277,19 +339,24 @@ export default function MoodboardScreen() {
     const photoMine = isMine(item);
     const cardId = item.id || item.photoUrl || `save-${item.globalIndex}`;
     const cardAspect = item.cardAspect || item.aspectRatio || 0.75;
+    const isManualUpload = item.sourceType === 'MANUAL_UPLOAD';
 
     let badgeLabel = '';
     if (photoMine) {
-      badgeLabel = 'YOU';
+      badgeLabel = isManualUpload ? '📸 YOU' : 'YOU';
     } else if (item.savedBy?.displayRole === 'BRIDE') {
-      badgeLabel = item.savedBy?.name ? `👰 ${item.savedBy.name.toUpperCase()}` : '👰 BRIDE';
+      const name = item.savedBy?.name ? item.savedBy.name.toUpperCase() : 'BRIDE';
+      badgeLabel = isManualUpload ? `📸 👰 ${name}` : `👰 ${name}`;
     } else if (item.savedBy?.displayRole === 'GROOM') {
-      badgeLabel = item.savedBy?.name ? `🤵 ${item.savedBy.name.toUpperCase()}` : '🤵 GROOM';
+      const name = item.savedBy?.name ? item.savedBy.name.toUpperCase() : 'GROOM';
+      badgeLabel = isManualUpload ? `📸 🤵 ${name}` : `🤵 ${name}`;
     } else if (item.savedBy?.name) {
       badgeLabel = item.savedBy.name.toUpperCase();
     } else {
       badgeLabel = 'PARTNER';
     }
+
+    const itemTags: string[] = Array.isArray(item.tags) ? item.tags : [];
 
     return (
       <View key={cardId} style={[styles.masonryCardWrapper, { aspectRatio: cardAspect }]}>
@@ -313,11 +380,27 @@ export default function MoodboardScreen() {
           }}
         />
 
-        {/* Top Heart Badge */}
+        {/* Top Heart / Creator Badge */}
         <View style={styles.cardBadgeOverlay}>
           <Ionicons name="heart" size={12} color="#ef4444" />
           <Text style={styles.badgeRoleText}>{badgeLabel}</Text>
         </View>
+
+        {/* Bottom Tag Chips if present */}
+        {itemTags.length > 0 && (
+          <View style={styles.cardTagsOverlay}>
+            {itemTags.slice(0, 2).map((tag, tIdx) => (
+              <View key={tIdx} style={styles.cardTagPill}>
+                <Text style={styles.cardTagPillText}>{tag}</Text>
+              </View>
+            ))}
+            {itemTags.length > 2 && (
+              <View style={styles.cardTagPill}>
+                <Text style={styles.cardTagPillText}>+{itemTags.length - 2}</Text>
+              </View>
+            )}
+          </View>
+        )}
       </View>
     );
   };
@@ -334,16 +417,31 @@ export default function MoodboardScreen() {
       >
         {/* ── Page Header ── */}
         <View style={styles.headerSection}>
-          <Text style={styles.headerSubtitle}>
-            {isCoupleRole ? 'YOUR SHARED WEDDING INSPIRATION' : 'YOUR PERSONAL VISUAL COLLECTION'}
-          </Text>
-          <Text style={styles.headerTitle}>
-            {isCoupleRole ? 'OUR MOODBOARD' : 'MY SAVES'}
-          </Text>
+          <View style={styles.headerTitleRow}>
+            <View style={styles.headerTextGroup}>
+              <Text style={styles.headerSubtitle}>
+                {isCoupleRole ? 'YOUR SHARED WEDDING INSPIRATION' : 'YOUR PERSONAL VISUAL COLLECTION'}
+              </Text>
+              <Text style={styles.headerTitle}>
+                {isCoupleRole ? 'OUR MOODBOARD' : 'MY SAVES'}
+              </Text>
+            </View>
+
+            {/* Quick Header + Upload Button */}
+            <Pressable
+              style={styles.headerAddBtn}
+              onPress={handleOpenImagePicker}
+              hitSlop={8}
+            >
+              <Ionicons name="add" size={18} color="#ffffff" />
+              <Text style={styles.headerAddBtnText}>UPLOAD</Text>
+            </Pressable>
+          </View>
+
           <Text style={styles.headerDesc}>
             {isCoupleRole
-              ? 'All the photos and fine art details you and your partner heart and save across stories and inspirations in one shared collection.'
-              : 'All the photos and fine art details you heart and save across stories and inspirations in your personal collection.'}
+              ? 'All reference photos, screenshots, and story inspirations you and your partner collect for your photographers and stylists.'
+              : 'All reference photos and story inspirations you bookmark in your personal collection.'}
           </Text>
         </View>
 
@@ -352,7 +450,10 @@ export default function MoodboardScreen() {
           <View style={styles.filterPillsContainer}>
             <Pressable
               style={[styles.filterPill, selectedFilter === 'all' && styles.filterPillActive]}
-              onPress={() => setSelectedFilter('all')}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                setSelectedFilter('all');
+              }}
             >
               <Text style={[styles.filterPillText, selectedFilter === 'all' && styles.filterPillTextActive]}>
                 ALL SAVES ({saves.length})
@@ -361,7 +462,10 @@ export default function MoodboardScreen() {
 
             <Pressable
               style={[styles.filterPill, selectedFilter === 'mine' && styles.filterPillActive]}
-              onPress={() => setSelectedFilter('mine')}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                setSelectedFilter('mine');
+              }}
             >
               <Text style={[styles.filterPillText, selectedFilter === 'mine' && styles.filterPillTextActive]}>
                 MY SAVES
@@ -370,7 +474,10 @@ export default function MoodboardScreen() {
 
             <Pressable
               style={[styles.filterPill, selectedFilter === 'partner' && styles.filterPillActive]}
-              onPress={() => setSelectedFilter('partner')}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                setSelectedFilter('partner');
+              }}
             >
               <Text style={[styles.filterPillText, selectedFilter === 'partner' && styles.filterPillTextActive]}>
                 PARTNER'S SAVES
@@ -379,9 +486,40 @@ export default function MoodboardScreen() {
           </View>
         )}
 
+        {/* ── Horizontal Tag Filter Bar (All / #Haldi / #Mehendi / etc.) ── */}
+        {availableTags.length > 1 && (
+          <View style={styles.tagBarWrapper}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tagBarScroll}
+            >
+              {availableTags.map((tag) => {
+                const isActive = selectedTag === tag;
+                return (
+                  <Pressable
+                    key={tag}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                      setSelectedTag(tag);
+                    }}
+                    style={[styles.tagBarPill, isActive && styles.tagBarPillActive]}
+                  >
+                    <Text style={[styles.tagBarPillText, isActive && styles.tagBarPillTextActive]}>
+                      {tag}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         {/* ── Section Title & Count ── */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>SAVED INSPIRATIONS</Text>
+          <Text style={styles.sectionTitle}>
+            {selectedTag === 'ALL' ? 'SAVED INSPIRATIONS' : `${selectedTag} INSPIRATIONS`}
+          </Text>
           <Text style={styles.sectionCount}>{filteredSaves.length} PHOTOS</Text>
         </View>
 
@@ -394,15 +532,28 @@ export default function MoodboardScreen() {
           /* ── Empty Moodboard State ── */
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyIconCircle}>
-              <Ionicons name="heart-outline" size={32} color="#888888" />
+              <Ionicons name="images-outline" size={32} color="#888888" />
             </View>
-            <Text style={styles.emptyTitle}>YOUR MOODBOARD IS EMPTY</Text>
-            <Text style={styles.emptySub}>
-              Heart or save photos while exploring stories, aesthetics, and inspirations to build your personal visual moodboard.
+            <Text style={styles.emptyTitle}>
+              {selectedTag === 'ALL' ? 'YOUR MOODBOARD IS EMPTY' : `NO PHOTOS TAGGED WITH ${selectedTag}`}
             </Text>
-            <Pressable style={styles.exploreBtn} onPress={() => router.replace('/')}>
-              <Text style={styles.exploreBtnText}>EXPLORE STORIES & INSPIRATIONS</Text>
-            </Pressable>
+            <Text style={styles.emptySub}>
+              {selectedTag === 'ALL'
+                ? 'Save photos while exploring stories or upload your own screenshots and Pinterest inspirations directly from your camera roll.'
+                : `Tag your inspirations with ${selectedTag} to easily filter and view them here.`}
+            </Text>
+
+            <View style={styles.emptyActionsRow}>
+              <Pressable style={styles.emptyUploadBtn} onPress={handleOpenImagePicker}>
+                <Ionicons name="cloud-upload-outline" size={16} color="#ffffff" />
+                <Text style={styles.emptyUploadBtnText}>UPLOAD INSPIRATION</Text>
+              </Pressable>
+              {selectedTag === 'ALL' && (
+                <Pressable style={styles.exploreBtn} onPress={() => router.replace('/')}>
+                  <Text style={styles.exploreBtnText}>EXPLORE STORIES</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         ) : (
           /* ── Featured Story Style Balanced 2-Column Masonry Grid ── */
@@ -416,6 +567,30 @@ export default function MoodboardScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* ── Floating Action Button (+ Upload Inspiration) ── */}
+      <Pressable
+        style={styles.fabUploadButton}
+        onPress={handleOpenImagePicker}
+        android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+      >
+        <Ionicons name="add" size={22} color="#ffffff" />
+        <Text style={styles.fabUploadText}>INSPIRATION</Text>
+      </Pressable>
+
+      {/* ── Add Inspiration Modal ── */}
+      <AddInspirationModal
+        visible={showUploadModal}
+        imageUri={selectedUploadUri}
+        displayRole={effectiveDisplayRole}
+        onClose={() => {
+          setShowUploadModal(false);
+          setSelectedUploadUri(null);
+        }}
+        onSuccess={(_item) => {
+          fetchSaves();
+        }}
+      />
 
       {/* ── Shared Universal Editorial Lightbox Modal ── */}
       {selectedPhotoIdx !== null && (
@@ -443,38 +618,62 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   scrollContent: {
-    paddingBottom: 110,
+    paddingBottom: 120,
   },
   headerSection: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 12,
+    paddingBottom: 16,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  headerTextGroup: {
+    flex: 1,
   },
   headerSubtitle: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    letterSpacing: 2,
+    letterSpacing: 2.2,
     color: '#888888',
     marginBottom: 4,
   },
   headerTitle: {
     fontSize: 24,
     fontFamily: FONT_FUTURA_BOLD,
-    letterSpacing: 1.5,
     color: '#111111',
-    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  headerAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111111',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
+    gap: 4,
+  },
+  headerAddBtnText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    letterSpacing: 1,
   },
   headerDesc: {
     fontSize: 13,
     fontFamily: FONT_JOST_REGULAR,
     color: '#666666',
-    lineHeight: 18,
+    lineHeight: 19,
   },
+  // Couple Filter Pills (All Saves / My Saves / Partner's Saves)
   filterPillsContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    paddingVertical: 10,
     gap: 8,
+    marginBottom: 12,
   },
   filterPill: {
     paddingHorizontal: 14,
@@ -482,67 +681,95 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#f5f5f5',
     borderWidth: 1,
-    borderColor: '#e5e5e5',
+    borderColor: '#e8e8e8',
   },
   filterPillActive: {
     backgroundColor: '#111111',
     borderColor: '#111111',
   },
   filterPillText: {
-    fontSize: 9,
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    letterSpacing: 1,
-    color: '#555555',
+    fontSize: 11,
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    color: '#666666',
+    letterSpacing: 0.8,
   },
   filterPillTextActive: {
     color: '#ffffff',
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+  },
+  // Horizontal Tag Bar
+  tagBarWrapper: {
+    marginBottom: 16,
+  },
+  tagBarScroll: {
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  tagBarPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+  },
+  tagBarPillActive: {
+    backgroundColor: '#27272a',
+    borderColor: '#27272a',
+  },
+  tagBarPillText: {
+    fontSize: 11,
+    fontFamily: FONT_JOST_MEDIUM,
+    color: '#666666',
+  },
+  tagBarPillTextActive: {
+    color: '#ffffff',
+    fontFamily: FONT_JOST_SEMIBOLD,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginTop: 14,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   sectionTitle: {
     fontSize: 11,
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     letterSpacing: 1.5,
-    color: '#111111',
+    color: '#222222',
   },
   sectionCount: {
-    fontSize: 10,
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
+    fontSize: 11,
+    fontFamily: FONT_JOST_MEDIUM,
     color: '#888888',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   centerLoading: {
-    paddingVertical: 60,
+    height: 250,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyStateContainer: {
-    paddingHorizontal: 30,
-    paddingVertical: 60,
+    paddingHorizontal: 32,
+    paddingVertical: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
   emptyIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#f8f8f8',
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#f5f5f5',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#eeeeee',
+    marginBottom: 18,
   },
   emptyTitle: {
     fontSize: 14,
     fontFamily: FONT_FUTURA_BOLD,
-    letterSpacing: 1.5,
-    color: '#111111',
+    color: '#222222',
+    letterSpacing: 1,
     marginBottom: 8,
     textAlign: 'center',
   },
@@ -552,21 +779,41 @@ const styles = StyleSheet.create({
     color: '#666666',
     textAlign: 'center',
     lineHeight: 19,
-    marginBottom: 20,
+    marginBottom: 24,
   },
-  exploreBtn: {
+  emptyActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyUploadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#111111',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderRadius: 24,
   },
-  exploreBtnText: {
+  emptyUploadBtnText: {
     color: '#ffffff',
     fontSize: 10,
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     letterSpacing: 1.2,
   },
-  // Featured Story style 2-Column Masonry Grid
+  exploreBtn: {
+    backgroundColor: '#f4f4f5',
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 24,
+  },
+  exploreBtnText: {
+    color: '#18181b',
+    fontSize: 10,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    letterSpacing: 1.2,
+  },
+  // Masonry Grid
   masonryGridContainer: {
     flexDirection: 'row',
     gap: 6,
@@ -594,9 +841,55 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   badgeRoleText: {
-    color: '#ffffff',
-    fontSize: 8,
+    fontSize: 9,
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    letterSpacing: 0.5,
+    color: '#ffffff',
+    letterSpacing: 0.8,
+  },
+  cardTagsOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  cardTagPill: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  cardTagPillText: {
+    fontSize: 8,
+    fontFamily: FONT_JOST_SEMIBOLD,
+    color: '#ffffff',
+    letterSpacing: 0.2,
+  },
+  // Floating Action Button (Upload Inspiration)
+  fabUploadButton: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 84 : 70,
+    right: 18,
+    backgroundColor: '#111111',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 28,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+    zIndex: 10,
+  },
+  fabUploadText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    letterSpacing: 1.2,
   },
 });

@@ -367,29 +367,60 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     numColumns={2}
                     keyExtractor={(item) => String(item.id)}
                     contentContainerStyle={styles.gridList}
-                    renderItem={({ item }) => (
-                      <Pressable
-                        style={styles.gridCard}
-                        onPress={() => setSelectedPhoto(item)}
-                      >
-                        <Image
-                          source={{ uri: item.photoUrl }}
-                          style={styles.gridImage}
-                          contentFit="cover"
-                          cachePolicy="memory-disk"
-                        />
-                        {/* Source Badge */}
-                        <View style={styles.sourceBadge}>
-                          <Text style={styles.sourceBadgeText}>
-                            {item.savedBy.displayRole === 'BRIDE'
-                              ? '👰 Bride'
-                              : item.savedBy.displayRole === 'GROOM'
-                              ? '🤵 Groom'
-                              : item.savedBy.name}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    )}
+                    renderItem={({ item }) => {
+                      const itemTags = Array.isArray(item.tags) ? item.tags : [];
+                      const isManualUpload = item.sourceType === 'MANUAL_UPLOAD';
+                      let roleLabel = item.savedBy.displayRole === 'BRIDE'
+                        ? '👰 Bride'
+                        : item.savedBy.displayRole === 'GROOM'
+                        ? '🤵 Groom'
+                        : item.savedBy.name;
+                      if (isManualUpload) roleLabel = `📸 ${roleLabel}`;
+
+                      return (
+                        <Pressable
+                          style={styles.gridCard}
+                          onPress={() => setSelectedPhoto(item)}
+                        >
+                          <Image
+                            source={{ uri: item.photoUrl }}
+                            style={styles.gridImage}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                          />
+                          {/* Source Badge */}
+                          <View style={styles.sourceBadge}>
+                            <Text style={styles.sourceBadgeText}>
+                              {roleLabel}
+                            </Text>
+                          </View>
+
+                          {/* Tag Chips */}
+                          {itemTags.length > 0 && (
+                            <View style={{
+                              position: 'absolute',
+                              bottom: 6,
+                              left: 6,
+                              right: 6,
+                              flexDirection: 'row',
+                              flexWrap: 'wrap',
+                              gap: 4,
+                            }}>
+                              {itemTags.slice(0, 2).map((t, idx) => (
+                                <View key={idx} style={{
+                                  backgroundColor: 'rgba(0,0,0,0.6)',
+                                  paddingHorizontal: 5,
+                                  paddingVertical: 2,
+                                  borderRadius: 6,
+                                }}>
+                                  <Text style={{ color: '#fff', fontSize: 8, fontFamily: FONT_JOST_MEDIUM }}>{t}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    }}
                   />
                 )}
               </View>
