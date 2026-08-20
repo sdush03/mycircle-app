@@ -167,7 +167,7 @@ export default function MoodboardScreen() {
   }, [profile, effectiveDisplayRole]);
 
   const filteredSaves = saves.filter((item) => {
-    if (!isCoupleRole) return true; // Show all if guest
+    if (!isCoupleRole) return isMine(item);
     if (selectedFilter === 'mine') return isMine(item);
     if (selectedFilter === 'partner') return !isMine(item);
     return true;
@@ -328,10 +328,16 @@ export default function MoodboardScreen() {
       >
         {/* ── Page Header ── */}
         <View style={styles.headerSection}>
-          <Text style={styles.headerSubtitle}>YOUR PERSONAL VISUAL COLLECTION</Text>
-          <Text style={styles.headerTitle}>MY MOODBOARD</Text>
+          <Text style={styles.headerSubtitle}>
+            {isCoupleRole ? 'YOUR SHARED WEDDING INSPIRATION' : 'YOUR PERSONAL VISUAL COLLECTION'}
+          </Text>
+          <Text style={styles.headerTitle}>
+            {isCoupleRole ? 'OUR MOODBOARD' : 'MY SAVES'}
+          </Text>
           <Text style={styles.headerDesc}>
-            All the photos and fine art details you heart and save across stories and inspirations in one curated collection.
+            {isCoupleRole
+              ? 'All the photos and fine art details you and your partner heart and save across stories and inspirations in one shared collection.'
+              : 'All the photos and fine art details you heart and save across stories and inspirations in your personal collection.'}
           </Text>
         </View>
 
