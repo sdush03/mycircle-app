@@ -34,6 +34,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { LightboxImageItem } from './components/LightboxImageItem';
 import { Image as ExpoImage } from 'expo-image';
 import { savesService } from '../../../services/savesService';
+import { tabEvents, EVENT_SAVES_UPDATED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
 import {
   FONT_FUTURA_BOLD,
@@ -99,7 +100,32 @@ export function EditorialLightbox({
   const [isZoomed, setIsZoomed] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [savedUrls, setSavedUrls] = useState<Set<string>>(new Set());
+  const [removedUrls, setRemovedUrls] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+
+  // Auto-sync saved status with backend on open and on save events
+  useEffect(() => {
+    if (visible) {
+      savesService.getSavedPhotos().then((items) => {
+        if (Array.isArray(items)) {
+          const urls = new Set(items.map((i) => i.photoUrl));
+          setSavedUrls(urls);
+        }
+      }).catch(() => {});
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    const unsub = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      savesService.getSavedPhotos().then((items) => {
+        if (Array.isArray(items)) {
+          const urls = new Set(items.map((i) => i.photoUrl));
+          setSavedUrls(urls);
+        }
+      }).catch(() => {});
+    });
+    return () => unsub();
+  }, []);
 
   // Universal Bounds & Animation Shared Values
   const expandProgress = useSharedValue(0);
@@ -308,7 +334,11 @@ export function EditorialLightbox({
         ''
     : '';
 
-  const isSaved = onToggleLike ? !!currentItem?.isLiked : savedUrls.has(currentUrl);
+  const isSaved = onToggleLike
+    ? !!currentItem?.isLiked
+    : onUnsave
+      ? !removedUrls.has(currentUrl)
+      : savedUrls.has(currentUrl);
 
   const handleToggleSave = async () => {
     if (!currentUrl) return;
@@ -339,6 +369,7 @@ export function EditorialLightbox({
       const updated = new Set(savedUrls);
       updated.delete(currentUrl);
       setSavedUrls(updated);
+      setRemovedUrls((prev) => new Set([...prev, currentUrl]));
       showToast('Removed from Moodboard');
       await savesService.unsavePhoto(currentUrl, currentItem?.id);
       if (onUnsave && currentItem) {
@@ -361,6 +392,11 @@ export function EditorialLightbox({
       const updated = new Set(savedUrls);
       updated.add(currentUrl);
       setSavedUrls(updated);
+      setRemovedUrls((prev) => {
+        const next = new Set(prev);
+        next.delete(currentUrl);
+        return next;
+      });
       triggerHeartPop();
       showToast('Photo saved to Moodboard ✨');
       await savesService.savePhoto(currentUrl);

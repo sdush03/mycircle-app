@@ -13,6 +13,7 @@ import {
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { savesService, SavedPhotoItem } from '../../services/savesService';
+import { tabEvents, EVENT_SAVES_UPDATED } from '../../lib/tabEvents';
 import { useAuthStore, GuestProfile } from '../../store/authStore';
 import {
   FONT_FUTURA_BOLD,
@@ -60,6 +61,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     if (visible) {
       fetchSaves();
     }
+    const unsub = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      if (visible) fetchSaves();
+    });
+    return () => unsub();
   }, [visible, fetchSaves]);
 
   const handleUnsave = async (item: SavedPhotoItem) => {

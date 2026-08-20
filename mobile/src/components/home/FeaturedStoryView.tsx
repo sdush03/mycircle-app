@@ -30,6 +30,7 @@ import {
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
 import { savesService } from '../../services/savesService';
+import { tabEvents, EVENT_SAVES_UPDATED } from '../../lib/tabEvents';
 import { formatDateText } from './lightbox/utils/date';
 import { MasonryCard } from './lightbox/components/MasonryCard';
 import { EditorialLightbox, LightboxBounds } from './lightbox/EditorialLightbox';
@@ -304,6 +305,14 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
         setSavedUrls(urls);
       });
     }
+
+    const unsub = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      savesService.getSavedPhotos().then((items) => {
+        const urls = new Set(items.map((i) => i.photoUrl));
+        setSavedUrls(urls);
+      });
+    });
+    return () => unsub();
   }, [isOpen, story]);
 
   React.useEffect(() => {
