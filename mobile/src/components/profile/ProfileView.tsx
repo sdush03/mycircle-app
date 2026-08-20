@@ -161,6 +161,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     if (!isCoupleRole) {
       return isMine(item);
     }
+    const itemRole = (item.savedBy?.displayRole || '').toString().toUpperCase();
+    const isCoupleItem = isMine(item) || ['BRIDE', 'GROOM'].includes(itemRole);
+    if (!isCoupleItem) return false;
+
     if (moodboardFilter === 'mine') {
       return isMine(item);
     }

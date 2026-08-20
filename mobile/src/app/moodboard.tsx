@@ -168,6 +168,12 @@ export default function MoodboardScreen() {
 
   const filteredSaves = saves.filter((item) => {
     if (!isCoupleRole) return isMine(item);
+
+    // Couple filter: only show photos saved by the Bride, Groom, or current user
+    const itemRole = (item.savedBy?.displayRole || '').toString().toUpperCase();
+    const isCoupleItem = isMine(item) || ['BRIDE', 'GROOM'].includes(itemRole);
+    if (!isCoupleItem) return false;
+
     if (selectedFilter === 'mine') return isMine(item);
     if (selectedFilter === 'partner') return !isMine(item);
     return true;
