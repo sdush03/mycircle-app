@@ -72,6 +72,59 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
+  const { userEvents, eventSlug } = useAuthStore();
+
+  const effectiveDisplayRole = React.useMemo(() => {
+    // 1. Check global profile displayRole or role
+    const pRole = (
+      profile?.displayRole ||
+      (profile as any)?.role ||
+      (profile as any)?.userRole ||
+      ''
+    ).toString().toUpperCase();
+
+    if (['BRIDE', 'GROOM'].includes(pRole)) return pRole;
+
+    // 2. Check per-event role from userEvents list
+    if (Array.isArray(userEvents) && userEvents.length > 0) {
+      if (eventSlug) {
+        const thisEvent = userEvents.find((e: any) => {
+          const slug = e.slug || e.eventSlug || e.event?.slug || '';
+          return slug === eventSlug;
+        });
+        if (thisEvent) {
+          const evRole = (
+            thisEvent.guestInfo?.displayRole ||
+            thisEvent.displayRole ||
+            thisEvent.role ||
+            thisEvent.guestRole ||
+            thisEvent.userRole ||
+            thisEvent.guest?.displayRole ||
+            thisEvent.guest?.role ||
+            ''
+          ).toString().toUpperCase();
+          if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+        }
+      }
+
+      for (const ev of userEvents) {
+        const evRole = (
+          ev.guestInfo?.displayRole ||
+          ev.displayRole ||
+          ev.role ||
+          ev.guestRole ||
+          ev.userRole ||
+          ev.guest?.displayRole ||
+          ev.guest?.role ||
+          ''
+        ).toString().toUpperCase();
+        if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+      }
+    }
+
+    return pRole || 'GUEST';
+  }, [profile, userEvents, eventSlug]);
+
   // Helper to check if a saved item belongs to current user
   const isMine = (item: SavedPhotoItem) => {
     if (!profile) return false;
@@ -90,14 +143,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
     
     // 3. Check display role match (e.g. BRIDE vs GROOM)
-    if (profile.displayRole && item.savedBy?.displayRole) {
-      return profile.displayRole === item.savedBy.displayRole;
+    if (effectiveDisplayRole && item.savedBy?.displayRole) {
+      return effectiveDisplayRole === item.savedBy.displayRole;
     }
 
     return false;
   };
 
-  const isCoupleRole = profile?.displayRole === 'BRIDE' || profile?.displayRole === 'GROOM';
+  const isCoupleRole = effectiveDisplayRole === 'BRIDE' || effectiveDisplayRole === 'GROOM';
 
   const filteredMoodboardSaves = saves.filter((item) => {
     if (!isCoupleRole) {
@@ -146,11 +199,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             ) : null}
 
             {/* Admin-assigned Role Badge (Read-only) */}
-            {profile?.displayRole === 'BRIDE' ? (
+            {effectiveDisplayRole === 'BRIDE' ? (
               <View style={styles.roleBadgeContainer}>
                 <Text style={styles.roleBadgeTextReadOnly}>👰 Bride</Text>
               </View>
-            ) : profile?.displayRole === 'GROOM' ? (
+            ) : effectiveDisplayRole === 'GROOM' ? (
               <View style={styles.roleBadgeContainer}>
                 <Text style={styles.roleBadgeTextReadOnly}>🤵 Groom</Text>
               </View>

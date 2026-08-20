@@ -34,7 +34,7 @@ type MoodboardFilterType = 'all' | 'mine' | 'partner';
 
 export default function MoodboardScreen() {
   const handleScroll = useScrollTabBarCollapse();
-  const { profile } = useAuthStore();
+  const { profile, userEvents, eventSlug } = useAuthStore();
 
   const [saves, setSaves] = useState<SavedPhotoItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -42,6 +42,59 @@ export default function MoodboardScreen() {
   const [selectedFilter, setSelectedFilter] = useState<MoodboardFilterType>('all');
   const [selectedPhotoIdx, setSelectedPhotoIdx] = useState<number | null>(null);
   const [selectedBounds, setSelectedBounds] = useState<LightboxBounds | null>(null);
+
+  const effectiveDisplayRole = React.useMemo(() => {
+    // 1. Check global profile displayRole or role
+    const pRole = (
+      profile?.displayRole ||
+      (profile as any)?.role ||
+      (profile as any)?.userRole ||
+      ''
+    ).toString().toUpperCase();
+
+    if (['BRIDE', 'GROOM'].includes(pRole)) return pRole;
+
+    // 2. Check per-event role from userEvents list
+    if (Array.isArray(userEvents) && userEvents.length > 0) {
+      if (eventSlug) {
+        const thisEvent = userEvents.find((e: any) => {
+          const slug = e.slug || e.eventSlug || e.event?.slug || '';
+          return slug === eventSlug;
+        });
+        if (thisEvent) {
+          const evRole = (
+            thisEvent.guestInfo?.displayRole ||
+            thisEvent.displayRole ||
+            thisEvent.role ||
+            thisEvent.guestRole ||
+            thisEvent.userRole ||
+            thisEvent.guest?.displayRole ||
+            thisEvent.guest?.role ||
+            ''
+          ).toString().toUpperCase();
+          if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+        }
+      }
+
+      for (const ev of userEvents) {
+        const evRole = (
+          ev.guestInfo?.displayRole ||
+          ev.displayRole ||
+          ev.role ||
+          ev.guestRole ||
+          ev.userRole ||
+          ev.guest?.displayRole ||
+          ev.guest?.role ||
+          ''
+        ).toString().toUpperCase();
+        if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+      }
+    }
+
+    return pRole || 'GUEST';
+  }, [profile, userEvents, eventSlug]);
+
+  const isCoupleRole = effectiveDisplayRole === 'BRIDE' || effectiveDisplayRole === 'GROOM';
 
   const fetchSaves = useCallback(async () => {
     try {
@@ -96,7 +149,7 @@ export default function MoodboardScreen() {
   };
 
   // Check if item belongs to current user
-  const isMine = (item: SavedPhotoItem) => {
+  const isMine = useCallback((item: SavedPhotoItem) => {
     if (!profile) return false;
     if (profile.id && String(item.userId) === String(profile.id)) return true;
     if (profile.selfieGuestId && String(item.userId) === String(profile.selfieGuestId)) return true;
@@ -107,15 +160,14 @@ export default function MoodboardScreen() {
     ) {
       return true;
     }
-    if (profile.displayRole && item.savedBy?.displayRole) {
-      return profile.displayRole === item.savedBy.displayRole;
+    if (effectiveDisplayRole && item.savedBy?.displayRole) {
+      return effectiveDisplayRole === item.savedBy.displayRole;
     }
     return false;
-  };
-
-  const isCoupleRole = profile?.displayRole === 'BRIDE' || profile?.displayRole === 'GROOM';
+  }, [profile, effectiveDisplayRole]);
 
   const filteredSaves = saves.filter((item) => {
+    if (!isCoupleRole) return true; // Show all if guest
     if (selectedFilter === 'mine') return isMine(item);
     if (selectedFilter === 'partner') return !isMine(item);
     return true;
@@ -220,6 +272,19 @@ export default function MoodboardScreen() {
     const cardId = item.id || item.photoUrl || `save-${item.globalIndex}`;
     const cardAspect = item.cardAspect || item.aspectRatio || 0.75;
 
+    let badgeLabel = '';
+    if (photoMine) {
+      badgeLabel = 'YOU';
+    } else if (item.savedBy?.displayRole === 'BRIDE') {
+      badgeLabel = item.savedBy?.name ? `👰 ${item.savedBy.name.toUpperCase()}` : '👰 BRIDE';
+    } else if (item.savedBy?.displayRole === 'GROOM') {
+      badgeLabel = item.savedBy?.name ? `🤵 ${item.savedBy.name.toUpperCase()}` : '🤵 GROOM';
+    } else if (item.savedBy?.name) {
+      badgeLabel = item.savedBy.name.toUpperCase();
+    } else {
+      badgeLabel = 'PARTNER';
+    }
+
     return (
       <View key={cardId} style={[styles.masonryCardWrapper, { aspectRatio: cardAspect }]}>
         <MasonryCard
@@ -243,14 +308,10 @@ export default function MoodboardScreen() {
         />
 
         {/* Top Heart Badge */}
-        {item.savedBy?.displayRole && (
-          <View style={styles.cardBadgeOverlay}>
-            <Ionicons name="heart" size={13} color="#ef4444" />
-            <Text style={styles.badgeRoleText}>
-              {photoMine ? 'YOU' : item.savedBy.displayRole}
-            </Text>
-          </View>
-        )}
+        <View style={styles.cardBadgeOverlay}>
+          <Ionicons name="heart" size={12} color="#ef4444" />
+          <Text style={styles.badgeRoleText}>{badgeLabel}</Text>
+        </View>
       </View>
     );
   };
