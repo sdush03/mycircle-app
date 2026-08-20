@@ -21,6 +21,7 @@ import { tabEvents, EVENT_SAVES_UPDATED, TAB_SCROLL_TO_TOP_MOODBOARD } from '../
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
 import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
 import { AddInspirationModal } from '../components/moodboard/AddInspirationModal';
+import { CoupleFeatureLockedModal } from '../components/moodboard/CoupleFeatureLockedModal';
 import { getPhotoAspect } from '../utils/photoDimensionCache';
 import {
   FONT_FUTURA,
@@ -47,8 +48,10 @@ export default function MoodboardScreen() {
   const [selectedPhotoIdx, setSelectedPhotoIdx] = useState<number | null>(null);
   const [selectedBounds, setSelectedBounds] = useState<LightboxBounds | null>(null);
 
-  // Manual Upload Modal state
+  // Manual Upload Modal state (Couple only)
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  // Guest Feature Locked Modal state
+  const [showLockedModal, setShowLockedModal] = useState<boolean>(false);
 
   const effectiveDisplayRole = React.useMemo(() => {
     // 1. Check global profile displayRole or role
@@ -102,6 +105,15 @@ export default function MoodboardScreen() {
   }, [profile, userEvents, eventSlug]);
 
   const isCoupleRole = effectiveDisplayRole === 'BRIDE' || effectiveDisplayRole === 'GROOM';
+
+  const handleUploadButtonPress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (isCoupleRole) {
+      setShowUploadModal(true);
+    } else {
+      setShowLockedModal(true);
+    }
+  }, [isCoupleRole]);
 
   const fetchSaves = useCallback(async () => {
     try {
@@ -403,10 +415,7 @@ export default function MoodboardScreen() {
             {/* Quick Header + Upload Button */}
             <Pressable
               style={styles.headerAddBtn}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                setShowUploadModal(true);
-              }}
+              onPress={handleUploadButtonPress}
               hitSlop={8}
             >
               <Ionicons name="add" size={18} color="#ffffff" />
@@ -522,10 +531,7 @@ export default function MoodboardScreen() {
             <View style={styles.emptyActionsRow}>
               <Pressable
                 style={styles.emptyUploadBtn}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  setShowUploadModal(true);
-                }}
+                onPress={handleUploadButtonPress}
               >
                 <Ionicons name="cloud-upload-outline" size={16} color="#ffffff" />
                 <Text style={styles.emptyUploadBtnText}>UPLOAD INSPIRATION</Text>
@@ -553,17 +559,14 @@ export default function MoodboardScreen() {
       {/* ── Floating Action Button (+ Upload Inspiration) ── */}
       <Pressable
         style={styles.fabUploadButton}
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-          setShowUploadModal(true);
-        }}
+        onPress={handleUploadButtonPress}
         android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
       >
         <Ionicons name="add" size={22} color="#ffffff" />
         <Text style={styles.fabUploadText}>INSPIRATION</Text>
       </Pressable>
 
-      {/* ── Add Inspiration Modal ── */}
+      {/* ── Add Inspiration Modal (Couple Only) ── */}
       <AddInspirationModal
         visible={showUploadModal}
         displayRole={effectiveDisplayRole}
@@ -573,6 +576,12 @@ export default function MoodboardScreen() {
         onSuccess={(_item) => {
           fetchSaves();
         }}
+      />
+
+      {/* ── Couple Feature Locked Modal (Guests) ── */}
+      <CoupleFeatureLockedModal
+        visible={showLockedModal}
+        onClose={() => setShowLockedModal(false)}
       />
 
       {/* ── Shared Universal Editorial Lightbox Modal ── */}
