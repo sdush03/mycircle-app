@@ -26,6 +26,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withSpring,
+  withSequence,
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
@@ -279,13 +280,19 @@ export function EditorialLightbox({
   );
 
   const triggerHeartPop = useCallback(() => {
-    heartPopScale.value = 0.4;
+    heartPopScale.value = 0.3;
     heartPopOpacity.value = 1;
-    heartPopScale.value = withSpring(1.2, { damping: 10, stiffness: 200 }, () => {
-      'worklet';
-      heartPopOpacity.value = withTiming(0, { duration: 350 });
-    });
+    heartPopScale.value = withSpring(1.2, { damping: 12, stiffness: 180 });
+    heartPopOpacity.value = withSequence(
+      withTiming(1, { duration: 350 }),
+      withTiming(0, { duration: 250 })
+    );
   }, [heartPopScale, heartPopOpacity]);
+
+  useEffect(() => {
+    heartPopScale.value = 0;
+    heartPopOpacity.value = 0;
+  }, [visible, activeIdx]);
 
   const activeIdxRef = useRef(activeIdx);
   activeIdxRef.current = activeIdx;
@@ -371,7 +378,7 @@ export function EditorialLightbox({
       setSavedUrls(updated);
       setRemovedUrls((prev) => new Set([...prev, currentUrl]));
       showToast('Removed from Moodboard');
-      await savesService.unsavePhoto(currentUrl, currentItem?.id);
+      await savesService.unsavePhoto(currentUrl, onUnsave ? currentItem?.id : undefined);
       if (onUnsave && currentItem) {
         if (images.length > 1) {
           const hasNext = activeIdx < images.length - 1;
