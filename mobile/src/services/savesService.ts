@@ -20,9 +20,12 @@ export interface SavedPhotoItem {
 
 export const savesService = {
   async savePhoto(photoUrl: string, storyId?: string, displayRole?: string): Promise<SavedPhotoItem | null> {
-    if (!useAuthStore.getState().token) return null;
+    const authState = useAuthStore.getState();
+    if (!authState.token) return null;
+    const eventSlug = authState.eventSlug || undefined;
+    const email = authState.profile?.email || undefined;
     try {
-      const res = await api.post('/api/saves', { photoUrl, storyId, sourceType: 'FEATURED_STORY', displayRole });
+      const res = await api.post('/api/saves', { photoUrl, storyId, sourceType: 'FEATURED_STORY', displayRole, eventSlug, email });
       tabEvents.emit(EVENT_SAVES_UPDATED);
       return res.data?.savedPhoto || null;
     } catch (err: any) {
@@ -34,9 +37,12 @@ export const savesService = {
   },
 
   async unsavePhoto(photoUrl: string, id?: number): Promise<boolean> {
-    if (!useAuthStore.getState().token) return false;
+    const authState = useAuthStore.getState();
+    if (!authState.token) return false;
+    const eventSlug = authState.eventSlug || undefined;
+    const email = authState.profile?.email || undefined;
     try {
-      const res = await api.delete('/api/saves', { params: { photoUrl, id } });
+      const res = await api.delete('/api/saves', { params: { photoUrl, id, eventSlug, email } });
       tabEvents.emit(EVENT_SAVES_UPDATED);
       return !!res.data?.success;
     } catch (err: any) {
@@ -48,9 +54,12 @@ export const savesService = {
   },
 
   async getSavedPhotos(): Promise<SavedPhotoItem[]> {
-    if (!useAuthStore.getState().token) return [];
+    const authState = useAuthStore.getState();
+    if (!authState.token) return [];
+    const eventSlug = authState.eventSlug || undefined;
+    const email = authState.profile?.email || undefined;
     try {
-      const res = await api.get('/api/saves');
+      const res = await api.get('/api/saves', { params: { eventSlug, email } });
       return res.data?.saves || [];
     } catch (err: any) {
       if (err?.response?.status !== 401) {
@@ -61,9 +70,12 @@ export const savesService = {
   },
 
   async checkIsSaved(photoUrl: string): Promise<{ isSaved: boolean; savedBy?: { userId: number; displayRole: string } }> {
-    if (!useAuthStore.getState().token) return { isSaved: false };
+    const authState = useAuthStore.getState();
+    if (!authState.token) return { isSaved: false };
+    const eventSlug = authState.eventSlug || undefined;
+    const email = authState.profile?.email || undefined;
     try {
-      const res = await api.get('/api/saves/check', { params: { photoUrl } });
+      const res = await api.get('/api/saves/check', { params: { photoUrl, eventSlug, email } });
       return res.data || { isSaved: false };
     } catch (err: any) {
       if (err?.response?.status !== 401) {
