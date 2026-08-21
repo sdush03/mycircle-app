@@ -48,6 +48,7 @@ interface AddInspirationModalProps {
   visible: boolean;
   displayRole?: string;
   onClose: () => void;
+  onUploadStart?: (payload: { localUri: string; tags: string[]; displayRole?: string }) => void;
   onSuccess: (savedItem: SavedPhotoItem) => void;
 }
 
@@ -130,13 +131,32 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
   };
 
   const handleUpload = async () => {
-    if (!selectedUri || isUploading) return;
+    if (!selectedUri) return;
+    const uriToUpload = selectedUri;
+    const tagsToUpload = [...selectedTags];
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    if (onUploadStart) {
+      onUploadStart({
+        localUri: uriToUpload,
+        tags: tagsToUpload,
+        displayRole: displayRole,
+      });
+      setSelectedUri(null);
+      setSelectedTags([]);
+      setCustomTagInput('');
+      setErrorMessage(null);
+      onClose();
+      return;
+    }
+
+    // Fallback if onUploadStart not provided
     setIsUploading(true);
     setErrorMessage(null);
 
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      const savedItem = await savesService.uploadInspirationPhoto(selectedUri, selectedTags, displayRole);
+      const savedItem = await savesService.uploadInspirationPhoto(uriToUpload, tagsToUpload, displayRole);
       if (savedItem) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         setSelectedUri(null);

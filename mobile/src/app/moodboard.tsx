@@ -11,6 +11,7 @@ import {
   Dimensions,
   Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
@@ -22,7 +23,7 @@ import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/E
 import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
 import { AddInspirationModal } from '../components/moodboard/AddInspirationModal';
 import { CoupleFeatureLockedModal } from '../components/moodboard/CoupleFeatureLockedModal';
-import { getPhotoAspect } from '../utils/photoDimensionCache';
+import { getPhotoAspect, savePhotoAspect } from '../utils/photoDimensionCache';
 import {
   FONT_FUTURA,
   FONT_FUTURA_BOLD,
@@ -36,7 +37,16 @@ import {
 
 type MoodboardFilterType = 'all' | 'mine' | 'partner';
 
+interface PendingUploadItem {
+  tempId: string;
+  localUri: string;
+  tags: string[];
+  displayRole?: string;
+  failed?: boolean;
+}
+
 export default function MoodboardScreen() {
+  const insets = useSafeAreaInsets();
   const handleScroll = useScrollTabBarCollapse();
   const { profile, userEvents, eventSlug } = useAuthStore();
 
@@ -52,6 +62,19 @@ export default function MoodboardScreen() {
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   // Guest Feature Locked Modal state
   const [showLockedModal, setShowLockedModal] = useState<boolean>(false);
+
+  // Instagram-style Background Upload queue
+  const [pendingUploads, setPendingUploads] = useState<PendingUploadItem[]>([]);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  const showMoodboardToast = useCallback((msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 3200);
+  }, []);
 
   const effectiveDisplayRole = React.useMemo(() => {
     // 1. Check global profile displayRole or role
@@ -114,6 +137,69 @@ export default function MoodboardScreen() {
       setShowLockedModal(true);
     }
   }, [isCoupleRole]);
+
+  // Instagram-style background upload dispatcher
+  const handleBackgroundUpload = useCallback(async (payload: { localUri: string; tags: string[]; displayRole?: string }) => {
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // Immediately pre-calculate local image aspect ratio for zero layout shift
+    RNImage.getSize(
+      payload.localUri,
+      (w, h) => {
+        if (w > 0 && h > 0) {
+          const aspect = w / h;
+          setAspectMap((prev) => ({ ...prev, [payload.localUri]: aspect }));
+          savePhotoAspect(payload.localUri, aspect);
+        }
+      },
+      () => {}
+    );
+
+    const newPendingItem: PendingUploadItem = {
+      tempId,
+      localUri: payload.localUri,
+      tags: payload.tags,
+      displayRole: payload.displayRole,
+      failed: false,
+    };
+
+    setPendingUploads((prev) => [newPendingItem, ...prev]);
+    showMoodboardToast('⚡ Uploading inspiration in background...');
+
+    try {
+      const saved = await savesService.uploadInspirationPhoto(
+        payload.localUri,
+        payload.tags,
+        payload.displayRole
+      );
+
+      if (saved) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId));
+        setSaves((prev) => [saved, ...prev.filter((s) => s.id !== saved.id && s.photoUrl !== saved.photoUrl)]);
+        showMoodboardToast('Inspiration saved to Moodboard ✨');
+      } else {
+        throw new Error('Upload completed without saved response');
+      }
+    } catch (err: any) {
+      console.error('[Moodboard] Background upload error:', err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setPendingUploads((prev) =>
+        prev.map((p) => (p.tempId === tempId ? { ...p, failed: true } : p))
+      );
+      showMoodboardToast('⚠️ Upload failed. Tap photo to retry.');
+    }
+  }, [showMoodboardToast]);
+
+  const handleRetryPendingUpload = useCallback((item: PendingUploadItem) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setPendingUploads((prev) => prev.filter((p) => p.tempId !== item.tempId));
+    handleBackgroundUpload({
+      localUri: item.localUri,
+      tags: item.tags,
+      displayRole: item.displayRole,
+    });
+  }, [handleBackgroundUpload]);
 
   const fetchSaves = useCallback(async () => {
     try {
@@ -187,10 +273,31 @@ export default function MoodboardScreen() {
     return false;
   }, [profile, effectiveDisplayRole]);
 
+  // Combine background optimistic uploads with confirmed saves
+  const combinedSaves = React.useMemo(() => {
+    const optimisticList: any[] = pendingUploads.map((p) => ({
+      id: p.tempId,
+      photoUrl: p.localUri,
+      uri: p.localUri,
+      fullUri: p.localUri,
+      sourceType: 'MANUAL_UPLOAD',
+      tags: p.tags,
+      isPending: !p.failed,
+      hasFailed: !!p.failed,
+      pendingItem: p,
+      savedBy: {
+        name: 'YOU',
+        displayRole: (effectiveDisplayRole || 'YOU') as any,
+      },
+      userId: profile?.id,
+    }));
+    return [...optimisticList, ...saves];
+  }, [pendingUploads, saves, effectiveDisplayRole, profile]);
+
   // Extract all distinct tags present across saves
   const availableTags = React.useMemo(() => {
     const tagsFound = new Set<string>();
-    saves.forEach((item) => {
+    combinedSaves.forEach((item) => {
       if (Array.isArray(item.tags)) {
         item.tags.forEach((t) => {
           if (t && typeof t === 'string' && t.trim()) {
@@ -200,20 +307,20 @@ export default function MoodboardScreen() {
       }
     });
     return ['ALL', ...Array.from(tagsFound)];
-  }, [saves]);
+  }, [combinedSaves]);
 
   // Filter saves by couple/mine/partner AND by selected tag
   const filteredSaves = React.useMemo(() => {
-    return saves.filter((item) => {
+    return combinedSaves.filter((item) => {
       if (!isCoupleRole) {
-        if (!isMine(item)) return false;
+        if (!isMine(item) && !item.isPending && !item.hasFailed) return false;
       } else {
         const itemRole = (item.savedBy?.displayRole || '').toString().toUpperCase();
-        const isCoupleItem = isMine(item) || ['BRIDE', 'GROOM'].includes(itemRole);
+        const isCoupleItem = isMine(item) || item.isPending || item.hasFailed || ['BRIDE', 'GROOM'].includes(itemRole);
         if (!isCoupleItem) return false;
 
-        if (selectedFilter === 'mine' && !isMine(item)) return false;
-        if (selectedFilter === 'partner' && isMine(item)) return false;
+        if (selectedFilter === 'mine' && !isMine(item) && !item.isPending && !item.hasFailed) return false;
+        if (selectedFilter === 'partner' && (isMine(item) || item.isPending || item.hasFailed)) return false;
       }
 
       // Tag filter
@@ -224,12 +331,12 @@ export default function MoodboardScreen() {
 
       return true;
     });
-  }, [saves, isCoupleRole, isMine, selectedFilter, selectedTag]);
+  }, [combinedSaves, isCoupleRole, isMine, selectedFilter, selectedTag]);
 
   const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
 
   useEffect(() => {
-    saves.forEach((item) => {
+    combinedSaves.forEach((item) => {
       const url = item.photoUrl;
       if (url && !aspectMap[url]) {
         RNImage.getSize(
@@ -243,7 +350,7 @@ export default function MoodboardScreen() {
         );
       }
     });
-  }, [saves]);
+  }, [combinedSaves]);
 
   // Shortest Column Height Balancing algorithm
   const { column0, column1 } = React.useMemo(() => {
@@ -325,9 +432,15 @@ export default function MoodboardScreen() {
     const cardId = item.id || item.photoUrl || `save-${item.globalIndex}`;
     const cardAspect = item.cardAspect || item.aspectRatio || 0.75;
     const isManualUpload = item.sourceType === 'MANUAL_UPLOAD';
+    const isPending = !!item.isPending;
+    const hasFailed = !!item.hasFailed;
 
     let badgeLabel = '';
-    if (photoMine) {
+    if (isPending) {
+      badgeLabel = '⚡ UPLOADING...';
+    } else if (hasFailed) {
+      badgeLabel = '⚠️ TAP TO RETRY';
+    } else if (photoMine) {
       badgeLabel = isManualUpload ? '📸 YOU' : 'YOU';
     } else if (item.savedBy?.displayRole === 'BRIDE') {
       const name = item.savedBy?.name ? item.savedBy.name.toUpperCase() : 'BRIDE';
@@ -356,6 +469,14 @@ export default function MoodboardScreen() {
           index={item.globalIndex ?? 0}
           isColumn0={isColumn0}
           onSelect={(bounds) => {
+            if (hasFailed && item.pendingItem) {
+              handleRetryPendingUpload(item.pendingItem);
+              return;
+            }
+            if (isPending) {
+              showMoodboardToast('⚡ Photo is uploading in background...');
+              return;
+            }
             setSelectedBounds(bounds);
             setSelectedPhotoIdx(item.globalIndex ?? 0);
           }}
@@ -365,9 +486,15 @@ export default function MoodboardScreen() {
           }}
         />
 
-        {/* Top Heart / Creator Badge */}
-        <View style={styles.cardBadgeOverlay}>
-          <Ionicons name="heart" size={12} color="#ef4444" />
+        {/* Top Heart / Creator / Uploading Badge */}
+        <View style={[styles.cardBadgeOverlay, hasFailed && styles.cardBadgeOverlayFailed, isPending && styles.cardBadgeOverlayPending]}>
+          {isPending ? (
+            <ActivityIndicator size="small" color="#ffffff" style={{ transform: [{ scale: 0.65 }] }} />
+          ) : hasFailed ? (
+            <Ionicons name="refresh-circle" size={13} color="#ffffff" />
+          ) : (
+            <Ionicons name="heart" size={12} color="#ef4444" />
+          )}
           <Text style={styles.badgeRoleText}>{badgeLabel}</Text>
         </View>
 
@@ -392,6 +519,22 @@ export default function MoodboardScreen() {
 
   return (
     <View style={styles.container}>
+      {/* ── Instagram-Style Floating Top Status Banner ── */}
+      {toastMessage && (
+        <View style={[styles.toastBannerContainer, { top: insets.top + 8 }]}>
+          <View style={[styles.toastBannerCard, toastMessage.includes('⚠️') && styles.toastBannerCardError]}>
+            {toastMessage.includes('⚡') ? (
+              <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 6 }} />
+            ) : toastMessage.includes('⚠️') ? (
+              <Ionicons name="alert-circle" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+            ) : (
+              <Ionicons name="checkmark-circle" size={16} color="#10b981" style={{ marginRight: 6 }} />
+            )}
+            <Text style={styles.toastBannerText}>{toastMessage}</Text>
+          </View>
+        </View>
+      )}
+
       <ScrollView
         ref={mainScrollRef}
         showsVerticalScrollIndicator={false}
@@ -441,7 +584,7 @@ export default function MoodboardScreen() {
               }}
             >
               <Text style={[styles.filterPillText, selectedFilter === 'all' && styles.filterPillTextActive]}>
-                ALL SAVES ({saves.length})
+                ALL SAVES ({combinedSaves.length})
               </Text>
             </Pressable>
 
@@ -509,7 +652,7 @@ export default function MoodboardScreen() {
         </View>
 
         {/* ── Content View ── */}
-        {loading ? (
+        {loading && combinedSaves.length === 0 ? (
           <View style={styles.centerLoading}>
             <ActivityIndicator size="small" color="#111111" />
           </View>
@@ -573,6 +716,7 @@ export default function MoodboardScreen() {
         onClose={() => {
           setShowUploadModal(false);
         }}
+        onUploadStart={handleBackgroundUpload}
         onSuccess={(_item) => {
           fetchSaves();
         }}
@@ -608,6 +752,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  toastBannerContainer: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    zIndex: 1000,
+    alignItems: 'center',
+  },
+  toastBannerCard: {
+    backgroundColor: 'rgba(17, 17, 17, 0.94)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  toastBannerCardError: {
+    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+  },
+  toastBannerText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    letterSpacing: 0.4,
   },
   scrollContent: {
     paddingBottom: 120,
@@ -831,6 +1004,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+  },
+  cardBadgeOverlayPending: {
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 0.5,
+  },
+  cardBadgeOverlayFailed: {
+    backgroundColor: 'rgba(220, 38, 38, 0.85)',
   },
   badgeRoleText: {
     fontSize: 9,
