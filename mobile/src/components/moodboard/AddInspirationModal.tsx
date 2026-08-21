@@ -64,6 +64,9 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
   const [cameraRollPhotos, setCameraRollPhotos] = useState<MediaLibrary.Asset[]>([]);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [isLoadingPhotos, setIsLoadingPhotos] = useState<boolean>(false);
+  const [endCursor, setEndCursor] = useState<string | undefined>(undefined);
+  const [hasNextPage, setHasNextPage] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -78,6 +81,8 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
       setSelectedTags([]);
       setCustomTagInput('');
       setErrorMessage(null);
+      setEndCursor(undefined);
+      setHasNextPage(true);
     }
   }, [visible]);
 
@@ -95,11 +100,33 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
         setCameraRollPhotos(result.assets || []);
+        setEndCursor(result.endCursor);
+        setHasNextPage(result.hasNextPage);
       }
     } catch (err) {
       console.warn('[AddInspirationModal] Failed to load media library:', err);
     } finally {
       setIsLoadingPhotos(false);
+    }
+  };
+
+  const loadMorePhotos = async () => {
+    if (!hasNextPage || isLoadingMore || isLoadingPhotos || !hasPermission) return;
+    setIsLoadingMore(true);
+    try {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: 60,
+        after: endCursor,
+        mediaType: ['photo'],
+        sortBy: [MediaLibrary.SortBy.creationTime],
+      });
+      setCameraRollPhotos((prev) => [...prev, ...(result.assets || [])]);
+      setEndCursor(result.endCursor);
+      setHasNextPage(result.hasNextPage);
+    } catch (err) {
+      console.warn('[AddInspirationModal] Failed to load more photos:', err);
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -351,9 +378,18 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
                 <FlatList
                   data={cameraRollPhotos}
                   numColumns={3}
-                  keyExtractor={(item) => item.id}
+                  keyExtractor={(item, idx) => `${item.id}-${idx}`}
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.cameraRollGrid}
+                  onEndReached={loadMorePhotos}
+                  onEndReachedThreshold={0.5}
+                  ListFooterComponent={
+                    isLoadingMore ? (
+                      <View style={{ paddingVertical: 18, alignItems: 'center', width: '100%' }}>
+                        <ActivityIndicator size="small" color="#111111" />
+                      </View>
+                    ) : null
+                  }
                   renderItem={({ item }) => (
                     <Pressable
                       style={styles.gridThumbWrapper}
