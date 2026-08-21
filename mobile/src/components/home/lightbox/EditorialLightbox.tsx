@@ -5,6 +5,7 @@ import {
   Text,
   Modal,
   Pressable,
+  ScrollView,
   FlatList,
   Dimensions,
   Share,
