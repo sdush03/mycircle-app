@@ -159,30 +159,6 @@ export function EditorialLightbox({
   // Auto-hide controls timer reference
   const autoHideTimerRef = useRef<any>(null);
 
-  // Option A: Floating Tag Bar state (Featured Story Save Tagging)
-  const [showTagBar, setShowTagBar] = useState<boolean>(false);
-  const [activeSavedPhotoId, setActiveSavedPhotoId] = useState<number | null>(null);
-  const [activeSavedPhotoTags, setActiveSavedPhotoTags] = useState<string[]>([]);
-  const tagBarTimerRef = useRef<any>(null);
-
-  const resetTagBarTimer = useCallback(() => {
-    if (tagBarTimerRef.current) clearTimeout(tagBarTimerRef.current);
-    tagBarTimerRef.current = setTimeout(() => {
-      setShowTagBar(false);
-    }, 4500);
-  }, []);
-
-  const handleToggleTagOnActivePhoto = useCallback(async (tag: string) => {
-    if (!activeSavedPhotoId) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const updated = activeSavedPhotoTags.includes(tag)
-      ? activeSavedPhotoTags.filter((t) => t !== tag)
-      : [...activeSavedPhotoTags, tag];
-    setActiveSavedPhotoTags(updated);
-    resetTagBarTimer();
-    await savesService.updatePhotoTags(activeSavedPhotoId, updated);
-  }, [activeSavedPhotoId, activeSavedPhotoTags, resetTagBarTimer]);
-
   const resetAutoHideTimer = useCallback(() => {
     if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
     autoHideTimerRef.current = setTimeout(() => {
@@ -193,6 +169,35 @@ export function EditorialLightbox({
   const pauseAutoHideTimer = useCallback(() => {
     if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
   }, []);
+
+  // Option A: Floating Tag Bar state (Featured Story Save Tagging)
+  const [showTagBar, setShowTagBar] = useState<boolean>(false);
+  const [activeSavedPhotoId, setActiveSavedPhotoId] = useState<number | null>(null);
+  const [activeSavedPhotoTags, setActiveSavedPhotoTags] = useState<string[]>([]);
+  const tagBarTimerRef = useRef<any>(null);
+
+  const resetTagBarTimer = useCallback((delay: number = 6000) => {
+    if (tagBarTimerRef.current) clearTimeout(tagBarTimerRef.current);
+    tagBarTimerRef.current = setTimeout(() => {
+      setShowTagBar(false);
+      resetAutoHideTimer();
+    }, delay);
+  }, [resetAutoHideTimer]);
+
+  const pauseTagBarTimer = useCallback(() => {
+    if (tagBarTimerRef.current) clearTimeout(tagBarTimerRef.current);
+  }, []);
+
+  const handleToggleTagOnActivePhoto = useCallback(async (tag: string) => {
+    if (!activeSavedPhotoId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const updated = activeSavedPhotoTags.includes(tag)
+      ? activeSavedPhotoTags.filter((t) => t !== tag)
+      : [...activeSavedPhotoTags, tag];
+    setActiveSavedPhotoTags(updated);
+    resetTagBarTimer(6000);
+    await savesService.updatePhotoTags(activeSavedPhotoId, updated);
+  }, [activeSavedPhotoId, activeSavedPhotoTags, resetTagBarTimer]);
 
   useEffect(() => {
     let animTimer: any = null;
@@ -890,19 +895,40 @@ export function EditorialLightbox({
                   <Ionicons name="checkmark-circle" size={13} color="#10b981" />
                   <Text style={styles.floatingTagTitle}>SAVED TO MOODBOARD · ADD TAGS</Text>
                 </View>
-                <Pressable
-                  onPress={() => setShowTagBar(false)}
-                  hitSlop={10}
-                  style={styles.floatingTagCloseBtn}
-                >
-                  <Ionicons name="close" size={13} color="rgba(255, 255, 255, 0.7)" />
-                </Pressable>
+                <View style={styles.floatingTagActionGroup}>
+                  <Pressable
+                    onPress={() => {
+                      setShowTagBar(false);
+                      pauseTagBarTimer();
+                      resetAutoHideTimer();
+                    }}
+                    hitSlop={8}
+                    style={styles.floatingTagDoneBtn}
+                  >
+                    <Text style={styles.floatingTagDoneText}>DONE</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setShowTagBar(false);
+                      pauseTagBarTimer();
+                      resetAutoHideTimer();
+                    }}
+                    hitSlop={8}
+                    style={styles.floatingTagCloseBtn}
+                  >
+                    <Ionicons name="close" size={13} color="rgba(255, 255, 255, 0.7)" />
+                  </Pressable>
+                </View>
               </View>
 
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.floatingTagChipsScroll}
+                onScrollBeginDrag={pauseTagBarTimer}
+                onScrollEndDrag={() => resetTagBarTimer(7000)}
+                onTouchStart={pauseTagBarTimer}
+                onTouchEnd={() => resetTagBarTimer(7000)}
               >
                 {PREDEFINED_EVENT_TAGS.map((tag) => {
                   const isSelected = activeSavedPhotoTags.includes(tag);
@@ -1234,6 +1260,23 @@ const styles = StyleSheet.create({
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     color: '#ffffff',
     letterSpacing: 1.2,
+  },
+  floatingTagActionGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  floatingTagDoneBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  floatingTagDoneText: {
+    fontSize: 8,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    color: '#ffffff',
+    letterSpacing: 0.8,
   },
   floatingTagCloseBtn: {
     width: 20,
