@@ -43,6 +43,7 @@ import {
   FONT_MONTSERRAT_SEMIBOLD,
   FONT_JOST_MEDIUM,
   FONT_JOST_REGULAR,
+  FONT_JOST_SEMIBOLD,
 } from '../../../constants/fonts';
 
 const { width, height: screenHeight } = Dimensions.get('screen');
