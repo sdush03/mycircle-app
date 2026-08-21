@@ -56,6 +56,7 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
   visible,
   displayRole,
   onClose,
+  onUploadStart,
   onSuccess,
 }) => {
   const insets = useSafeAreaInsets();
