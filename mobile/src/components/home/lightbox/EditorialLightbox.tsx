@@ -86,6 +86,7 @@ export interface EditorialLightboxProps {
   onDeletePhoto?: (item: any) => Promise<boolean | void>;
   enableLock?: boolean;
   onToggleLockPhoto?: (item: any) => Promise<boolean | void>;
+  storyId?: string;
 }
 
 export function EditorialLightbox({
@@ -106,6 +107,7 @@ export function EditorialLightbox({
   onDeletePhoto,
   enableLock = false,
   onToggleLockPhoto,
+  storyId,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);

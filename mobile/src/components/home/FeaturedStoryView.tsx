@@ -600,6 +600,7 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
           setLightboxBounds(null);
         }}
         title={story?.title || 'MISTY VISUALS'}
+        storyId={story?.id || story?.slug}
       />
     )}
   </GestureHandlerRootView>
