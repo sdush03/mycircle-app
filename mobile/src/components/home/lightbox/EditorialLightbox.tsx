@@ -1002,7 +1002,20 @@ export function EditorialLightbox({
                     );
                   })()}
 
-                  <Text style={styles.lightboxCategoryText}>{getDisplaySubtitle()}</Text>
+                  <Pressable
+                    onPress={() => {
+                      if (isSaved && !onToggleLike) {
+                        setActiveSavedPhotoId(currentItem?.id || null);
+                        setActiveSavedPhotoTags(Array.isArray(currentItem?.tags) ? currentItem.tags : []);
+                        setShowTagBar(true);
+                        resetTagBarTimer(7000);
+                      }
+                    }}
+                    hitSlop={8}
+                    disabled={!isSaved || !!onToggleLike}
+                  >
+                    <Text style={styles.lightboxCategoryText}>{getDisplaySubtitle()}</Text>
+                  </Pressable>
 
                   {/* Actions Row */}
                   <View style={styles.lightboxActionRow}>
