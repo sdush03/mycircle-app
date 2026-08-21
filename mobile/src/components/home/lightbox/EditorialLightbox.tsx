@@ -47,6 +47,19 @@ import {
 
 const { width, height: screenHeight } = Dimensions.get('screen');
 
+const PREDEFINED_EVENT_TAGS = [
+  '#Haldi',
+  '#Mehendi',
+  '#Sangeet',
+  '#Wedding',
+  '#Reception',
+  '#Decor',
+  '#Outfits',
+  '#Poses',
+  '#Jewelry',
+  '#Makeup',
+];
+
 export interface LightboxBounds {
   x: number;
   y: number;
@@ -141,6 +154,30 @@ export function EditorialLightbox({
 
   // Auto-hide controls timer reference
   const autoHideTimerRef = useRef<any>(null);
+
+  // Option A: Floating Tag Bar state (Featured Story Save Tagging)
+  const [showTagBar, setShowTagBar] = useState<boolean>(false);
+  const [activeSavedPhotoId, setActiveSavedPhotoId] = useState<number | null>(null);
+  const [activeSavedPhotoTags, setActiveSavedPhotoTags] = useState<string[]>([]);
+  const tagBarTimerRef = useRef<any>(null);
+
+  const resetTagBarTimer = useCallback(() => {
+    if (tagBarTimerRef.current) clearTimeout(tagBarTimerRef.current);
+    tagBarTimerRef.current = setTimeout(() => {
+      setShowTagBar(false);
+    }, 4500);
+  }, []);
+
+  const handleToggleTagOnActivePhoto = useCallback(async (tag: string) => {
+    if (!activeSavedPhotoId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const updated = activeSavedPhotoTags.includes(tag)
+      ? activeSavedPhotoTags.filter((t) => t !== tag)
+      : [...activeSavedPhotoTags, tag];
+    setActiveSavedPhotoTags(updated);
+    resetTagBarTimer();
+    await savesService.updatePhotoTags(activeSavedPhotoId, updated);
+  }, [activeSavedPhotoId, activeSavedPhotoTags, resetTagBarTimer]);
 
   const resetAutoHideTimer = useCallback(() => {
     if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
@@ -292,6 +329,8 @@ export function EditorialLightbox({
   useEffect(() => {
     heartPopScale.value = 0;
     heartPopOpacity.value = 0;
+    setShowTagBar(false);
+    if (tagBarTimerRef.current) clearTimeout(tagBarTimerRef.current);
   }, [visible, activeIdx]);
 
   const activeIdxRef = useRef(activeIdx);
@@ -405,8 +444,18 @@ export function EditorialLightbox({
         return next;
       });
       triggerHeartPop();
-      showToast('Photo saved to Moodboard ✨');
-      await savesService.savePhoto(currentUrl);
+
+      const saved = await savesService.savePhoto(currentUrl, storyId || currentItem?.storyId);
+
+      // If saving from a Featured Story (not in personal gallery like mode and not in moodboard view)
+      if (!onToggleLike && !onUnsave && saved && saved.id) {
+        setActiveSavedPhotoId(saved.id);
+        setActiveSavedPhotoTags(saved.tags || []);
+        setShowTagBar(true);
+        resetTagBarTimer();
+      } else {
+        showToast('Photo saved to Moodboard ✨');
+      }
     }
   };
 
@@ -829,6 +878,46 @@ export function EditorialLightbox({
             </View>
           </Animated.View>
 
+          {/* ── Option A: Floating Quick Tag Bar (Zero-Friction Instagram/Pinterest Style) ── */}
+          {showTagBar && (
+            <View style={[styles.floatingTagBarContainer, { bottom: Math.max(insets.bottom, 24) + 84 }]}>
+              <View style={styles.floatingTagBarHeader}>
+                <View style={styles.floatingTagTitleRow}>
+                  <Ionicons name="checkmark-circle" size={13} color="#10b981" />
+                  <Text style={styles.floatingTagTitle}>SAVED TO MOODBOARD · ADD TAGS</Text>
+                </View>
+                <Pressable
+                  onPress={() => setShowTagBar(false)}
+                  hitSlop={10}
+                  style={styles.floatingTagCloseBtn}
+                >
+                  <Ionicons name="close" size={13} color="rgba(255, 255, 255, 0.7)" />
+                </Pressable>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.floatingTagChipsScroll}
+              >
+                {PREDEFINED_EVENT_TAGS.map((tag) => {
+                  const isSelected = activeSavedPhotoTags.includes(tag);
+                  return (
+                    <Pressable
+                      key={tag}
+                      onPress={() => handleToggleTagOnActivePhoto(tag)}
+                      style={[styles.floatingTagChip, isSelected && styles.floatingTagChipActive]}
+                    >
+                      <Text style={[styles.floatingTagChipText, isSelected && styles.floatingTagChipTextActive]}>
+                        {tag}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
           {/* Top Editorial Header Gradient Overlay */}
           {showControls && !isZoomed && (
             <Animated.View style={[styles.lightboxHeaderGradient, controlsAnimatedStyle]} pointerEvents="box-none">
@@ -1104,5 +1193,75 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  // Floating Quick Tag Bar
+  floatingTagBarContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 150,
+    backgroundColor: 'rgba(18, 18, 18, 0.94)',
+    borderRadius: 18,
+    paddingTop: 10,
+    paddingBottom: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  floatingTagBarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  floatingTagTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  floatingTagTitle: {
+    fontSize: 9,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    color: '#ffffff',
+    letterSpacing: 1.2,
+  },
+  floatingTagCloseBtn: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  floatingTagChipsScroll: {
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  floatingTagChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  floatingTagChipActive: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+  },
+  floatingTagChipText: {
+    fontSize: 10,
+    fontFamily: FONT_JOST_MEDIUM,
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  floatingTagChipTextActive: {
+    color: '#111111',
+    fontFamily: FONT_JOST_SEMIBOLD,
   },
 });
