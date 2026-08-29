@@ -18,7 +18,7 @@ export function formatUniversalGalleryImages(
         originalIndex: idx,
         id: `photo-${idx}-${p.slice(-10)}`,
         uri: getThumbnailUrl(p, 400),
-        fullUri: p,
+        fullUri: getFullPhotoUrl(p),
         blurUri: null,
         width: null,
         height: null,

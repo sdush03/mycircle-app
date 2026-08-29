@@ -219,8 +219,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     try {
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
-      await SecureStore.deleteItemAsync(PROFILE_KEY);
+      await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
+      await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => {});
+      await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
+      await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
+      await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
+
       // Sign out of Google so the account picker is shown on next sign-in
       try {
         const { GoogleSignin } = require('@react-native-google-signin/google-signin');
@@ -228,7 +232,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } catch (_) {
         // Native module may not be available in all environments (e.g. Expo Go)
       }
-      set({ token: null, profile: null, isLoading: false, eventSlug: null, passcode: null, isPhoneSkipped: false });
+      set({
+        token: null,
+        profile: null,
+        userEvents: [],
+        galleryCache: {},
+        isLoading: false,
+        eventSlug: null,
+        passcode: null,
+        eventCoverUrl: null,
+        eventTitle: null,
+        openedFrom: null,
+        isPhoneSkipped: false,
+      });
     } catch (e) {
       console.error('Error deleting auth state', e);
     }

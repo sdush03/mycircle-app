@@ -21,6 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../services/api';
+import { getThumbnailUrl } from '../../utils/imageUrl';
 import {
   FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
@@ -458,7 +459,17 @@ export default function SettingsModal({
                     <Text style={styles.emptyText}>You have not joined any celebrations yet.</Text>
                   ) : (
                     userEvents.map((ev, index) => {
-                      const cover = ev.coverImage || ev.imageUrl;
+                      const rawCover =
+                        ev.coverPhotoUrl ||
+                        ev.cover_photo_url ||
+                        ev.coverPhotoMobileUrl ||
+                        ev.cover_photo_mobile_url ||
+                        ev.coverUrl ||
+                        ev.cover_url ||
+                        ev.coverImage ||
+                        ev.imageUrl ||
+                        null;
+                      const cover = rawCover ? getThumbnailUrl(rawCover, 200) : null;
                       const title = ev.title || ev.name || 'Celebration';
                       const date = ev.date || ev.eventDate;
                       return (
@@ -600,7 +611,7 @@ export default function SettingsModal({
               <Text style={styles.logoutBtnText}>Log Out</Text>
             </TouchableOpacity>
 
-            <Text style={styles.versionText}>MyCircle • v1.1.2</Text>
+            <Text style={styles.versionText}>MyCircle • v1.1.3</Text>
           </ScrollView>
         )}
 

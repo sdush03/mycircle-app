@@ -61,7 +61,7 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
           </Text>
           <View style={styles.divider} />
           <Pressable style={styles.button} onPress={requestPermission}>
-            <Text style={styles.buttonText}>Grant Permission & Consent</Text>
+            <Text style={styles.buttonText}>Continue</Text>
           </Pressable>
         </Pressable>
       </Pressable>

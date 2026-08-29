@@ -77,38 +77,54 @@ export default function MoodboardScreen() {
   }, []);
 
   const effectiveDisplayRole = React.useMemo(() => {
-    // 1. Prioritize role for the currently active event
-    if (eventSlug && Array.isArray(userEvents) && userEvents.length > 0) {
-      const thisEvent = userEvents.find((e: any) => {
-        const slug = e.slug || e.eventSlug || e.event?.slug || '';
-        return slug === eventSlug;
-      });
-      if (thisEvent) {
-        const evRole = (
-          thisEvent.guestInfo?.displayRole ||
-          thisEvent.displayRole ||
-          thisEvent.role ||
-          thisEvent.guestRole ||
-          thisEvent.userRole ||
-          thisEvent.guest?.displayRole ||
-          thisEvent.guest?.role ||
-          ''
-        ).toString().toUpperCase();
-        if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
-        return 'GUEST';
-      }
-    }
-
-    // 2. Global profile displayRole check (only if explicitly BRIDE or GROOM)
+    // 1. Check global profile displayRole or role
     const pRole = (
       profile?.displayRole ||
+      (profile as any)?.role ||
       (profile as any)?.userRole ||
       ''
     ).toString().toUpperCase();
 
     if (['BRIDE', 'GROOM'].includes(pRole)) return pRole;
 
-    return 'GUEST';
+    // 2. Check per-event role from userEvents list
+    if (Array.isArray(userEvents) && userEvents.length > 0) {
+      if (eventSlug) {
+        const thisEvent = userEvents.find((e: any) => {
+          const slug = e.slug || e.eventSlug || e.event?.slug || '';
+          return slug === eventSlug;
+        });
+        if (thisEvent) {
+          const evRole = (
+            thisEvent.guestInfo?.displayRole ||
+            thisEvent.displayRole ||
+            thisEvent.role ||
+            thisEvent.guestRole ||
+            thisEvent.userRole ||
+            thisEvent.guest?.displayRole ||
+            thisEvent.guest?.role ||
+            ''
+          ).toString().toUpperCase();
+          if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+        }
+      }
+
+      for (const ev of userEvents) {
+        const evRole = (
+          ev.guestInfo?.displayRole ||
+          ev.displayRole ||
+          ev.role ||
+          ev.guestRole ||
+          ev.userRole ||
+          ev.guest?.displayRole ||
+          ev.guest?.role ||
+          ''
+        ).toString().toUpperCase();
+        if (['BRIDE', 'GROOM'].includes(evRole)) return evRole;
+      }
+    }
+
+    return pRole || 'GUEST';
   }, [profile, userEvents, eventSlug]);
 
   const isCoupleRole = effectiveDisplayRole === 'BRIDE' || effectiveDisplayRole === 'GROOM';

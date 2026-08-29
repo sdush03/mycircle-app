@@ -5,36 +5,37 @@ import {
   Text,
   ScrollView,
   RefreshControl,
-  Image as RNImage,
   Pressable,
   Dimensions,
   Modal,
   ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { useAuthStore } from '../store/authStore';
-import { savesService, SavedPhotoItem } from '../services/savesService';
-import { tabEvents, TAB_OPEN_PROFILE_SETTINGS, EVENT_SAVES_UPDATED, EVENT_JOINED_CELEBRATION, TAB_SCROLL_TO_TOP_PROFILE } from '../lib/tabEvents';
+import {
+  tabEvents,
+  TAB_OPEN_PROFILE_SETTINGS,
+  EVENT_SAVES_UPDATED,
+  EVENT_JOINED_CELEBRATION,
+  TAB_SCROLL_TO_TOP_PROFILE,
+} from '../lib/tabEvents';
 import { EditorialLightbox, LightboxBounds } from '../components/home/lightbox/EditorialLightbox';
+import { MasonryCard } from '../components/home/lightbox/components/MasonryCard';
 import CameraViewScreen from '../components/mycircle/CameraView';
 import SettingsModal from '../components/profile/SettingsModal';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
-import api from '../services/api';
+import api, { guestApi } from '../services/api';
 import { getThumbnailUrl, getFullPhotoUrl } from '../utils/imageUrl';
+import { getPhotoAspect } from '../utils/photoDimensionCache';
 import {
-  FONT_FUTURA,
   FONT_FUTURA_BOLD,
-  FONT_MONTSERRAT_REGULAR,
-  FONT_MONTSERRAT_MEDIUM,
   FONT_MONTSERRAT_SEMIBOLD,
   FONT_JOST_REGULAR,
-  FONT_JOST_MEDIUM,
 } from '../constants/fonts';
 
 const { width } = Dimensions.get('window');
@@ -49,27 +50,61 @@ interface EventMatchedGroup {
   photos: any[];
 }
 
-// Helper to extract thumbnail URI for grid cards (fast loading)
-const getPhotoUri = (p: any): string => {
-  return getThumbnailUrl(p, 400);
-};
+// Map raw photo object to standard photo format
+function mapPhotoItem(p: any) {
+  const fullUri = getFullPhotoUrl(p);
+  const thumbUri = getThumbnailUrl(p, 400);
+  const w =
+    Number(p.width) ||
+    Number(p.img_width) ||
+    Number(p.imageWidth) ||
+    Number(p.meta?.width) ||
+    Number(p.metadata?.width) ||
+    0;
+  const h =
+    Number(p.height) ||
+    Number(p.img_height) ||
+    Number(p.imageHeight) ||
+    Number(p.meta?.height) ||
+    Number(p.metadata?.height) ||
+    0;
+  const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
+  const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : Number(p.aspectRatio) || Number(p.aspect_ratio) || null);
 
-// Helper to extract full-resolution 4K URI for Lightbox preview
-const getPhotoFullUri = (p: any): string => {
-  return getFullPhotoUrl(p);
-};
+  const rawId = p.id || p.photoUrl || p.url || p.uri || p.r2Url || p.r2_url || thumbUri || fullUri;
 
-// Column Balancing Algorithm — EXACTLY matching FeaturedStoryView
-const balancePhotosIntoColumns = (photosList: any[], aspectMap: { [url: string]: number } = {}) => {
+  return {
+    ...p,
+    id: rawId,
+    r2Url: thumbUri,
+    uri: thumbUri,
+    fullUri: fullUri,
+    photoUrl: fullUri,
+    width: w || undefined,
+    height: h || undefined,
+    aspectRatio,
+    blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
+    tabName: p.tabName || p.tab_name || null,
+    isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
+    likeCount:
+      typeof p.likeCount === 'number'
+        ? p.likeCount
+        : typeof p.likesCount === 'number'
+        ? p.likesCount
+        : p._count?.likes || 0,
+  };
+}
+
+// Balance photos into 2 columns for Masonry layout
+const balancePhotosIntoColumns = (photosList: any[]) => {
   const cols: [any[], any[]] = [[], []];
   const colHeights = [0, 0];
 
   photosList.forEach((photo: any, index: number) => {
-    const photoUri = getPhotoUri(photo);
     const realAspect =
       photo.width && photo.height && Number(photo.height) > 0
         ? Number(photo.width) / Number(photo.height)
-        : photo.aspectRatio || aspectMap[photoUri] || null;
+        : photo.aspectRatio || null;
 
     const isLandscape = realAspect ? realAspect > 1.05 : photo.isHorizontal;
 
@@ -81,8 +116,8 @@ const balancePhotosIntoColumns = (photosList: any[], aspectMap: { [url: string]:
       cardAspect = cycle === 0 ? 2 / 3 : cycle === 1 ? 3 / 4 : 4 / 5;
     }
 
-    const rawId = photo.id || photo.photoUrl || photo.url || photo.uri || photo.r2Url || photo.r2_url || photoUri;
-    const cardKey = rawId ? `card-${rawId}` : `card-photo-${index}`;
+    const rawId = photo.id || photo.photoUrl || photo.url || photo.uri || photo.r2Url || `photo-${index}`;
+    const cardKey = `card-${rawId}`;
 
     const photoWithAspect = {
       ...photo,
@@ -101,18 +136,9 @@ const balancePhotosIntoColumns = (photosList: any[], aspectMap: { [url: string]:
   return { column0: cols[0], column1: cols[1] };
 };
 
-function getProfileCardKey(p: any, fallbackIdx: number, groupTitle: string = ''): string {
-  if (!p) return `card-${groupTitle}-${fallbackIdx}`;
-  if (p.id !== undefined && p.id !== null) return `card-${p.id}`;
-  const uri = getPhotoUri(p) || getPhotoFullUri(p);
-  if (uri) return `card-${uri}`;
-  const idx = p.globalIndex !== undefined ? p.globalIndex : fallbackIdx;
-  return `card-${groupTitle}-${idx}`;
-}
-
 export default function ProfileScreen() {
   const handleScroll = useScrollTabBarCollapse();
-  const { profile, logout } = useAuthStore();
+  const { profile } = useAuthStore();
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>('my_photos');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -170,7 +196,6 @@ export default function ProfileScreen() {
   const [totalMatchedCount, setTotalMatchedCount] = useState<number>(0);
   const [loadingPhotos, setLoadingPhotos] = useState<boolean>(true);
 
-  const [savedPhotos, setSavedPhotos] = useState<SavedPhotoItem[]>([]);
   const [favouriteEventGroups, setFavouriteEventGroups] = useState<EventMatchedGroup[]>([]);
   const [totalFavouriteCount, setTotalFavouriteCount] = useState<number>(0);
   const [loadingSaves, setLoadingSaves] = useState(false);
@@ -186,17 +211,77 @@ export default function ProfileScreen() {
   const [selectedSavedList, setSelectedSavedList] = useState<any[]>([]);
   const [selectedSavedTitle, setSelectedSavedTitle] = useState<string>('CELEBRATION FAVOURITES');
 
+  // Discover and merge all joined events
+  const getCombinedEventsList = useCallback(async (): Promise<any[]> => {
+    let events: any[] = [];
+    try {
+      const res = await api.get('/api/gallery/family/events');
+      const list = res.data?.events || (Array.isArray(res.data) ? res.data : []);
+      if (Array.isArray(list) && list.length > 0) {
+        events = list;
+      }
+    } catch (_e) {
+      try {
+        const res = await api.get('/api/events');
+        const list = res.data?.events || (Array.isArray(res.data) ? res.data : []);
+        if (Array.isArray(list) && list.length > 0) {
+          events = list;
+        }
+      } catch (_e2) {}
+    }
+
+    const storedEvents = useAuthStore.getState().userEvents || [];
+    const map = new Map<string, any>();
+    events.forEach((ev) => {
+      const key = String(ev.slug || ev.id || '');
+      if (key) map.set(key, ev);
+    });
+    storedEvents.forEach((ev) => {
+      const key = String(ev.slug || ev.id || '');
+      if (key) {
+        map.set(key, { ...ev, ...(map.get(key) || {}) });
+      }
+    });
+
+    return Array.from(map.values());
+  }, []);
+
+  // SSO Token Exchange Helper to get event guest headers for public event endpoints
+  const getEventHeaders = useCallback(async (ev: any, familyToken: string | null): Promise<Record<string, string>> => {
+    if (!ev?.slug) {
+      return familyToken ? { Authorization: `Bearer ${familyToken}` } : {};
+    }
+    const cachedHeaders = useAuthStore.getState().galleryCache[ev.slug]?.headers;
+    if (cachedHeaders && cachedHeaders.Authorization) {
+      return cachedHeaders;
+    }
+    try {
+      const ssoRes = await api.post(
+        `/api/gallery/public/events/${ev.slug}/auth-from-family`,
+        { code: ev.passcode || undefined },
+        { headers: familyToken ? { Authorization: `Bearer ${familyToken}` } : {} }
+      );
+      if (ssoRes.data?.token) {
+        const headers = { Authorization: `Bearer ${ssoRes.data.token}` };
+        useAuthStore.getState().setGalleryCache(ev.slug, { headers });
+        return headers;
+      }
+    } catch (_e) {}
+    return familyToken ? { Authorization: `Bearer ${familyToken}` } : {};
+  }, []);
+
   const fetchMyCelebrationPhotos = useCallback(async () => {
     setLoadingPhotos(true);
     try {
-      const eventsRes = await api.get('/api/gallery/family/events');
-      const eventsList = eventsRes.data?.events || [];
+      const familyToken = useAuthStore.getState().token;
+      const eventsList = await getCombinedEventsList();
 
       let allMatched: any[] = [];
       try {
         const myPhotosRes = await api.get(`/api/my-photos?t=${Date.now()}`);
-        if (myPhotosRes.data?.photos && Array.isArray(myPhotosRes.data.photos)) {
-          allMatched = myPhotosRes.data.photos;
+        const raw = myPhotosRes.data?.photos || (Array.isArray(myPhotosRes.data) ? myPhotosRes.data : []);
+        if (Array.isArray(raw) && raw.length > 0) {
+          allMatched = raw;
         }
       } catch (_e) {}
 
@@ -207,7 +292,11 @@ export default function ProfileScreen() {
         for (const ev of eventsList) {
           let evPhotos: any[] = [];
           try {
-            const matchedRes = await api.get(`/api/gallery/public/events/${ev.slug}/matched-photos?t=${Date.now()}`);
+            const eventHeaders = await getEventHeaders(ev, familyToken);
+            const matchedRes = await guestApi.get(
+              `/api/gallery/public/events/${ev.slug}/matched-photos?t=${Date.now()}`,
+              { headers: eventHeaders }
+            );
             const raw =
               matchedRes.data?.photos ||
               matchedRes.data?.matchedPhotos ||
@@ -223,29 +312,40 @@ export default function ProfileScreen() {
             );
           }
 
-          const validPhotos = evPhotos.filter((p) => !!getPhotoUri(p));
-          if (validPhotos.length > 0) {
-            grandTotal += validPhotos.length;
-
+          const mappedPhotos = evPhotos.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+          if (mappedPhotos.length > 0) {
+            grandTotal += mappedPhotos.length;
+            const rawCover =
+              ev.coverPhotoUrl ||
+              ev.cover_photo_url ||
+              ev.coverPhotoMobileUrl ||
+              ev.cover_photo_mobile_url ||
+              ev.coverUrl ||
+              ev.cover_url ||
+              ev.coverImage ||
+              ev.imageUrl ||
+              null;
             groups.push({
               eventSlug: ev.slug || `event-${ev.id}`,
               eventTitle: ev.title || ev.name || 'Celebration',
               eventDate: ev.date || ev.eventDate,
-              coverImage: ev.coverImage || ev.imageUrl,
-              photos: validPhotos,
+              coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
+              photos: mappedPhotos,
             });
           }
         }
       }
 
       if (groups.length === 0 && allMatched.length > 0) {
-        const validPhotos = allMatched.filter((p) => !!getPhotoUri(p));
-        grandTotal = validPhotos.length;
-        groups.push({
-          eventSlug: 'all-photos',
-          eventTitle: 'My Celebration Photos',
-          photos: validPhotos,
-        });
+        const mappedPhotos = allMatched.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+        if (mappedPhotos.length > 0) {
+          grandTotal = mappedPhotos.length;
+          groups.push({
+            eventSlug: 'all-photos',
+            eventTitle: 'My Celebration Photos',
+            photos: mappedPhotos,
+          });
+        }
       }
 
       setEventGroups(groups);
@@ -256,21 +356,13 @@ export default function ProfileScreen() {
     } finally {
       setLoadingPhotos(false);
     }
-  }, []);
+  }, [getCombinedEventsList, getEventHeaders]);
 
   const fetchSavedPhotos = useCallback(async () => {
     setLoadingSaves(true);
     try {
-      let eventsList: any[] = [];
-      try {
-        const eventsRes = await api.get('/api/gallery/family/events');
-        eventsList = eventsRes.data?.events || (Array.isArray(eventsRes.data) ? eventsRes.data : []);
-      } catch (_e) {
-        try {
-          const eventsRes = await api.get('/api/events');
-          eventsList = eventsRes.data?.events || (Array.isArray(eventsRes.data) ? eventsRes.data : []);
-        } catch (_e2) {}
-      }
+      const familyToken = useAuthStore.getState().token;
+      const eventsList = await getCombinedEventsList();
 
       let grandTotal = 0;
       const groups: EventMatchedGroup[] = [];
@@ -279,7 +371,11 @@ export default function ProfileScreen() {
         for (const ev of eventsList) {
           let evFavs: any[] = [];
           try {
-            const favRes = await api.get(`/api/gallery/public/events/${ev.slug}/favorites`);
+            const eventHeaders = await getEventHeaders(ev, familyToken);
+            const favRes = await guestApi.get(
+              `/api/gallery/public/events/${ev.slug}/favorites?t=${Date.now()}`,
+              { headers: eventHeaders }
+            );
             const raw =
               favRes.data?.photos ||
               favRes.data?.favorites ||
@@ -289,16 +385,25 @@ export default function ProfileScreen() {
             }
           } catch (_e) {}
 
-          const validPhotos = evFavs.filter((p) => !!getPhotoUri(p));
-          if (validPhotos.length > 0) {
-            grandTotal += validPhotos.length;
-
+          const mappedPhotos = evFavs.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+          if (mappedPhotos.length > 0) {
+            grandTotal += mappedPhotos.length;
+            const rawCover =
+              ev.coverPhotoUrl ||
+              ev.cover_photo_url ||
+              ev.coverPhotoMobileUrl ||
+              ev.cover_photo_mobile_url ||
+              ev.coverUrl ||
+              ev.cover_url ||
+              ev.coverImage ||
+              ev.imageUrl ||
+              null;
             groups.push({
               eventSlug: ev.slug || `event-${ev.id}`,
               eventTitle: ev.title || ev.name || 'Celebration',
               eventDate: ev.date || ev.eventDate,
-              coverImage: ev.coverImage || ev.imageUrl,
-              photos: validPhotos,
+              coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
+              photos: mappedPhotos,
             });
           }
         }
@@ -312,23 +417,18 @@ export default function ProfileScreen() {
     } finally {
       setLoadingSaves(false);
     }
-  }, []);
+  }, [getCombinedEventsList, getEventHeaders]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.allSettled([
-        fetchMyCelebrationPhotos(),
-        fetchSavedPhotos(),
-      ]);
+      await Promise.allSettled([fetchMyCelebrationPhotos(), fetchSavedPhotos()]);
     } catch (_) {
     } finally {
       setRefreshing(false);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
   };
-
-  const [aspectMap, setAspectMap] = useState<{ [url: string]: number }>({});
 
   useEffect(() => {
     fetchMyCelebrationPhotos();
@@ -368,167 +468,176 @@ export default function ProfileScreen() {
     return '✨ CIRCLE MEMBER';
   };
 
-  const handleUnsaveFromProfile = (item: SavedPhotoItem) => {
-    setSavedPhotos((prevSaves) => {
-      const nextSaves = prevSaves.filter((s) => s.id !== item.id);
+  const handleUnsaveFromProfile = (item: any) => {
+    const photoId = item.id;
+    const photoUrl = item.photoUrl || item.uri || item.fullUri;
+    setFavouriteEventGroups((prevGroups) =>
+      prevGroups
+        .map((g) => ({
+          ...g,
+          photos: g.photos.filter((p) => p.id !== photoId && p.photoUrl !== photoUrl && p.uri !== photoUrl && p.fullUri !== photoUrl),
+        }))
+        .filter((g) => g.photos.length > 0)
+    );
+    setSelectedSavedList((prevList) => {
+      const nextList = prevList.filter((p) => p.id !== photoId && p.photoUrl !== photoUrl && p.uri !== photoUrl && p.fullUri !== photoUrl);
       if (selectedSavedIdx !== null) {
-        if (nextSaves.length === 0) {
+        if (nextList.length === 0) {
           setSelectedSavedIdx(null);
         } else {
-          const targetIdx = Math.min(selectedSavedIdx, nextSaves.length - 1);
+          const targetIdx = Math.min(selectedSavedIdx, nextList.length - 1);
           setSelectedSavedIdx(targetIdx);
         }
       }
-      return nextSaves;
+      return nextList;
     });
+    fetchSavedPhotos();
   };
 
   const mainScrollRef = useRef<ScrollView>(null);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
 
-  const getBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
-    const list = selectedSavedList.length > 0 ? selectedSavedList : savedPhotos;
-    if (idx < 0 || idx >= list.length) return;
-    const p = list[idx];
-    if (!p) return;
-    const cardId = (p as any).cardKey || getProfileCardKey(p, idx, 'saved');
-    const targetCard = cardRefs.current[cardId];
+  const registerCardRef = useCallback((cardId: string, ref: View | null) => {
+    if (cardId) cardRefs.current[cardId] = ref;
+  }, []);
 
-    if (targetCard) {
-      targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
-        if (cardWidth > 0 && cardHeight > 0) {
-          const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
-          if (isOffScreen) {
-            targetCard.measureLayout(
-              mainScrollRef.current as any,
-              (left, top, w, h) => {
-                const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
-                mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
-                requestAnimationFrame(() => {
-                  targetCard.measureInWindow((nx, ny, nw, nh) => {
-                    if (nw > 0 && nh > 0) {
-                      callback({ x: nx, y: ny, width: nw, height: nh });
-                    }
+  const getBoundsForIndex = useCallback(
+    (idx: number, callback: (bounds: LightboxBounds) => void) => {
+      const list = selectedSavedList;
+      if (idx < 0 || idx >= list.length) return;
+      const p = list[idx];
+      if (!p) return;
+      const cardId = String(p.id || p.uri || `saved-${idx}`);
+      const targetCard = cardRefs.current[cardId];
+
+      if (targetCard) {
+        targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
+          if (cardWidth > 0 && cardHeight > 0) {
+            const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
+            if (isOffScreen) {
+              targetCard.measureLayout(
+                mainScrollRef.current as any,
+                (left, top, w, h) => {
+                  const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
+                  mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
+                  requestAnimationFrame(() => {
+                    targetCard.measureInWindow((nx, ny, nw, nh) => {
+                      if (nw > 0 && nh > 0) {
+                        callback({ x, y, width: nw, height: nh });
+                      }
+                    });
                   });
-                });
-              },
-              () => {}
-            );
-          } else {
-            callback({ x, y, width: cardWidth, height: cardHeight });
+                },
+                () => {}
+              );
+            } else {
+              callback({ x, y, width: cardWidth, height: cardHeight });
+            }
           }
-        }
-      });
-    }
-  }, [selectedSavedList, savedPhotos]);
-
-  const getMyPhotoBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
-    if (idx < 0 || idx >= selectedMyPhotoList.length) return;
-    const p = selectedMyPhotoList[idx];
-    if (!p) return;
-    const cardId = p.cardKey || getProfileCardKey(p, idx, selectedMyPhotoTitle);
-    const targetCard = cardRefs.current[cardId];
-
-    if (targetCard) {
-      targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
-        if (cardWidth > 0 && cardHeight > 0) {
-          const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
-          if (isOffScreen) {
-            targetCard.measureLayout(
-              mainScrollRef.current as any,
-              (left, top, w, h) => {
-                const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
-                mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
-                requestAnimationFrame(() => {
-                  targetCard.measureInWindow((nx, ny, nw, nh) => {
-                    if (nw > 0 && nh > 0) {
-                      callback({ x: nx, y: ny, width: nw, height: nh });
-                    }
-                  });
-                });
-              },
-              () => {}
-            );
-          } else {
-            callback({ x, y, width: cardWidth, height: cardHeight });
-          }
-        }
-      });
-    }
-  }, [selectedMyPhotoList, selectedMyPhotoTitle]);
-
-  const renderMasonryCard = (
-    p: any,
-    index: number,
-    isSavedTab: boolean = false,
-    photosList: any[] = [],
-    groupTitle: string = ''
-  ) => {
-    const imgUri = getPhotoUri(p);
-    const targetIndex = p.globalIndex !== undefined ? p.globalIndex : index;
-    const cardId = p.cardKey || getProfileCardKey(p, targetIndex, isSavedTab ? 'saved' : groupTitle);
-
-    const handlePress = () => {
-      const ref = cardRefs.current[cardId];
-      if (isSavedTab) {
-        if (ref) {
-          ref.measureInWindow((x, y, w, h) => {
-            setSelectedSavedList(photosList);
-            setSelectedSavedTitle(groupTitle || 'CELEBRATION FAVOURITES');
-            setSelectedSavedBounds({ x, y, width: w, height: h });
-            setSelectedSavedIdx(targetIndex);
-          });
-        } else {
-          setSelectedSavedList(photosList);
-          setSelectedSavedTitle(groupTitle || 'CELEBRATION FAVOURITES');
-          setSelectedSavedBounds(null);
-          setSelectedSavedIdx(targetIndex);
-        }
-      } else {
-        if (ref) {
-          ref.measureInWindow((x, y, w, h) => {
-            setSelectedMyPhotoList(photosList);
-            setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
-            setSelectedMyPhotoBounds({ x, y, width: w, height: h });
-            setSelectedMyPhotoIdx(targetIndex);
-          });
-        } else {
-          setSelectedMyPhotoList(photosList);
-          setSelectedMyPhotoTitle(groupTitle || 'MY CELEBRATION PHOTOS');
-          setSelectedMyPhotoBounds(null);
-          setSelectedMyPhotoIdx(targetIndex);
-        }
+        });
       }
-    };
+    },
+    [selectedSavedList]
+  );
 
-    return (
-      <Pressable
-        key={cardId}
-        ref={(ref) => {
-          if (cardId) cardRefs.current[cardId] = ref;
-        }}
-        style={[styles.masonryCard, { aspectRatio: p.cardAspect || 0.75 }]}
-        onPress={handlePress}
-      >
-        <Image source={{ uri: imgUri }} style={styles.masonryImage} contentFit="cover" cachePolicy="memory-disk" />
-      </Pressable>
-    );
+  const getMyPhotoBoundsForIndex = useCallback(
+    (idx: number, callback: (bounds: LightboxBounds) => void) => {
+      if (idx < 0 || idx >= selectedMyPhotoList.length) return;
+      const p = selectedMyPhotoList[idx];
+      if (!p) return;
+      const cardId = String(p.id || p.uri || `myphoto-${idx}`);
+      const targetCard = cardRefs.current[cardId];
+
+      if (targetCard) {
+        targetCard.measureInWindow((x, y, cardWidth, cardHeight) => {
+          if (cardWidth > 0 && cardHeight > 0) {
+            const isOffScreen = y < -cardHeight / 2 || y > Dimensions.get('screen').height - 40;
+            if (isOffScreen) {
+              targetCard.measureLayout(
+                mainScrollRef.current as any,
+                (left, top, w, h) => {
+                  const targetScrollY = Math.max(0, top - Dimensions.get('screen').height / 2 + h / 2);
+                  mainScrollRef.current?.scrollTo({ y: targetScrollY, animated: false });
+                  requestAnimationFrame(() => {
+                    targetCard.measureInWindow((nx, ny, nw, nh) => {
+                      if (nw > 0 && nh > 0) {
+                        callback({ x, y, width: nw, height: nh });
+                      }
+                    });
+                  });
+                },
+                () => {}
+              );
+            } else {
+              callback({ x, y, width: cardWidth, height: cardHeight });
+            }
+          }
+        });
+      }
+    },
+    [selectedMyPhotoList]
+  );
+
+  const handleSelectPhoto = (
+    img: any,
+    bounds: LightboxBounds | null,
+    isSavedTab: boolean,
+    photosList: any[],
+    title: string
+  ) => {
+    const targetIdx = photosList.findIndex((item) => {
+      if (!item || !img) return false;
+      if (item === img) return true;
+      if (item.id !== undefined && img.id !== undefined && item.id === img.id) return true;
+      const uriItem = typeof item === 'string' ? item : item.fullUri || item.uri;
+      const uriImg = typeof img === 'string' ? img : img.fullUri || img.uri;
+      return Boolean(uriItem && uriImg && uriItem === uriImg);
+    });
+    const finalIdx = targetIdx !== -1 ? targetIdx : img.globalIndex ?? 0;
+
+    if (isSavedTab) {
+      setSelectedSavedList(photosList);
+      setSelectedSavedTitle(title || 'CELEBRATION FAVOURITES');
+      setSelectedSavedBounds(bounds);
+      setSelectedSavedIdx(finalIdx);
+    } else {
+      setSelectedMyPhotoList(photosList);
+      setSelectedMyPhotoTitle(title || 'MY CELEBRATION PHOTOS');
+      setSelectedMyPhotoBounds(bounds);
+      setSelectedMyPhotoIdx(finalIdx);
+    }
   };
 
   const renderPhotoListMasonry = (photosList: any[], isSavedTab: boolean = false, title: string = '') => {
-    const { column0, column1 } = balancePhotosIntoColumns(photosList, aspectMap);
+    const { column0, column1 } = balancePhotosIntoColumns(photosList);
 
     return (
       <View style={styles.masonryGridContainer}>
         <View style={styles.masonryColumn}>
-          {column0.map((p, idx) =>
-            renderMasonryCard(p, p.globalIndex ?? idx * 2, isSavedTab, photosList, title)
-          )}
+          {column0.map((img, idx) => (
+            <View key={img.id || `col0-${idx}`} style={{ width: '100%', aspectRatio: img.cardAspect || 0.75 }}>
+              <MasonryCard
+                img={img}
+                index={idx}
+                isColumn0={true}
+                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title)}
+                onRegisterRef={registerCardRef}
+              />
+            </View>
+          ))}
         </View>
         <View style={styles.masonryColumn}>
-          {column1.map((p, idx) =>
-            renderMasonryCard(p, p.globalIndex ?? idx * 2 + 1, isSavedTab, photosList, title)
-          )}
+          {column1.map((img, idx) => (
+            <View key={img.id || `col1-${idx}`} style={{ width: '100%', aspectRatio: img.cardAspect || 0.75 }}>
+              <MasonryCard
+                img={img}
+                index={idx}
+                isColumn0={false}
+                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title)}
+                onRegisterRef={registerCardRef}
+              />
+            </View>
+          ))}
         </View>
       </View>
     );
@@ -542,13 +651,7 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.scrollContent}
         onScroll={handleScroll}
         scrollEventThrottle={16}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor="#ffffff"
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#ffffff" />}
       >
         {/* ── User Avatar & Info Card ── */}
         <View style={styles.profileHeaderCard}>
@@ -657,8 +760,12 @@ export default function ProfileScreen() {
                             </View>
                           </View>
 
-                          {/* 2-Column Featured Story Balanced Masonry Grid for this Event */}
-                          {renderPhotoListMasonry(group.photos, false, group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS')}
+                          {/* 2-Column Balanced Masonry Grid for this Event */}
+                          {renderPhotoListMasonry(
+                            group.photos,
+                            false,
+                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS'
+                          )}
                         </View>
                       );
                     })}
@@ -756,11 +863,11 @@ export default function ProfileScreen() {
         </Modal>
       )}
 
-      {/* ── SAVED MOODBOARD Shared Universal Editorial Lightbox Modal ── */}
+      {/* ── SAVED FAVOURITES Shared Universal Editorial Lightbox Modal ── */}
       {selectedSavedIdx !== null && (
         <EditorialLightbox
           visible={selectedSavedIdx !== null}
-          images={selectedSavedList.length > 0 ? selectedSavedList : savedPhotos}
+          images={selectedSavedList}
           initialIndex={selectedSavedIdx}
           initialBounds={selectedSavedBounds}
           onGetBoundsForIndex={getBoundsForIndex}
@@ -1005,49 +1112,5 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'column',
     gap: 8,
-  },
-  masonryCard: {
-    width: '100%',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 6,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  masonryImage: {
-    width: '100%',
-    height: '100%',
-  },
-  lightboxOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.94)',
-  },
-  lightboxSafeArea: {
-    flex: 1,
-  },
-  lightboxHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  lightboxTitle: {
-    fontSize: 12,
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    letterSpacing: 1.5,
-    color: '#ffffff',
-  },
-  lightboxCloseBtn: {
-    padding: 4,
-  },
-  lightboxImageContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-  },
-  lightboxImage: {
-    width: '100%',
-    height: '100%',
   },
 });

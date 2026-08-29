@@ -320,7 +320,7 @@ export default function JoinCelebrationModal({
                 <View style={styles.permContainer}>
                   <Text style={styles.permText}>Camera permission is required to scan QR code.</Text>
                   <Pressable style={styles.primaryBtn} onPress={requestCameraPermission}>
-                    <Text style={styles.primaryBtnText}>Grant Permission</Text>
+                    <Text style={styles.primaryBtnText}>Continue</Text>
                   </Pressable>
                 </View>
               ) : (

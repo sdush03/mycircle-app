@@ -95,7 +95,7 @@ export const MasonryCard = React.memo(function MasonryCard({
             }
             const elapsed = Date.now() - (loadStartTimeRef.current || Date.now());
             const cacheType = elapsed < 35 ? '💾 CACHE HIT (0-35ms)' : `🌐 NETWORK DOWNLOAD (${elapsed}ms)`;
-            const isThumb = activeUri.includes('thumb') || (e.source?.width && e.source.width <= 600);
+            const isThumb = activeUri.includes('thumb') || activeUri.includes('mobile') || activeUri.includes('/api/gallery/resize') || (e.source?.width && e.source.width <= 600);
             const resTag = isThumb ? '🖼️ [THUMBNAIL]' : '4️⃣K [FULL RES ORIGINAL]';
             console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
           }}
