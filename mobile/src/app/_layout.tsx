@@ -32,6 +32,8 @@ import {
   TAB_SCROLL_TO_TOP_MOODBOARD,
   TAB_SCROLL_TO_TOP_PROFILE,
 } from '../lib/tabEvents';
+import * as Linking from 'expo-linking';
+import { handleIncomingUrl, checkClipboardForDeferredDeepLink } from '../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -136,6 +138,19 @@ function RootLayoutContent() {
       }
     }
     initialize();
+  }, []);
+
+  // Handle incoming deep links globally across all tabs / cold launches
+  const incomingUrl = Linking.useURL();
+  useEffect(() => {
+    if (incomingUrl) {
+      handleIncomingUrl(incomingUrl);
+    }
+  }, [incomingUrl]);
+
+  // Check clipboard once on cold launch (iOS deferred install handoff)
+  useEffect(() => {
+    checkClipboardForDeferredDeepLink();
   }, []);
 
   const [isSplashHidden, setIsSplashHidden] = useState(false);

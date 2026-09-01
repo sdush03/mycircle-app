@@ -43,6 +43,8 @@ interface AuthState {
   openedFrom: 'home' | 'mycircle' | null;
   isTabBarCollapsed: boolean;
   galleryCache: Record<string, GalleryCacheEntry>;
+  pendingInvite: { slug: string; passcode: string | null } | null;
+  setPendingInvite: (invite: { slug: string; passcode: string | null } | null) => void;
   setPhoneSkipped: (skipped: boolean) => void;
   setTabBarCollapsed: (collapsed: boolean) => void;
   setUserEvents: (events: any[]) => void;
@@ -70,7 +72,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   openedFrom: null,
   isTabBarCollapsed: false,
   galleryCache: {},
+  pendingInvite: null,
   
+  setPendingInvite: (pendingInvite) => set({ pendingInvite }),
   setPhoneSkipped: (skipped) => set({ isPhoneSkipped: skipped }),
   setTabBarCollapsed: (collapsed) => set({ isTabBarCollapsed: collapsed }),
   setUserEvents: (events) => set({ userEvents: events }),
@@ -98,7 +102,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { selfieUrl, ...persistentProfile } = profile;
       await SecureStore.setItemAsync(TOKEN_KEY, token);
       await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
-      set({ token, profile, userEvents, isLoading: false });
+      
+      const pending = get().pendingInvite;
+      if (pending && pending.slug) {
+        set({ 
+          token, 
+          profile, 
+          userEvents, 
+          isLoading: false, 
+          pendingInvite: null,
+          eventSlug: pending.slug,
+          passcode: pending.passcode,
+          openedFrom: 'mycircle'
+        });
+        import('../services/galleryPrefetch').then((m) => {
+          m.prefetchEventGalleryData(pending.slug, pending.passcode);
+        }).catch(() => {});
+      } else {
+        set({ token, profile, userEvents, isLoading: false });
+      }
     } catch (e) {
       console.error('Error saving auth state', e);
     }

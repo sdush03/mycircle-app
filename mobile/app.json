@@ -2,7 +2,7 @@
   "expo": {
     "name": "Misty Visuals",
     "slug": "my-circle",
-    "version": "1.1.3",
+    "version": "1.1.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mycircle",
@@ -15,12 +15,12 @@
     "ios": {
       "icon": "./assets/images/ios-icon.png",
       "bundleIdentifier": "com.mistyvisuals.mycircle",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "supportsTablet": true,
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Allow Misty Visuals to save photos to your gallery.",
-        "NSPhotoLibraryAddUsageDescription": "Allow Misty Visuals to save photos to your photo gallery.",
+        "NSPhotoLibraryUsageDescription": "Allow Misty Visuals to upload and save photos to your library.",
+        "NSPhotoLibraryAddUsageDescription": "Allow Misty Visuals to save photos to your library.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -39,11 +39,34 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "appleTeamId": "9S743W7CRJ"
+      "appleTeamId": "9S743W7CRJ",
+      "associatedDomains": [
+        "applinks:mycircle.mistyvisuals.com"
+      ]
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
       "versionCode": 9,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "mycircle.mistyvisuals.com",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "mycircle"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "googleServicesFile": "./google-services.json",
       "splash": {
         "image": "./assets/images/splash-android-icon.png",
@@ -71,8 +94,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow Misty Visuals to save photos to your gallery.",
-          "savePhotosPermission": "Allow Misty Visuals to save photos to your gallery."
+          "photosPermission": "Allow Misty Visuals to upload and save photos to your library.",
+          "savePhotosPermission": "Allow Misty Visuals to save photos to your library."
         }
       ],
       [
