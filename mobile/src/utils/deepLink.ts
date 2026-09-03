@@ -1,9 +1,9 @@
 import * as Linking from 'expo-linking';
-import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../store/authStore';
+import api from '../services/api';
 
-const LAST_PROCESSED_CLIPBOARD_KEY = 'last_processed_clipboard_link';
+const HAS_CHECKED_DEFERRED_INVITE_KEY = 'has_checked_server_deferred_invite';
 
 export function parseDeepLink(incomingUrl: string): { slug: string; passcode: string | null } | null {
   if (!incomingUrl) return null;
@@ -71,30 +71,28 @@ export function handleIncomingUrl(url: string) {
 }
 
 /**
- * Check device clipboard on cold launch for deferred iOS install handoff.
- * If the user copied an invite link on the web landing page, process it once.
+ * Check backend server for pending deferred invite on first launch.
+ * Zero clipboard access, Zero "Allow Paste" popups!
  */
-export async function checkClipboardForDeferredDeepLink() {
+export async function checkServerDeferredDeepLink() {
   try {
-    const hasString = await Clipboard.hasStringAsync();
-    if (!hasString) return;
+    const hasChecked = await AsyncStorage.getItem(HAS_CHECKED_DEFERRED_INVITE_KEY);
+    if (hasChecked) return;
 
-    const text = await Clipboard.getStringAsync();
-    if (!text || (!text.includes('mycircle') && !text.includes('mycircle.mistyvisuals.com'))) {
-      return;
-    }
+    await AsyncStorage.setItem(HAS_CHECKED_DEFERRED_INVITE_KEY, 'true');
 
-    const lastProcessed = await AsyncStorage.getItem(LAST_PROCESSED_CLIPBOARD_KEY);
-    if (lastProcessed === text) {
-      return;
-    }
-
-    const result = parseDeepLink(text);
-    if (result) {
-      await AsyncStorage.setItem(LAST_PROCESSED_CLIPBOARD_KEY, text);
-      handleIncomingUrl(text);
+    const res = await api.get('/api/gallery/public/consume-deferred-invite');
+    if (res.data?.found && res.data?.slug) {
+      const { slug, passcode } = res.data;
+      console.log('[DeepLink] Found server deferred invite:', { slug, passcode });
+      const token = useAuthStore.getState().token;
+      if (token) {
+        useAuthStore.getState().setEventDetails(slug, passcode, null, null, 'mycircle');
+      } else {
+        useAuthStore.getState().setPendingInvite({ slug, passcode });
+      }
     }
   } catch (e) {
-    console.warn('[DeepLink] Clipboard check error:', e);
+    console.warn('[DeepLink] Server deferred invite check error:', e);
   }
 }

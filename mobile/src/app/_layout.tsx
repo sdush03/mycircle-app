@@ -33,7 +33,7 @@ import {
   TAB_SCROLL_TO_TOP_PROFILE,
 } from '../lib/tabEvents';
 import * as Linking from 'expo-linking';
-import { handleIncomingUrl } from '../utils/deepLink';
+import { handleIncomingUrl, checkServerDeferredDeepLink } from '../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -147,6 +147,11 @@ function RootLayoutContent() {
       handleIncomingUrl(incomingUrl);
     }
   }, [incomingUrl]);
+
+  // Check server for deferred invite on first launch (Zero-prompt iOS & Android install handoff)
+  useEffect(() => {
+    checkServerDeferredDeepLink();
+  }, []);
 
   const [isSplashHidden, setIsSplashHidden] = useState(false);
 
