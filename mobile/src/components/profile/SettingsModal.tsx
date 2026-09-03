@@ -611,7 +611,7 @@ export default function SettingsModal({
               <Text style={styles.logoutBtnText}>Log Out</Text>
             </TouchableOpacity>
 
-            <Text style={styles.versionText}>MyCircle • v1.1.3</Text>
+            <Text style={styles.versionText}>MyCircle • v1.1.4</Text>
           </ScrollView>
         )}
 
