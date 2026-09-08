@@ -1,5 +1,11 @@
 import { API_BASE_URL } from '../services/api';
 
+const FALLBACK_API_BASE = 'https://mycircle.mistyvisuals.com';
+
+export function getBaseUrl(): string {
+  return (API_BASE_URL || FALLBACK_API_BASE).replace(/\/+$/, '');
+}
+
 /**
  * Generates an on-the-fly resized thumbnail URL using the backend resizing service.
  * Responses are automatically cached at the edge by Cloudflare with long max-age.
@@ -14,8 +20,13 @@ export function getResizedImageUrl(
   quality: number = 75
 ): string {
   if (!url || typeof url !== 'string') return '';
-  const trimmed = url.trim();
+  let trimmed = url.trim();
   if (!trimmed) return '';
+
+  const base = getBaseUrl();
+  if (trimmed.startsWith('/')) {
+    trimmed = `${base}${trimmed}`;
+  }
 
   // Return unchanged if already a resize URL, thumbs URL, or local asset
   if (
@@ -33,9 +44,7 @@ export function getResizedImageUrl(
     return trimmed.replace('/desktop/', '/thumbs/');
   }
 
-  const base = (API_BASE_URL || '').replace(/\/+$/, '');
-  const fullUrl = trimmed.startsWith('/') ? `${base}${trimmed}` : trimmed;
-  return `${base}/api/gallery/resize?url=${encodeURIComponent(fullUrl)}&w=${width}&q=${quality}`;
+  return `${base}/api/gallery/resize?url=${encodeURIComponent(trimmed)}&w=${width}&q=${quality}`;
 }
 
 /**
@@ -49,10 +58,13 @@ export function getThumbnailUrl(
   quality: number = 75
 ): string {
   if (!p) return '';
-  const base = (API_BASE_URL || '').replace(/\/+$/, '');
+  const base = getBaseUrl();
   if (typeof p === 'string') {
-    const trimmed = p.trim();
+    let trimmed = p.trim();
     if (!trimmed) return '';
+    if (trimmed.startsWith('/')) {
+      trimmed = `${base}${trimmed}`;
+    }
     if (trimmed.includes('gallery.mistyvisuals.com') && trimmed.includes('/desktop/')) {
       return trimmed.replace('/desktop/', '/thumbs/');
     }
@@ -65,10 +77,9 @@ export function getThumbnailUrl(
       trimmed.startsWith('data:') ||
       trimmed.includes('/cdn-cgi/image/')
     ) {
-      return trimmed.startsWith('/') ? `${base}${trimmed}` : trimmed;
+      return trimmed;
     }
-    const full = trimmed.startsWith('/') ? `${base}${trimmed}` : trimmed;
-    return getResizedImageUrl(full, width, quality);
+    return getResizedImageUrl(trimmed, width, quality);
   }
 
   // 1. Direct CDN pre-rendered thumbnail properties from backend
@@ -86,7 +97,10 @@ export function getThumbnailUrl(
     p.uri;
 
   if (directThumb && typeof directThumb === 'string' && directThumb.trim()) {
-    const trimmedThumb = directThumb.trim();
+    let trimmedThumb = directThumb.trim();
+    if (trimmedThumb.startsWith('/')) {
+      trimmedThumb = `${base}${trimmedThumb}`;
+    }
     if (trimmedThumb.includes('gallery.mistyvisuals.com') && trimmedThumb.includes('/desktop/')) {
       return trimmedThumb.replace('/desktop/', '/thumbs/');
     }
@@ -99,9 +113,9 @@ export function getThumbnailUrl(
       trimmedThumb.startsWith('data:') ||
       trimmedThumb.includes('/cdn-cgi/image/')
     ) {
-      return trimmedThumb.startsWith('/') ? `${base}${trimmedThumb}` : trimmedThumb;
+      return trimmedThumb;
     }
-    return trimmedThumb.startsWith('/') ? `${base}${trimmedThumb}` : trimmedThumb;
+    return trimmedThumb;
   }
 
   // 2. If photo URL is on mistyvisuals CDN with /desktop/, map to /thumbs/
@@ -123,7 +137,7 @@ export function getThumbnailUrl(
  */
 export function getFullPhotoUrl(p: any): string {
   if (!p) return '';
-  const base = (API_BASE_URL || '').replace(/\/+$/, '');
+  const base = getBaseUrl();
   if (typeof p === 'string') {
     const trimmed = p.trim();
     if (!trimmed) return '';

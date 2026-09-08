@@ -1,8 +1,9 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
+import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 
 export interface MasonryCardProps {
   img: any;
@@ -64,6 +65,44 @@ export const MasonryCard = React.memo(function MasonryCard({
     ? (isHighPriority ? "high" : "low")
     : (index < 10 ? "high" : "low");
 
+  const isVideo =
+    !!img?.isVideo ||
+    (typeof img?.tabName === 'string' && img.tabName.trim().toUpperCase() === 'CINEMA') ||
+    (typeof fallbackUri === 'string' && (fallbackUri.endsWith('.mp4') || fallbackUri.endsWith('.mov') || fallbackUri.includes('/videos/'))) ||
+    (typeof primaryUri === 'string' && (primaryUri.endsWith('.mp4') || primaryUri.endsWith('.mov') || primaryUri.includes('/videos/')));
+
+  // Instagram-style Preload: Pre-warm upcoming video player and poster when card renders
+  useEffect(() => {
+    if (isVideo) {
+      const vUrl = img?.videoUrl || img?.fullUri || img?.r2Url || fallbackUri || (typeof primaryUri === 'string' && (primaryUri.endsWith('.mp4') || primaryUri.endsWith('.mov') || primaryUri.includes('/videos/')) ? primaryUri : null);
+      const tUrl = img?.thumbnailUrl || img?.thumbUri || (activeUri && !activeUri.endsWith('.mp4') ? activeUri : null);
+      if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
+        videoPreloadManager.preload(vUrl, tUrl);
+      }
+    }
+  }, [isVideo, img?.videoUrl, img?.fullUri, img?.r2Url, fallbackUri, primaryUri, activeUri]);
+
+  const isVideoFile = (uri: string | null | undefined) => {
+    if (!uri || typeof uri !== 'string') return false;
+    const clean = uri.split('?')[0].toLowerCase();
+    if (clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.endsWith('.webm')) {
+      return true;
+    }
+    if (uri.includes('/api/gallery/resize')) {
+      const lower = uri.toLowerCase();
+      return lower.includes('.mp4') || lower.includes('.mov') || lower.includes('.m4v') || lower.includes('.webm');
+    }
+    return false;
+  };
+
+  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri) : null;
+  const validThumb = rawThumb && !isVideoFile(rawThumb) ? rawThumb : null;
+  let candidateUri = validThumb || (!isVideoFile(activeUri) ? activeUri : null);
+  if (candidateUri && candidateUri.startsWith('/')) {
+    candidateUri = `https://mycircle.mistyvisuals.com${candidateUri}`;
+  }
+  const imageDisplayUri = candidateUri;
+
   return (
     <Pressable 
       ref={(ref) => {
@@ -73,9 +112,9 @@ export const MasonryCard = React.memo(function MasonryCard({
       style={[cardStyles.masonryCard, { width: '100%', height: '100%' }]} 
       onPress={handlePress}
     >
-      {activeUri ? (
+      {imageDisplayUri ? (
         <Image
-          source={{ uri: activeUri }}
+          source={{ uri: imageDisplayUri }}
           style={cardStyles.masonryImage}
           contentFit="cover"
           priority={effectivePriority}
@@ -91,19 +130,32 @@ export const MasonryCard = React.memo(function MasonryCard({
             if (e.source?.width && e.source?.height) {
               const aspect = e.source.width / e.source.height;
               if (cardId) savePhotoAspect(cardId, aspect);
-              if (activeUri) savePhotoAspect(activeUri, aspect);
+              if (imageDisplayUri) savePhotoAspect(imageDisplayUri, aspect);
             }
             const elapsed = Date.now() - (loadStartTimeRef.current || Date.now());
             const cacheType = elapsed < 35 ? '💾 CACHE HIT (0-35ms)' : `🌐 NETWORK DOWNLOAD (${elapsed}ms)`;
-            const isThumb = activeUri.includes('thumb') || activeUri.includes('mobile') || activeUri.includes('/api/gallery/resize') || (e.source?.width && e.source.width <= 600);
+            const isThumb = imageDisplayUri.includes('thumb') || imageDisplayUri.includes('mobile') || imageDisplayUri.includes('/api/gallery/resize') || (e.source?.width && e.source.width <= 600);
             const resTag = isThumb ? '🖼️ [THUMBNAIL]' : '4️⃣K [FULL RES ORIGINAL]';
             console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
           }}
-          onError={(err) => {
-            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${activeUri}`);
-            if (fallbackUri && activeUri !== fallbackUri) setFailedUri(primaryUri);
+          onError={() => {
+            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
+            if (fallbackUri && imageDisplayUri !== fallbackUri && !isVideoFile(fallbackUri)) setFailedUri(primaryUri);
           }}
         />
+      ) : (
+        <View style={[cardStyles.masonryImage, { backgroundColor: '#141414', justifyContent: 'center', alignItems: 'center' }]}>
+          <Ionicons name="videocam-outline" size={28} color="rgba(255, 255, 255, 0.25)" />
+        </View>
+      )}
+
+      {/* Centered Play Badge for Video Media */}
+      {isVideo ? (
+        <View style={cardStyles.playIconContainer} pointerEvents="none">
+          <View style={cardStyles.playIconCircle}>
+            <Ionicons name="play" size={18} color="#ffffff" style={{ marginLeft: 2 }} />
+          </View>
+        </View>
       ) : null}
 
       {/* Bottom-Right Heart & Count Badge (Matching Web) */}
@@ -134,6 +186,7 @@ export const MasonryCard = React.memo(function MasonryCard({
     prevProps.img?.id === nextProps.img?.id &&
     prevProps.img?.uri === nextProps.img?.uri &&
     prevProps.img?.r2Url === nextProps.img?.r2Url &&
+    prevProps.img?.isVideo === nextProps.img?.isVideo &&
     prevProps.img?.isLiked === nextProps.img?.isLiked
   );
 });
@@ -173,5 +226,25 @@ const cardStyles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.9)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  playIconContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 4,
+    elevation: 4,
   },
 });

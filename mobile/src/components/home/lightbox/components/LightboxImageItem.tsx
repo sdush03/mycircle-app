@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Dimensions } from 'react-native';
+import { StyleSheet, View, Dimensions, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 // @ts-ignore
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +19,7 @@ export interface LightboxImageItemProps {
   onCloseLightbox: () => void;
   onInteractionStart: () => void;
   onInteractionEnd: () => void;
+  onPlayVideo?: (item: any) => void;
   expandProgress: SharedValue<number>;
   heartPopScale: SharedValue<number>;
   heartPopOpacity: SharedValue<number>;
@@ -34,6 +35,7 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
   onCloseLightbox,
   onInteractionStart,
   onInteractionEnd,
+  onPlayVideo,
   expandProgress,
   heartPopScale,
   heartPopOpacity,
@@ -101,14 +103,21 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
   const thumbnailUri = typeof item === 'object' ? (item.r2Url || item.thumbnailUrl || item.uri || getMediaUri(item)) : item;
   const fullUri = typeof item === 'object' ? (item.fullUri || item.r2_url || item.file_url || item.url || thumbnailUri) : item;
 
-  const [currentUri, setCurrentUri] = useState<string | null>(fullUri || thumbnailUri);
+  const isVideo =
+    !!item?.isVideo ||
+    (typeof item?.tabName === 'string' && item.tabName.trim().toUpperCase() === 'CINEMA') ||
+    (typeof fullUri === 'string' && (fullUri.endsWith('.mp4') || fullUri.endsWith('.mov') || fullUri.includes('/videos/')));
+
+  const displayUri = isVideo ? (thumbnailUri || getMediaUri(item)) : (fullUri || thumbnailUri);
+
+  const [currentUri, setCurrentUri] = useState<string | null>(displayUri);
 
   React.useEffect(() => {
-    setCurrentUri(fullUri || thumbnailUri);
+    setCurrentUri(displayUri);
     scale.value = 1;
     translateX.value = 0;
     translateY.value = 0;
-  }, [fullUri, thumbnailUri, scale, translateX, translateY]);
+  }, [displayUri, scale, translateX, translateY]);
 
   const loadStartRef = useRef<number>(0);
 
@@ -155,7 +164,25 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
               }}
             />
           )}
-          {/* Layer 3: Heart Pop Center Animation Overlay */}
+
+          {/* Layer 3: Video Play Button Overlay */}
+          {isVideo ? (
+            <Pressable
+              style={styles.playButtonOverlay}
+              onPress={() => {
+                if (onPlayVideo) {
+                  onPlayVideo(item);
+                }
+              }}
+              hitSlop={20}
+            >
+              <View style={styles.playButtonCircle}>
+                <Ionicons name="play" size={32} color="#ffffff" style={{ marginLeft: 3 }} />
+              </View>
+            </Pressable>
+          ) : null}
+
+          {/* Layer 4: Heart Pop Center Animation Overlay */}
           <Animated.View 
             style={[
               styles.heartPopContainer, 
@@ -182,6 +209,27 @@ const styles = StyleSheet.create({
   lightboxImage: {
     width: defaultScreenWidth,
     height: '100%',
+  },
+  playButtonOverlay: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  playButtonCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
   },
   heartPopContainer: {
     position: 'absolute',

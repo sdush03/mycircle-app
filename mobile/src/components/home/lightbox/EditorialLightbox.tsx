@@ -88,6 +88,7 @@ export interface EditorialLightboxProps {
   enableLock?: boolean;
   onToggleLockPhoto?: (item: any) => Promise<boolean | void>;
   storyId?: string;
+  onPlayVideo?: (item: any) => void;
 }
 
 export function EditorialLightbox({
@@ -109,6 +110,7 @@ export function EditorialLightbox({
   enableLock = false,
   onToggleLockPhoto,
   storyId,
+  onPlayVideo,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -767,6 +769,7 @@ export function EditorialLightbox({
         item={item}
         width={width}
         onDoubleTap={handleToggleSave}
+        onPlayVideo={onPlayVideo}
         onNavigate={(dir) => {
           const curIdx = activeIdxRef.current;
           const count = imagesCountRef.current;

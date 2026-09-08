@@ -39,10 +39,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "appleTeamId": "9S743W7CRJ",
-      "associatedDomains": [
-        "applinks:mycircle.mistyvisuals.com"
-      ]
+      "appleTeamId": "9S743W7CRJ"
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
@@ -136,7 +133,8 @@
             ]
           }
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

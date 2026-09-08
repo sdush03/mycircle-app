@@ -49,6 +49,8 @@ import Animated, {
   runOnJS,
   Easing,
   useAnimatedScrollHandler,
+  interpolate,
+  interpolateColor,
 } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
@@ -56,6 +58,10 @@ import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import api, { guestApi } from '../../services/api';
 import { MasonryCard } from '../home/lightbox/components/MasonryCard';
 import { EditorialLightbox, LightboxBounds } from '../home/lightbox/EditorialLightbox';
+import { CinemaVideoModal } from '../common/CinemaVideoModal';
+import { CinemaLibraryView } from '../cinema/CinemaLibraryView';
+import { videoPreloadManager } from '../../services/videoPreloadManager';
+import { videoDownloadManager } from '../../services/videoDownloadManager';
 import {
   FONT_MONTSERRAT_REGULAR,
   FONT_JOST_REGULAR,
@@ -73,22 +79,47 @@ interface Photo {
   aspectRatio?: number | null;
   isLiked?: boolean;
   likeCount?: number;
+  isVideo?: boolean;
+  videoUrl?: string;
+  thumbnailUrl?: string;
   [key: string]: any;
 }
 
+export function isVideoMedia(p: any): boolean {
+  if (!p) return false;
+  if (p.isVideo) return true;
+  if (p.tabName && p.tabName.trim().toUpperCase() === 'CINEMA') return true;
+  const url = (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '').toLowerCase();
+  return url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.m4v') || url.includes('/videos/');
+}
+
 function mapPhotoItem(p: any): Photo {
-  const fullUri = getFullPhotoUrl(p);
-  const thumbUri = getThumbnailUrl(p, 400);
-  const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
-  const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
+  const isVideo = isVideoMedia(p);
+  const fullUri = isVideo ? (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '') : getFullPhotoUrl(p);
+  let rawThumb = p.thumbnailUrl || p.thumbUri || p.preview_url || p.coverUrl || p.cover_url || p.posterUrl || p.poster_url || p.coverPhotoUrl || p.cover_photo_url;
+  if (typeof rawThumb === 'string' && rawThumb.startsWith('/')) {
+    rawThumb = `https://mycircle.mistyvisuals.com${rawThumb}`;
+  }
+  const isVideoUrl = (u: string) => {
+    const l = u.toLowerCase();
+    return l.split('?')[0].endsWith('.mp4') || l.split('?')[0].endsWith('.mov') || l.split('?')[0].endsWith('.m4v') || l.includes('.mp4') || l.includes('.mov') || l.includes('.m4v');
+  };
+  const isImageThumb = typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoUrl(rawThumb);
+  const validThumb = isImageThumb ? rawThumb : undefined;
+  const thumbUri = validThumb || (isVideo ? undefined : getThumbnailUrl(p, 400));
+  const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || (isVideo ? 16 : 0);
+  const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || (isVideo ? 9 : 0);
   const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
-  const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null));
+  const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || (isVideo ? 16 / 9 : null)));
   return {
     id: p.id,
-    r2Url: thumbUri,
+    r2Url: isVideo ? fullUri : thumbUri,
     uri: thumbUri,
     fullUri: fullUri,
     photoUrl: fullUri,
+    videoUrl: isVideo ? fullUri : undefined,
+    isVideo,
+    thumbnailUrl: validThumb,
     width: w || undefined,
     height: h || undefined,
     aspectRatio,
@@ -96,6 +127,11 @@ function mapPhotoItem(p: any): Photo {
     tabName: p.tabName || p.tab_name || null,
     isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
     likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
+    title: p.title || p.name || p.caption || p.filename || undefined,
+    duration: p.duration || p.meta?.duration || p.metadata?.duration || undefined,
+    isFeatured: p.isFeatured || p.featured || p.meta?.isFeatured || false,
+    category: p.category || p.videoCategory || p.meta?.category || undefined,
+    raw: p,
   };
 }
 
@@ -134,8 +170,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
 
-  // Lightbox State
+  // Lightbox & Video State
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
+  const [activeVideoItem, setActiveVideoItem] = useState<any | null>(null);
   const [selectedBounds, setSelectedBounds] = useState<LightboxBounds | null>(null);
 
   const PAGE_SIZE = 60;
@@ -220,7 +257,46 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     });
 
   const animatedBackTextStyle = useAnimatedStyle(() => ({
-    color: scrollY.value >= exactTouchPoint ? '#3a3632' : '#ffffff',
+    color: scrollY.value >= exactTouchPoint ? (isCinema ? '#ffffff' : '#3a3632') : '#ffffff',
+  }));
+
+  // ─── Gallery → Cinema Theatrical Transition Engine (250ms "Lights Down") ───
+  const isCinema = activeTab.trim().toUpperCase() === 'CINEMA';
+  const cinemaProgress = useSharedValue(isCinema ? 1 : 0);
+
+  useEffect(() => {
+    cinemaProgress.value = withTiming(isCinema ? 1 : 0, {
+      duration: 250,
+      easing: Easing.out(Easing.quad),
+    });
+  }, [isCinema, cinemaProgress]);
+
+  const animatedScreenBgStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      cinemaProgress.value,
+      [0, 1],
+      ['#ffffff', '#000000']
+    ),
+  }));
+
+  const animatedCinemaCoverOverlayStyle = useAnimatedStyle(() => ({
+    opacity: cinemaProgress.value,
+  }));
+
+  const animatedPhotoMetaStyle = useAnimatedStyle(() => ({
+    opacity: 1 - cinemaProgress.value,
+  }));
+
+  const animatedCinemaMetaStyle = useAnimatedStyle(() => ({
+    opacity: cinemaProgress.value,
+  }));
+
+  const animatedHeroContainerStyle = useAnimatedStyle(() => ({
+    height: Math.round(screenHeight * 0.70),
+  }));
+
+  const animatedTitleContainerStyle = useAnimatedStyle(() => ({
+    bottom: 30,
   }));
 
   const loadMorePhotosRef = useRef<(() => void) | null>(null);
@@ -336,6 +412,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [eventSlug]);
 
   const handleBackAction = useCallback(() => {
+    if (activeTab === 'CINEMA') {
+      setActiveTab('ALL');
+      return;
+    }
     if (activeImageIndex !== null) {
       setActiveImageIndex(null);
       return;
@@ -349,7 +429,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         runOnJS(onChangeEvent)();
       }
     });
-  }, [activeImageIndex, onChangeEvent, screenSwipeX]);
+  }, [activeImageIndex, onChangeEvent, screenSwipeX, activeTab]);
 
   // Native Android Back Button Listener
   useEffect(() => {
@@ -405,6 +485,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             normalizedTabCache[k] = (tabCacheData[k] || []).map(mapPhotoItem);
           });
           setTabCache(normalizedTabCache);
+
+          // Preload cinema videos immediately on Frame 1 from SWR cache!
+          const cachedCinema = normalizedTabCache['CINEMA'];
+          if (cachedCinema && cachedCinema.length > 0) {
+            cachedCinema.forEach((v, idx) => {
+              const vUrl = v.videoUrl || v.fullUri || v.r2Url;
+              if (vUrl) {
+                if (idx === 0) {
+                  videoPreloadManager.preload(vUrl, v.thumbnailUrl);
+                  videoDownloadManager.queue(vUrl);
+                } else {
+                  setTimeout(() => {
+                    videoPreloadManager.preload(vUrl, v.thumbnailUrl);
+                    videoDownloadManager.queue(vUrl);
+                  }, idx * 1500);
+                }
+              }
+            });
+          }
         }
         setIsLoading(false); // 0ms INSTANT OPEN ON FRAME 1!
       } else {
@@ -487,7 +586,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       try {
         const fetchStartTime = Date.now();
         console.log(`[MYCIRCLE DEBUG 🚀] Starting parallel photo fetch for event '${eventSlug}'...`);
-        const [matchedRes, allRes, favRes] = await Promise.all([
+        const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
           guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] Matched photos fetch error:', e?.response?.status);
             return { data: [] };
@@ -500,6 +599,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             console.warn('[MYCIRCLE DEBUG ⚠️] Favorites fetch error:', e?.response?.status);
             return { data: [] };
           }),
+          guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=20&offset=0`, { headers: eventHeaders }).catch((e) => {
+            console.warn('[MYCIRCLE DEBUG ⚠️] Cinema photos fetch error:', e?.response?.status);
+            return { data: [] };
+          }),
         ]);
 
         const fetchDuration = Date.now() - fetchStartTime;
@@ -507,9 +610,34 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         setPhotos(Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : []);
 
         const favList = favRes.data.photos || (Array.isArray(favRes.data) ? favRes.data : []);
+        let favMapped: Photo[] = [];
         if (Array.isArray(favList) && favList.length > 0) {
-          const favMapped = favList.map(mapPhotoItem);
+          favMapped = favList.map(mapPhotoItem);
           setTabCache((prev) => ({ ...prev, 'MY FAVOURITES': favMapped }));
+        }
+
+        // Cinema Tab Permanent Pre-buffering:
+        // Automatically fetches all cinema videos when gallery opens and starts buffering!
+        const cinemaList = cinemaRes.data.photos || (Array.isArray(cinemaRes.data) ? cinemaRes.data : []);
+        let cinemaMapped: Photo[] = [];
+        if (Array.isArray(cinemaList) && cinemaList.length > 0) {
+          cinemaMapped = cinemaList.map(mapPhotoItem);
+          setTabCache((prev) => ({ ...prev, 'CINEMA': cinemaMapped }));
+          cinemaMapped.forEach((v, idx) => {
+            const vUrl = v.videoUrl || v.fullUri || v.r2Url;
+            if (vUrl) {
+              if (idx === 0) {
+                videoPreloadManager.preload(vUrl, v.thumbnailUrl);
+                videoDownloadManager.queue(vUrl);
+              } else {
+                setTimeout(() => {
+                  videoPreloadManager.preload(vUrl, v.thumbnailUrl);
+                  videoDownloadManager.queue(vUrl);
+                }, idx * 1500);
+              }
+            }
+          });
+          console.log(`[CINEMA INSTANT PRELOAD 🎬] Pre-buffering ${cinemaMapped.length} cinema videos immediately on gallery launch!`);
         }
 
         const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
@@ -534,6 +662,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           total: total,
           hasFullAccess: guestAccessLevel ?? true,
           matched: Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [],
+          tabCache: {
+            ...(favMapped.length > 0 ? { 'MY FAVOURITES': favMapped } : {}),
+            ...(cinemaMapped.length > 0 ? { 'CINEMA': cinemaMapped } : {}),
+          },
         });
 
         console.log(`[MYCIRCLE DEBUG ✅] Initial Fetch Done in ${fetchDuration}ms | Loaded: ${mapped.length} / ${total} photos | HasMore: ${hasMore}`);
@@ -860,26 +992,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         { headers: eventHeaders }
       );
       const rawList = res.data.photos || (Array.isArray(res.data) ? res.data : []);
-      const mapPhotoItem = (p: any): Photo => {
-        const fullUri = getFullPhotoUrl(p);
-        const thumbUri = getThumbnailUrl(p, 400);
-        const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || 0;
-        const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || 0;
-        const aspectRatio = w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null);
-        return {
-          id: p.id,
-          r2Url: thumbUri,
-          uri: thumbUri,
-          fullUri: fullUri,
-          photoUrl: fullUri,
-          width: w || undefined,
-          height: h || undefined,
-          aspectRatio,
-          tabName: p.tabName || p.tab_name || null,
-          isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
-          likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
-        };
-      };
       const mapped = Array.isArray(rawList) ? rawList.map(mapPhotoItem) : [];
 
       // Smooth chunked background prefetch of tab thumbnails into native cache
@@ -918,6 +1030,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     // 4. Dynamic Ceremony/Event Tabs from eventDetails.tabs (from DB)
     const ceremonyTabsSet = new Set<string>();
+    // Guarantee HIGHLIGHTS is always present
+    ceremonyTabsSet.add('HIGHLIGHTS');
+
     if (Array.isArray(eventDetails?.tabs)) {
       eventDetails.tabs.forEach((t: string) => {
         if (t && typeof t === 'string' && t.trim().length > 0) {
@@ -933,13 +1048,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
+    const allowedTabs: string[] = [];
     ceremonyTabsSet.forEach((tab) => {
       if (tab !== 'ALL' && tab !== 'MY PHOTOS' && tab !== 'MY FAVOURITES' && !tab.includes('LOCKED')) {
-        if (hasFullAccess || tab === 'HIGHLIGHTS') {
-          if (!list.includes(tab)) {
-            list.push(tab);
-          }
+        if (hasFullAccess || tab === 'HIGHLIGHTS' || tab === 'CINEMA') {
+          allowedTabs.push(tab);
         }
+      }
+    });
+
+    // Ensure HIGHLIGHTS is first, CINEMA is second, followed by all other ceremony tabs
+    const orderedCeremony: string[] = [];
+    if (allowedTabs.includes('HIGHLIGHTS')) orderedCeremony.push('HIGHLIGHTS');
+    if (allowedTabs.includes('CINEMA')) orderedCeremony.push('CINEMA');
+    allowedTabs.forEach((tab) => {
+      if (tab !== 'HIGHLIGHTS' && tab !== 'CINEMA') {
+        orderedCeremony.push(tab);
+      }
+    });
+
+    orderedCeremony.forEach((tab) => {
+      if (!list.includes(tab)) {
+        list.push(tab);
       }
     });
 
@@ -1202,6 +1332,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   activeListRef.current = activeList;
 
+  // Predictive Instagram-style Video Pre-Buffering:
+  // Pre-warms native player instances for the upcoming videos in the background
+  useEffect(() => {
+    const videoItems = activeList.filter((item) => isVideoMedia(item));
+    if (videoItems.length > 0) {
+      videoItems.slice(0, 3).forEach((vid) => {
+        const vUrl = vid.videoUrl || vid.fullUri || vid.r2Url || (typeof vid.uri === 'string' && vid.uri.startsWith('http') ? vid.uri : null);
+        const tUrl = vid.thumbnailUrl || vid.thumbUri || null;
+        if (vUrl) {
+          videoPreloadManager.preload(vUrl, tUrl);
+          // Queue silent background download for cinema videos
+          if (activeTab === 'CINEMA') {
+            videoDownloadManager.queue(vUrl);
+          }
+        }
+      });
+    }
+  }, [activeList, activeTab]);
+
   const downloadCurrentTabPhotos = useCallback(async () => {
     const listToDownload = activeListRef.current || [];
     if (!listToDownload || listToDownload.length === 0 || isBatchDownloading) return;
@@ -1365,6 +1514,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [activeList]);
 
   const openLightbox = (photoItem: any, bounds: LightboxBounds | null) => {
+    if (isVideoMedia(photoItem)) {
+      setActiveVideoItem(photoItem);
+      return;
+    }
     setSelectedBounds(bounds);
     const idx = activeList.findIndex((p) => p.id === photoItem.id);
     setActiveImageIndex(idx !== -1 ? idx : (photoItem.globalIndex ?? 0));
@@ -1494,12 +1647,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const renderHeroCover = useCallback(() => {
     return (
-      <View style={styles.heroContainer}>
+      <Animated.View style={[styles.heroContainer, animatedHeroContainerStyle]}>
         {coverUrl ? (
           <Image
             source={{ uri: coverUrl }}
             style={styles.heroImage}
             contentFit="cover"
+            contentPosition="center"
             priority="high"
             cachePolicy="memory-disk"
             transition={200}
@@ -1526,15 +1680,37 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           style={styles.heroOverlay}
         />
 
+        {/* Theatrical Key-Art Vignette Overlay (Dims into #0B0B0C over 250ms when Cinema is active) */}
+        <Animated.View style={[styles.heroOverlay, animatedCinemaCoverOverlayStyle]} pointerEvents="none">
+          <LinearGradient
+            colors={['rgba(11,11,12,0.85)', 'rgba(11,11,12,0.35)', '#0B0B0C']}
+            locations={[0, 0.5, 1]}
+            style={StyleSheet.absoluteFillObject}
+          />
+        </Animated.View>
+
         {/* Cover Title Container */}
-        <View style={[styles.titleContainer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-          {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
-          <Text style={styles.storyTitle}>{cleanTitle}</Text>
-          {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
-        </View>
-      </View>
+        <Animated.View style={[styles.titleContainer, animatedTitleContainerStyle]}>
+          {/* Photo Subtitle (Location / Date) */}
+          <Animated.View style={animatedPhotoMetaStyle} pointerEvents={isCinema ? 'none' : 'auto'}>
+            {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
+            <Text style={styles.storyTitle}>{cleanTitle}</Text>
+            {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
+          </Animated.View>
+
+          {/* Cinema Subtitle ("THE WEDDING CINEMA") */}
+          <Animated.View
+            style={[StyleSheet.absoluteFillObject, animatedCinemaMetaStyle, styles.cinemaMetaWrapper]}
+            pointerEvents={isCinema ? 'auto' : 'none'}
+          >
+            <Text style={styles.cinemaCoverLeadIn}>THE WEDDING CINEMA</Text>
+            <Text style={styles.cinemaStoryTitle}>{cleanTitle}</Text>
+            {dateText ? <Text style={styles.cinemaCoverDate}>{dateText}</Text> : null}
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
     );
-  }, [coverUrl, cleanTitle, locationText, dateText, insets]);
+  }, [coverUrl, cleanTitle, locationText, dateText, insets, isCinema, animatedHeroContainerStyle, animatedCinemaCoverOverlayStyle, animatedTitleContainerStyle, animatedPhotoMetaStyle, animatedCinemaMetaStyle]);
 
   const renderStickyHeader = useCallback(() => {
     let activeTabCount: number | null = null;
@@ -1552,7 +1728,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
 
     return (
-      <View style={[styles.stickyHeaderContainer, { paddingTop: Math.max(insets.top + 4, 28), backgroundColor: '#ffffff' }]}>
+      <View
+        style={[
+          styles.stickyHeaderContainer,
+          {
+            paddingTop: Math.max(insets.top + 4, 28),
+            backgroundColor: isCinema ? 'rgba(18, 18, 20, 0.95)' : '#ffffff',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isCinema ? 'rgba(255, 255, 255, 0.08)' : '#e5e5ea',
+          },
+        ]}
+      >
         <View style={styles.stickyHeaderContainerInner}>
           <TouchableOpacity
             activeOpacity={0.7}
@@ -1566,10 +1752,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             style={styles.compactTabHeaderBarCentered}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-              <Text style={styles.compactTabActiveTitleCentered} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.compactTabActiveTitleCentered,
+                  isCinema && styles.compactTabActiveTitleCenteredCinema,
+                ]}
+                numberOfLines={1}
+              >
                 {activeTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
               </Text>
-              <Text style={styles.downArrowIcon}>▾</Text>
+              <Text style={[styles.downArrowIcon, isCinema && styles.downArrowIconCinema]}>▾</Text>
             </View>
           </TouchableOpacity>
 
@@ -1608,7 +1800,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom]);
+  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom, isCinema]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
@@ -1661,56 +1853,82 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     >
       <GestureHandlerRootView style={styles.container}>
         <GestureDetector gesture={edgeSwipeGesture}>
-          <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
+          <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle, animatedScreenBgStyle]}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-          {/* Borderless Editorial Back Button (Exact Featured Story Style) */}
-          <Pressable
-            style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
-            onPress={handleBackAction}
-            hitSlop={16}
-          >
-            <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
-          </Pressable>
+          {/* Borderless Editorial Back Button (Exact Featured Story Style - Hidden in Cinema) */}
+          {!isCinema && (
+            <Pressable
+              style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
+              onPress={handleBackAction}
+              hitSlop={16}
+            >
+              <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
+            </Pressable>
+          )}
 
-          <MasonryFlashList
-            mainScrollRef={mainScrollRef}
-            data={displayData as any}
-            numColumns={2}
-            onScroll={scrollHandler}
-            scrollSharedValue={scrollY}
-            onEndReached={loadMorePhotos}
-            onEndReachedThreshold={0.6}
-            renderHeroCover={renderHeroCover}
-            renderStickyHeader={renderStickyHeader}
-            ListFooterComponent={renderFooter()}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshingGallery}
-                onRefresh={handleRefreshGallery}
-                tintColor="#ffffff"
-              />
-            }
-            renderItem={({ item, index, isColumn0 }) => (
-              item.isSkeleton ? (
-                <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
-              ) : (
-                <MasonryCard
-                  img={item}
-                  index={index}
-                  isColumn0={isColumn0}
-                  isHighPriority={index < 12}
-                  onSelect={(bounds) => openLightbox(item, bounds)}
-                  onRegisterRef={(id, ref) => {
-                    const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
-                    if (id) cardRefs.current[id] = ref;
-                    if (refId) cardRefs.current[refId] = ref;
-                  }}
-                  onToggleLike={handleToggleLike}
+          {isCinema ? (
+            <CinemaLibraryView
+              videos={activeList as any}
+              coverUrl={coverUrl}
+              eventTitle={cleanTitle}
+              onSelectVideo={(video, resumeTimeSec) => {
+                openLightbox({ ...video, resumeTimeSec }, null);
+              }}
+              onBackToGallery={() => {
+                setActiveTab('ALL');
+              }}
+              onScroll={scrollHandler}
+              mainScrollRef={mainScrollRef}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshingGallery}
+                  onRefresh={handleRefreshGallery}
+                  tintColor="#E5C483"
                 />
-              )
-            )}
-          />
+              }
+              isLoading={isTabLoading}
+            />
+          ) : (
+            <MasonryFlashList
+              mainScrollRef={mainScrollRef}
+              data={displayData as any}
+              numColumns={2}
+              onScroll={scrollHandler}
+              scrollSharedValue={scrollY}
+              onEndReached={loadMorePhotos}
+              onEndReachedThreshold={0.6}
+              renderHeroCover={renderHeroCover}
+              renderStickyHeader={renderStickyHeader}
+              ListFooterComponent={renderFooter()}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshingGallery}
+                  onRefresh={handleRefreshGallery}
+                  tintColor="#ffffff"
+                />
+              }
+              renderItem={({ item, index, isColumn0 }) => (
+                item.isSkeleton ? (
+                  <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
+                ) : (
+                  <MasonryCard
+                    img={item}
+                    index={index}
+                    isColumn0={isColumn0}
+                    isHighPriority={index < 12}
+                    onSelect={(bounds) => openLightbox(item, bounds)}
+                    onRegisterRef={(id, ref) => {
+                      const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
+                      if (id) cardRefs.current[id] = ref;
+                      if (refId) cardRefs.current[refId] = ref;
+                    }}
+                    onToggleLike={handleToggleLike}
+                  />
+                )
+              )}
+            />
+          )}
 
           {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
           <Animated.View
@@ -1857,11 +2075,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 setActiveImageIndex(null);
                 setSelectedBounds(null);
               }}
+              onPlayVideo={(item) => setActiveVideoItem(item)}
               title={cleanTitle}
               subtitle={activeTab.toUpperCase()}
             />
           );
         })()}
+
+        {/* ── 5. Cinema Video Modal Player ── */}
+        <CinemaVideoModal
+          visible={activeVideoItem !== null}
+          video={activeVideoItem}
+          onClose={() => setActiveVideoItem(null)}
+          eventTitle={cleanTitle}
+          allowDownloads={eventDetails?.allowDownloads ?? true}
+        />
     </GestureHandlerRootView>
   </Modal>
   );
@@ -1896,6 +2124,7 @@ const styles = StyleSheet.create({
     height: Math.round(screenHeight * 0.70),
     position: 'relative',
     backgroundColor: '#1c1a18',
+    overflow: 'hidden',
   },
   heroImage: {
     width: '100%',
@@ -2254,6 +2483,41 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     color: '#8c867e',
     fontWeight: '500',
+  },
+  cinemaMetaWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cinemaCoverLeadIn: {
+    fontFamily: FONT_JOST_SEMIBOLD,
+    fontSize: 9,
+    letterSpacing: 2.5,
+    color: '#E5C483', // Warm champagne
+    marginBottom: 3,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  cinemaStoryTitle: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 18,
+    lineHeight: 22,
+    letterSpacing: 1.5,
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 3,
+  },
+  cinemaCoverDate: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    color: 'rgba(255, 255, 255, 0.65)',
+    textAlign: 'center',
+  },
+  compactTabActiveTitleCenteredCinema: {
+    color: '#FFFFFF',
+  },
+  downArrowIconCinema: {
+    color: '#C5A880',
   },
 });
 
