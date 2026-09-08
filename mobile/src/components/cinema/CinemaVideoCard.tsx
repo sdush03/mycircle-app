@@ -13,8 +13,8 @@ import { WatchProgress } from '../../services/videoWatchProgressManager';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Vertical Movie Poster Card Dimensions (~2:3 ratio, matching Netflix & Wedflix)
-export const POSTER_CARD_WIDTH = 145;
-export const POSTER_CARD_HEIGHT = 218;
+export const POSTER_CARD_WIDTH = 140;
+export const POSTER_CARD_HEIGHT = 210;
 
 // Backward-compatible exports for any shelf imports
 export const SHELF_FILM_WIDTH = POSTER_CARD_WIDTH;
@@ -98,6 +98,15 @@ function formatEditorialTitle(video: CinemaVideoItem): string {
   return 'Wedding Film';
 }
 
+function isReelVideo(video: CinemaVideoItem): boolean {
+  if (video.aspectRatio && video.aspectRatio < 0.9) return true;
+  if (video.width && video.height && video.height > video.width) return true;
+  const title = (video.title || video.name || '').toLowerCase();
+  const cat = (video.category || '').toLowerCase();
+  if (title.includes('reel') || cat.includes('reel') || title.includes('vertical') || title.includes('short')) return true;
+  return false;
+}
+
 export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   video,
   watchProgress = null,
@@ -107,6 +116,7 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   const title = formatEditorialTitle(video);
   const durationText = formatDuration(video.duration);
   const isViewing = watchProgress && !watchProgress.isCompleted && watchProgress.progressPercent > 0;
+  const isReel = isReelVideo(video);
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -140,24 +150,28 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
 
         {/* Scrim gradient: subtle dark bottom to guarantee title legibility */}
         <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.92)']}
-          locations={[0.35, 0.65, 1]}
+          colors={['transparent', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.95)']}
+          locations={[0.3, 0.62, 1]}
           style={StyleSheet.absoluteFillObject}
         />
 
-        {/* Top Badges Row */}
+        {/* Top Badges Row (Wedflix ss6 style) */}
         <View style={styles.topBadgesRow}>
-          {/* Subtle brand mark pill top-left (Netflix/Wedflix style) */}
+          {/* Brand mark pill top-left */}
           <View style={styles.brandMarkPill}>
             <Text style={styles.brandMarkText}>MV</Text>
           </View>
 
-          {/* Currently Viewing red badge top-right (Wedflix ss6 style) */}
+          {/* Badge top-right */}
           {isViewing ? (
             <View style={styles.currentlyViewingBadge}>
               <Text style={styles.currentlyViewingText}>Currently Viewing</Text>
             </View>
-          ) : null}
+          ) : (
+            <View style={styles.top10Badge}>
+              <Text style={styles.top10BadgeText}>{isReel ? 'NEW' : 'TOP 10'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Center Restrained Play Icon on tap/preview */}
@@ -234,18 +248,18 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   brandMarkPill: {
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 3,
     borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   brandMarkText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     fontSize: 9,
-    color: '#E5C483',
-    letterSpacing: 0.5,
+    color: '#E50914',
+    letterSpacing: 0.6,
   },
   currentlyViewingBadge: {
     backgroundColor: '#E50914',
@@ -254,6 +268,18 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   currentlyViewingText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 8,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  top10Badge: {
+    backgroundColor: '#E50914',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  top10BadgeText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     fontSize: 8,
     color: '#FFFFFF',

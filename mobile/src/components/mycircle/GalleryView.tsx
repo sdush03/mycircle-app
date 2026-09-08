@@ -129,7 +129,7 @@ function mapPhotoItem(p: any): Photo {
     likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
     title: p.title || p.name || p.caption || p.filename || undefined,
     duration: p.duration || p.meta?.duration || p.metadata?.duration || undefined,
-    isFeatured: p.isFeatured || p.featured || p.meta?.isFeatured || false,
+    isFeatured: Boolean(p.isFeatured || p.featured || p.meta?.isFeatured || p.exif?.isFeatured),
     category: p.category || p.videoCategory || p.meta?.category || undefined,
     raw: p,
   };
