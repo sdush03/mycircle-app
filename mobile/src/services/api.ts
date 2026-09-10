@@ -30,17 +30,23 @@ api.interceptors.request.use(
   }
 );
 
-// Handle API error responses — auto-logout only on auth endpoint 401s,
-// not on every 401 across the app (e.g. public/family data fetches).
+// Handle API responses — auto-refresh token if present, and auto-logout on 401 when session expires
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // If backend returns a refreshed token (e.g. from /api/gallery/family/events), persist it
+    if (response.data?.token && typeof response.data.token === 'string') {
+      useAuthStore.getState().updateToken(response.data.token).catch(() => {});
+    }
+    return response;
+  },
   async (error) => {
     if (error.response && error.response.status === 401) {
       const url: string = error.config?.url || '';
-      const isAuthEndpoint =
-        url.includes('/api/gallery/family/auth') ||
-        (url.includes('/api/gallery/public/events') && url.includes('/auth') && !url.includes('/auth-from-family'));
-      if (isAuthEndpoint) {
+      // Only skip logout for operations where 401 is an input error, NOT a session expiration
+      // (e.g. invalid bulk download PIN).
+      const isInputPinError = url.includes('/download');
+      if (!isInputPinError) {
+        console.warn('[API 401] Session token expired or invalid for URL:', url, '-> Auto-logging out to Login screen.');
         await useAuthStore.getState().logout();
       }
     }

@@ -410,7 +410,9 @@ function RootLayoutContent() {
         {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
         {eventSlug && (
           <GalleryView
-            onLogout={() => {}}
+            onLogout={async () => {
+              await useAuthStore.getState().logout();
+            }}
             onChangeEvent={() => {
               useAuthStore.getState().setEventDetails(null, null);
             }}

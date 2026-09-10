@@ -52,6 +52,7 @@ interface AuthState {
   getGalleryCache: (eventSlug: string) => GalleryCacheEntry | null;
   
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
+  updateToken: (token: string) => Promise<void>;
   updateProfile: (profile: Partial<GuestProfile>) => Promise<void>;
   setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null, openedFrom?: 'home' | 'mycircle' | null) => void;
   leaveEvent: (eventSlugOrId: string | number) => Promise<void>;
@@ -123,6 +124,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } catch (e) {
       console.error('Error saving auth state', e);
+    }
+  },
+
+  updateToken: async (token: string) => {
+    try {
+      await SecureStore.setItemAsync(TOKEN_KEY, token);
+      set({ token });
+    } catch (e) {
+      console.warn('Error updating token in storage:', e);
     }
   },
 

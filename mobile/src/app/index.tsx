@@ -372,9 +372,11 @@ export default function HomeScreen() {
       setEvents(sortedEvents);
       AsyncStorage.setItem('@mycircle_user_events_cache', JSON.stringify(sortedEvents)).catch(() => {});
     } catch (err: any) {
-      if (err?.response?.status !== 401) {
-        console.warn('fetchUserEvents failed:', err?.message);
+      if (err?.response?.status === 401) {
+        setEvents([]);
+        return;
       }
+      console.warn('fetchUserEvents failed:', err?.message);
     } finally {
       setLoadingEvents(false);
     }

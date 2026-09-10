@@ -108,9 +108,11 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
         loadRecentEvents();
       }
     } catch (e: any) {
-      if (e?.response?.status !== 401) {
-        console.warn('Failed to fetch family events list, falling back to local storage:', e);
+      if (e?.response?.status === 401) {
+        console.warn('[MYCIRCLE EVENTS] Session expired or invalid (401). Clearing state.');
+        return;
       }
+      console.warn('Failed to fetch family events list, falling back to local storage:', e);
       loadRecentEvents();
     } finally {
       setIsLoading(false);

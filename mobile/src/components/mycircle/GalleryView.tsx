@@ -557,6 +557,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           onChangeEvent();
           return;
         }
+        if (e?.response?.status === 401) {
+          console.warn('[MYCIRCLE SSO] Circle session expired or invalid (401). Redirecting to Login screen.');
+          await useAuthStore.getState().logout();
+          onLogout?.();
+          return;
+        }
         const errDetail = e?.response?.data?.error || (typeof e?.response?.data === 'string' ? e?.response?.data : JSON.stringify(e?.response?.data)) || e?.message;
         console.warn('SSO token exchange failed:', errDetail);
         if (familyToken) {
@@ -577,21 +583,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
           guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] Matched photos fetch error:', e?.response?.status);
-            return { data: [] };
+            return { data: [], status: e?.response?.status };
           }),
           guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${PAGE_SIZE}&offset=0`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] All photos fetch error:', e?.response?.status);
-            return { data: [] };
+            return { data: [], status: e?.response?.status };
           }),
           guestApi.get(`/api/gallery/public/events/${eventSlug}/favorites`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] Favorites fetch error:', e?.response?.status);
-            return { data: [] };
+            return { data: [], status: e?.response?.status };
           }),
           guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=20&offset=0`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] Cinema photos fetch error:', e?.response?.status);
-            return { data: [] };
+            return { data: [], status: e?.response?.status };
           }),
         ]);
+
+        if (allRes?.status === 401 && matchedRes?.status === 401) {
+          console.warn('[MYCIRCLE] Photo endpoints returned 401 Unauthorized. Session expired or invalid. Navigating to Login.');
+          await useAuthStore.getState().logout();
+          onLogout?.();
+          return;
+        }
 
         const fetchDuration = Date.now() - fetchStartTime;
         const matchedList = matchedRes.data.photos || matchedRes.data.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
