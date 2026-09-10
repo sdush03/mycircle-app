@@ -127,6 +127,8 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
     onPress(video, resumeTime);
   };
 
+  const displayBadge = (badge && badge.toUpperCase() !== 'FEATURE' && badge.toUpperCase() !== 'FEATURED') ? badge : undefined;
+
   return (
     <Pressable
       onPress={handlePress}
@@ -156,15 +158,15 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
         />
 
         {/* Top Badges Row */}
-        {isViewing || badge || isReel ? (
+        {isViewing || displayBadge || isReel ? (
           <View style={[styles.topBadgesRow, { justifyContent: 'flex-end' }]}>
             {isViewing ? (
               <View style={styles.currentlyViewingBadge}>
                 <Text style={styles.currentlyViewingText}>Currently Viewing</Text>
               </View>
-            ) : badge ? (
+            ) : displayBadge ? (
               <View style={styles.customBadge}>
-                <Text style={styles.customBadgeText}>{badge}</Text>
+                <Text style={styles.customBadgeText}>{displayBadge}</Text>
               </View>
             ) : isReel ? (
               <View style={styles.top10Badge}>

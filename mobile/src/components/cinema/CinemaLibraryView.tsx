@@ -275,7 +275,6 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
 
   const getBadgeForFilm = useCallback((film: CinemaVideoItem, index: number, shelfType: string) => {
     if (shelfType === 'directors-cut') {
-      if (film.id === primaryVideo?.id || isExplicitlyPrimary(film)) return 'FEATURE';
       const t = (film.title || film.name || '').toLowerCase();
       if (t.includes('prewed') || t.includes('pre-wed') || t.includes('pre wed')) return 'PRE-WED';
       return undefined;
@@ -290,7 +289,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
       return `CHAPTER ${String(index + 1).padStart(2, '0')}`;
     }
     return undefined;
-  }, [primaryVideo]);
+  }, []);
 
   const handleWatchPrimary = useCallback(() => {
     if (!primaryVideo) return;
