@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,10 @@ import {
   Pressable,
   Dimensions,
   ActivityIndicator,
-  Animated as RNAnimated,
+  BackHandler,
+  StatusBar,
+  useWindowDimensions,
+  ViewStyle,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { VideoView, VideoPlayer } from 'expo-video';
@@ -25,7 +28,6 @@ import Animated, {
   withTiming,
   withSpring,
   runOnJS,
-  Easing,
 } from 'react-native-reanimated';
 import {
   FONT_JOST_REGULAR,
@@ -33,12 +35,6 @@ import {
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
 import { CinemaScrubber } from './CinemaScrubber';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// 16:9 Dimensions
-const VIDEO_WIDTH = SCREEN_WIDTH;
-const VIDEO_HEIGHT = Math.round((SCREEN_WIDTH * 9) / 16);
 
 interface HorizontalCinemaPlayerProps {
   player: VideoPlayer;
@@ -92,8 +88,33 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   onRestartFromBeginning,
 }) => {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const screenWidth = Math.min(windowWidth, windowHeight);
+  const screenHeight = Math.max(windowWidth, windowHeight);
+  const videoHeight = Math.round((screenWidth * 9) / 16);
+
   const [areControlsVisible, setAreControlsVisible] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Restore status bar on unmount if exited while in fullscreen
+  useEffect(() => {
+    return () => {
+      StatusBar.setHidden(false, 'fade');
+    };
+  }, []);
+
+  // Hardware back button handler for Android: exit fullscreen first before dismissing modal
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isFullscreen) {
+        setIsFullscreen(false);
+        return true;
+      }
+      return false;
+    });
+    return () => backHandler.remove();
+  }, [isFullscreen]);
 
   // Reanimated values for HUD opacity and interactive swipe-to-dismiss
   const controlsOpacity = useSharedValue(1);
@@ -137,7 +158,8 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   const handleVideoTouch = (e: any) => {
     const now = Date.now();
     const x = e.nativeEvent.locationX;
-    const isLeftHalf = x < VIDEO_WIDTH / 2;
+    const canvasWidth = isFullscreen ? screenHeight : screenWidth;
+    const isLeftHalf = x < canvasWidth / 2;
 
     if (now - lastTapRef.current < 300) {
       // Double tap detected!
@@ -154,18 +176,16 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     }
   };
 
-  // Fullscreen trigger
+  // Fullscreen trigger & exit
   const handleFullscreenPress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    try {
-      videoViewRef.current?.enterFullscreen?.();
-    } catch (e) {
-      console.warn('[CINEMA FULLSCREEN ⚠️] enterFullscreen error:', e);
-    }
+    setIsFullscreen((prev) => !prev);
+    resetControlsTimer();
   };
 
-  // Interactive Swipe-down-to-dismiss gesture
+  // Interactive Swipe-down-to-dismiss gesture (portrait only)
   const panGesture = Gesture.Pan()
+    .enabled(!isFullscreen)
     .onUpdate((e) => {
       'worklet';
       if (e.translationY > 0) {
@@ -175,13 +195,22 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     .onEnd((e) => {
       'worklet';
       if (e.translationY > 120 || e.velocityY > 600) {
-        dismissTranslateY.value = withTiming(SCREEN_HEIGHT, { duration: 220 }, (fin) => {
+        dismissTranslateY.value = withTiming(screenHeight, { duration: 220 }, (fin) => {
           if (fin) runOnJS(onClose)();
         });
       } else {
         dismissTranslateY.value = withSpring(0, { damping: 18, stiffness: 200 });
       }
     });
+
+  // Ensure video continues smoothly when toggling fullscreen
+  useEffect(() => {
+    if (isPlaying) {
+      try {
+        player.play();
+      } catch {}
+    }
+  }, [isFullscreen, isPlaying]);
 
   const animatedContainerStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: dismissTranslateY.value }],
@@ -191,46 +220,31 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     opacity: controlsOpacity.value,
   }));
 
+  const fullscreenContainerStyle = useMemo<ViewStyle>(() => ({
+    position: 'absolute',
+    top: (screenHeight - screenWidth) / 2,
+    left: (screenWidth - screenHeight) / 2,
+    width: screenHeight,
+    height: screenWidth,
+    transform: [{ rotate: '90deg' }],
+    zIndex: 99999,
+    backgroundColor: '#000000',
+  }), [screenWidth, screenHeight]);
+
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[styles.root, animatedContainerStyle]}>
-        {/* ── 1. Top Navigation Bar (Always Accessible When HUD is On) ── */}
-        <Animated.View
-          style={[styles.topBar, { paddingTop: Math.max(insets.top + 6, 36) }, animatedHudStyle]}
-          pointerEvents={areControlsVisible ? 'auto' : 'none'}
-        >
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              onClose();
-            }}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
-            <Text style={styles.backButtonText}>CINEMA</Text>
-          </TouchableOpacity>
+    <View style={styles.root}>
+      <StatusBar
+        hidden={isFullscreen}
+        barStyle="light-content"
+        translucent
+        backgroundColor="transparent"
+      />
 
-          {/* Resumed Pill Toast */}
-          {resumedToastSec !== null ? (
-            <View style={styles.resumedToast}>
-              <Text style={styles.resumedToastText}>
-                Resumed from {Math.floor(resumedToastSec / 60)}:
-                {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
-                {Math.floor(resumedToastSec % 60)}
-              </Text>
-              <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                <Text style={styles.restartLink}>Restart</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </Animated.View>
-
-        {/* ── 2. 16:9 Video Canvas (Positioned in Upper-Middle Optical Center) ── */}
-        <View style={styles.videoCanvasWrapper}>
+      {isFullscreen ? (
+        /* ── Fullscreen Rotated Landscape Player ── */
+        <View style={fullscreenContainerStyle}>
           <Pressable onPress={handleVideoTouch} style={styles.videoPressable}>
-            {/* Background High-Res Poster Frame (0ms Render on Frame 1) */}
+            {/* Background High-Res Poster Frame */}
             {cleanThumbnailUrl ? (
               <ExpoImage
                 source={{ uri: cleanThumbnailUrl }}
@@ -241,14 +255,15 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
               />
             ) : null}
 
-            {/* Native VideoView (with nativeControls=false for custom luxury UI) */}
+            {/* Native VideoView (with textureView for Android rotation support) */}
             <VideoView
               ref={videoViewRef}
               player={player}
               style={StyleSheet.absoluteFillObject}
               contentFit="contain"
               nativeControls={false}
-              fullscreenOptions={{ enable: true }}
+              surfaceType="textureView"
+              fullscreenOptions={{ enable: false }}
               showsTimecodes={false}
             />
 
@@ -301,92 +316,375 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
               </View>
             ) : null}
           </Pressable>
+
+          {/* Fullscreen Rotated HUD Overlay */}
+          <Animated.View
+            style={[styles.fsHudContainer, animatedHudStyle]}
+            pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+          >
+            {/* Fullscreen Top Navigation Bar */}
+            <LinearGradient
+              colors={['rgba(0,0,0,0.85)', 'rgba(0,0,0,0.4)', 'transparent']}
+              style={[
+                styles.fsTopBar,
+                {
+                  paddingLeft: Math.max(insets.top, 32),
+                  paddingRight: Math.max(insets.bottom, 28),
+                },
+              ]}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+            >
+              <TouchableOpacity
+                style={styles.fsBackButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  setIsFullscreen(false);
+                  resetControlsTimer();
+                }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
+                <Text style={styles.fsBackButtonText}>CINEMA</Text>
+              </TouchableOpacity>
+
+              <View style={styles.fsTitleContainer}>
+                <Text style={styles.fsTitleText} numberOfLines={1}>
+                  {title}
+                </Text>
+                {subtitle ? (
+                  <Text style={styles.fsSubtitleText} numberOfLines={1}>
+                    {subtitle}
+                  </Text>
+                ) : null}
+              </View>
+
+              <TouchableOpacity
+                style={styles.fsMinimizeButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  setIsFullscreen(false);
+                  resetControlsTimer();
+                }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                activeOpacity={0.7}
+              >
+                <Feather name="minimize" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </LinearGradient>
+
+            {/* Fullscreen Bottom Scrubber & Controls */}
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.9)']}
+              style={[
+                styles.fsBottomBar,
+                {
+                  paddingLeft: Math.max(insets.top, 32),
+                  paddingRight: Math.max(insets.bottom, 28),
+                },
+              ]}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+            >
+              {/* Resumed Pill in Fullscreen if active */}
+              {resumedToastSec !== null ? (
+                <View style={styles.fsResumedToastWrapper}>
+                  <View style={styles.resumedToast}>
+                    <Text style={styles.resumedToastText}>
+                      Resumed from {Math.floor(resumedToastSec / 60)}:
+                      {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
+                      {Math.floor(resumedToastSec % 60)}
+                    </Text>
+                    <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                      <Text style={styles.restartLink}>Restart</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.fsScrubberWrapper}>
+                <CinemaScrubber
+                  currentTimeSec={currentTimeSec}
+                  durationSec={durationSec}
+                  bufferedSec={bufferedSec}
+                  onSeekStart={() => {
+                    resetControlsTimer();
+                    onSeekStart();
+                  }}
+                  onSeek={(t) => {
+                    resetControlsTimer();
+                    onSeek(t);
+                  }}
+                  onSeekEnd={(t) => {
+                    resetControlsTimer();
+                    onSeekEnd(t);
+                  }}
+                  isControlsVisible={areControlsVisible}
+                  variant="horizontal"
+                />
+              </View>
+
+              <View style={styles.fsControlsRow}>
+                {/* -10s Seek Button */}
+                <TouchableOpacity
+                  style={styles.fsSecondaryButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    resetControlsTimer();
+                    onDoubleTapSeek('back');
+                  }}
+                  hitSlop={10}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="play-back" size={18} color="#FFFFFF" />
+                  <Text style={styles.fsSecondaryButtonText}>10s</Text>
+                </TouchableOpacity>
+
+                {/* Center Play / Pause / Replay Button */}
+                <TouchableOpacity
+                  style={styles.centerPlayButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    resetControlsTimer();
+                    if (isCompleted) {
+                      onReplay();
+                    } else {
+                      onPlayPauseToggle();
+                    }
+                  }}
+                  hitSlop={15}
+                  activeOpacity={0.8}
+                >
+                  {isCompleted ? (
+                    <Ionicons name="reload" size={24} color="#E5C483" />
+                  ) : isPlaying ? (
+                    <Ionicons name="pause" size={24} color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                  )}
+                </TouchableOpacity>
+
+                {/* +10s Seek Button */}
+                <TouchableOpacity
+                  style={styles.fsSecondaryButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    resetControlsTimer();
+                    onDoubleTapSeek('forward');
+                  }}
+                  hitSlop={10}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.fsSecondaryButtonText}>10s</Text>
+                  <Ionicons name="play-forward" size={18} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+          </Animated.View>
         </View>
-
-        {/* ── 3. Lower Half Controls Zone (Thumb-Friendly Portrait Zone) ── */}
-        <Animated.View
-          style={[styles.lowerControlsZone, animatedHudStyle]}
-          pointerEvents={areControlsVisible ? 'auto' : 'none'}
-        >
-          {/* Editorial Title & Subtitle */}
-          <View style={styles.titleContainer}>
-            <Text style={styles.titleText} numberOfLines={1}>
-              {title}
-            </Text>
-            {subtitle ? (
-              <Text style={styles.subtitleText} numberOfLines={1}>
-                {subtitle}
-              </Text>
-            ) : null}
-          </View>
-
-          {/* Timeline Scrubber */}
-          <View style={styles.scrubberWrapper}>
-            <CinemaScrubber
-              currentTimeSec={currentTimeSec}
-              durationSec={durationSec}
-              bufferedSec={bufferedSec}
-              onSeekStart={() => {
-                resetControlsTimer();
-                onSeekStart();
-              }}
-              onSeek={(t) => {
-                resetControlsTimer();
-                onSeek(t);
-              }}
-              onSeekEnd={(t) => {
-                resetControlsTimer();
-                onSeekEnd(t);
-              }}
-              isControlsVisible={areControlsVisible}
-              variant="horizontal"
-            />
-          </View>
-
-          {/* Primary Controls Row: Play/Pause/Replay & Fullscreen */}
-          <View style={styles.controlsBarRow}>
-            {/* Center Play / Pause / Replay Button */}
-            <TouchableOpacity
-              style={styles.centerPlayButton}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                resetControlsTimer();
-                if (isCompleted) {
-                  onReplay();
-                } else {
-                  onPlayPauseToggle();
-                }
-              }}
-              hitSlop={15}
-              activeOpacity={0.8}
+      ) : (
+        /* ── Portrait Mode Inline Player (with Swipe-to-Dismiss) ── */
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={[styles.portraitRoot, animatedContainerStyle]}>
+            {/* ── 1. Top Navigation Bar ── */}
+            <Animated.View
+              style={[styles.topBar, { paddingTop: Math.max(insets.top + 6, 36) }, animatedHudStyle]}
+              pointerEvents={areControlsVisible ? 'auto' : 'none'}
             >
-              {isCompleted ? (
-                <Ionicons name="reload" size={24} color="#E5C483" />
-              ) : isPlaying ? (
-                <Ionicons name="pause" size={24} color="#FFFFFF" />
-              ) : (
-                <Ionicons name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
-              )}
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  onClose();
+                }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
+                <Text style={styles.backButtonText}>CINEMA</Text>
+              </TouchableOpacity>
 
-            {/* Right Fullscreen Button */}
-            <TouchableOpacity
-              style={styles.fullscreenButton}
-              onPress={handleFullscreenPress}
-              hitSlop={15}
-              activeOpacity={0.7}
+              {/* Resumed Pill Toast */}
+              {resumedToastSec !== null ? (
+                <View style={styles.resumedToast}>
+                  <Text style={styles.resumedToastText}>
+                    Resumed from {Math.floor(resumedToastSec / 60)}:
+                    {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
+                    {Math.floor(resumedToastSec % 60)}
+                  </Text>
+                  <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                    <Text style={styles.restartLink}>Restart</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </Animated.View>
+
+            {/* ── 2. 16:9 Video Canvas ── */}
+            <View style={[styles.videoCanvasWrapper, { width: screenWidth, height: videoHeight }]}>
+              <Pressable onPress={handleVideoTouch} style={styles.videoPressable}>
+                {/* Background High-Res Poster Frame */}
+                {cleanThumbnailUrl ? (
+                  <ExpoImage
+                    source={{ uri: cleanThumbnailUrl }}
+                    style={StyleSheet.absoluteFillObject}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                    priority="high"
+                  />
+                ) : null}
+
+                {/* Native VideoView */}
+                <VideoView
+                  ref={videoViewRef}
+                  player={player}
+                  style={StyleSheet.absoluteFillObject}
+                  contentFit="contain"
+                  nativeControls={false}
+                  surfaceType="textureView"
+                  fullscreenOptions={{ enable: false }}
+                  showsTimecodes={false}
+                />
+
+                {/* ±10s Double Tap Ripple Feedback */}
+                {seekRipple ? (
+                  <View
+                    style={[
+                      styles.seekRippleContainer,
+                      seekRipple.direction === 'back' ? styles.seekRippleLeft : styles.seekRippleRight,
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <View style={styles.seekRippleBubble}>
+                      <Ionicons
+                        name={seekRipple.direction === 'back' ? 'play-back' : 'play-forward'}
+                        size={20}
+                        color="#FFFFFF"
+                      />
+                      <Text style={styles.seekRippleText}>
+                        {seekRipple.direction === 'back' ? '-10s' : '+10s'}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {/* Buffering Indicator HUD */}
+                {isBuffering && !isCompleted ? (
+                  <View style={styles.bufferingOverlay} pointerEvents="none">
+                    <View style={styles.bufferingPill}>
+                      <ActivityIndicator size="small" color="#E5C483" />
+                      <Text style={styles.bufferingText}>Buffering stream...</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {/* Network Error Overlay */}
+                {isError ? (
+                  <View style={styles.errorOverlay}>
+                    <Ionicons name="alert-circle-outline" size={32} color="#E5C483" />
+                    <Text style={styles.errorTitle}>Stream Interrupted</Text>
+                    <Text style={styles.errorSubtitle}>{errorMessage || 'Please check your connection.'}</Text>
+                    <TouchableOpacity
+                      style={styles.retryButton}
+                      onPress={() => {
+                        try { player.play(); } catch {}
+                      }}
+                    >
+                      <Text style={styles.retryButtonText}>RETRY</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+
+            {/* ── 3. Lower Half Controls Zone (Portrait) ── */}
+            <Animated.View
+              style={[styles.lowerControlsZone, animatedHudStyle]}
+              pointerEvents={areControlsVisible ? 'auto' : 'none'}
             >
-              <Feather name="maximize" size={18} color="rgba(255,255,255,0.85)" />
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </Animated.View>
-    </GestureDetector>
+              {/* Editorial Title & Subtitle */}
+              <View style={styles.titleContainer}>
+                <Text style={styles.titleText} numberOfLines={1}>
+                  {title}
+                </Text>
+                {subtitle ? (
+                  <Text style={styles.subtitleText} numberOfLines={1}>
+                    {subtitle}
+                  </Text>
+                ) : null}
+              </View>
+
+              {/* Timeline Scrubber */}
+              <View style={styles.scrubberWrapper}>
+                <CinemaScrubber
+                  currentTimeSec={currentTimeSec}
+                  durationSec={durationSec}
+                  bufferedSec={bufferedSec}
+                  onSeekStart={() => {
+                    resetControlsTimer();
+                    onSeekStart();
+                  }}
+                  onSeek={(t) => {
+                    resetControlsTimer();
+                    onSeek(t);
+                  }}
+                  onSeekEnd={(t) => {
+                    resetControlsTimer();
+                    onSeekEnd(t);
+                  }}
+                  isControlsVisible={areControlsVisible}
+                  variant="horizontal"
+                />
+              </View>
+
+              {/* Primary Controls Row: Play/Pause/Replay & Fullscreen */}
+              <View style={styles.controlsBarRow}>
+                {/* Center Play / Pause / Replay Button */}
+                <TouchableOpacity
+                  style={styles.centerPlayButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    resetControlsTimer();
+                    if (isCompleted) {
+                      onReplay();
+                    } else {
+                      onPlayPauseToggle();
+                    }
+                  }}
+                  hitSlop={15}
+                  activeOpacity={0.8}
+                >
+                  {isCompleted ? (
+                    <Ionicons name="reload" size={24} color="#E5C483" />
+                  ) : isPlaying ? (
+                    <Ionicons name="pause" size={24} color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                  )}
+                </TouchableOpacity>
+
+                {/* Right Fullscreen Button */}
+                <TouchableOpacity
+                  style={styles.fullscreenButton}
+                  onPress={handleFullscreenPress}
+                  hitSlop={15}
+                  activeOpacity={0.7}
+                >
+                  <Feather name="maximize" size={18} color="rgba(255,255,255,0.85)" />
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          </Animated.View>
+        </GestureDetector>
+      )}
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   root: {
+    flex: 1,
+    backgroundColor: '#0B0B0C',
+  },
+  portraitRoot: {
     flex: 1,
     backgroundColor: '#0B0B0C',
     justifyContent: 'space-between',
@@ -435,10 +733,14 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 
-  // ─── 16:9 Video Canvas ────────────────────────────────────────────────────
+  // ─── Video Canvas ────────────────────────────────────────────────────────
   videoCanvasWrapper: {
-    width: VIDEO_WIDTH,
-    height: VIDEO_HEIGHT,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenCanvasWrapper: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center',
@@ -447,6 +749,102 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     position: 'relative',
+  },
+
+  // ─── Fullscreen Rotated HUD Overlay ──────────────────────────────────────
+  fsHudContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'space-between',
+    zIndex: 20,
+  },
+  fsTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  fsBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(25, 25, 28, 0.75)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  fsBackButtonText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 12,
+    letterSpacing: 2,
+    color: '#FFFFFF',
+  },
+  fsTitleContainer: {
+    flex: 1,
+    marginHorizontal: 16,
+    alignItems: 'center',
+  },
+  fsTitleText: {
+    fontFamily: FONT_JOST_SEMIBOLD,
+    fontSize: 15,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  fsSubtitleText: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 11,
+    color: '#8E8E93',
+    letterSpacing: 0.5,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  fsMinimizeButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(25, 25, 28, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  fsBottomBar: {
+    paddingTop: 20,
+    paddingBottom: 20,
+  },
+  fsResumedToastWrapper: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  fsScrubberWrapper: {
+    width: '100%',
+    marginBottom: 12,
+  },
+  fsControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 36,
+    width: '100%',
+  },
+  fsSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(30, 30, 34, 0.75)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  fsSecondaryButtonText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 11,
+    color: '#FFFFFF',
   },
 
   // ─── Lower Half Controls Zone (Portrait) ──────────────────────────────────

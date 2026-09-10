@@ -45,6 +45,7 @@ interface CinemaVideoCardProps {
   video: CinemaVideoItem;
   variant?: 'poster' | 'shelf-film' | 'shelf-reel' | 'primary' | 'horizontal' | 'vertical';
   isFeatured?: boolean;
+  badge?: string;
   watchProgress?: WatchProgress | null;
   onPress: (video: CinemaVideoItem, resumeTimeSec?: number) => void;
 }
@@ -86,11 +87,9 @@ function formatDuration(sec?: number): string {
 }
 
 function formatEditorialTitle(video: CinemaVideoItem): string {
-  if (video.title && video.title.trim()) {
-    return video.title.replace(/\.[a-zA-Z0-9]+$/, '').replace(/_/g, ' ').trim();
-  }
-  if (video.name && video.name.trim()) {
-    return video.name.replace(/\.[a-zA-Z0-9]+$/, '').replace(/_/g, ' ').trim();
+  const t = video.title || video.exif?.title || video.name;
+  if (t && t.trim()) {
+    return t.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[_.-]+/g, ' ').trim();
   }
   if (video.category) {
     return video.category.toUpperCase();
@@ -109,6 +108,7 @@ function isReelVideo(video: CinemaVideoItem): boolean {
 
 export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   video,
+  badge,
   watchProgress = null,
   onPress,
 }) => {
@@ -155,24 +155,24 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
           style={StyleSheet.absoluteFillObject}
         />
 
-        {/* Top Badges Row (Wedflix ss6 style) */}
-        <View style={styles.topBadgesRow}>
-          {/* Brand mark pill top-left */}
-          <View style={styles.brandMarkPill}>
-            <Text style={styles.brandMarkText}>MV</Text>
+        {/* Top Badges Row */}
+        {isViewing || badge || isReel ? (
+          <View style={[styles.topBadgesRow, { justifyContent: 'flex-end' }]}>
+            {isViewing ? (
+              <View style={styles.currentlyViewingBadge}>
+                <Text style={styles.currentlyViewingText}>Currently Viewing</Text>
+              </View>
+            ) : badge ? (
+              <View style={styles.customBadge}>
+                <Text style={styles.customBadgeText}>{badge}</Text>
+              </View>
+            ) : isReel ? (
+              <View style={styles.top10Badge}>
+                <Text style={styles.top10BadgeText}>NEW</Text>
+              </View>
+            ) : null}
           </View>
-
-          {/* Badge top-right */}
-          {isViewing ? (
-            <View style={styles.currentlyViewingBadge}>
-              <Text style={styles.currentlyViewingText}>Currently Viewing</Text>
-            </View>
-          ) : (
-            <View style={styles.top10Badge}>
-              <Text style={styles.top10BadgeText}>{isReel ? 'NEW' : 'TOP 10'}</Text>
-            </View>
-          )}
-        </View>
+        ) : null}
 
         {/* Center Restrained Play Icon on tap/preview */}
         <View style={styles.playIconCenter} pointerEvents="none">
@@ -244,22 +244,7 @@ const styles = StyleSheet.create({
     right: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     zIndex: 2,
-  },
-  brandMarkPill: {
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  brandMarkText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 9,
-    color: '#E50914',
-    letterSpacing: 0.6,
   },
   currentlyViewingBadge: {
     backgroundColor: '#E50914',
@@ -284,6 +269,21 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+  customBadge: {
+    backgroundColor: 'rgba(0, 0, 0, 0.70)',
+    borderWidth: 1,
+    borderColor: '#E5C483',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  customBadgeText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 8,
+    color: '#E5C483',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
 
   // ─── Center Play Circle ───────────────────────────────────────────────────

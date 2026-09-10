@@ -127,10 +127,14 @@ function mapPhotoItem(p: any): Photo {
     tabName: p.tabName || p.tab_name || null,
     isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
     likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
-    title: p.title || p.name || p.caption || p.filename || undefined,
+    title: p.title || p.exif?.title || p.name || p.caption || p.filename || undefined,
+    description: p.description || p.exif?.description || undefined,
+    cinemaCategory: p.cinemaCategory || p.exif?.cinemaCategory || undefined,
+    sortOrder: p.sortOrder !== undefined ? p.sortOrder : (p.exif?.sortOrder !== undefined ? p.exif.sortOrder : undefined),
     duration: p.duration || p.meta?.duration || p.metadata?.duration || undefined,
     isFeatured: Boolean(p.isFeatured || p.featured || p.meta?.isFeatured || p.exif?.isFeatured),
     category: p.category || p.videoCategory || p.meta?.category || undefined,
+    exif: p.exif || undefined,
     raw: p,
   };
 }
@@ -173,6 +177,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   // Lightbox & Video State
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
   const [activeVideoItem, setActiveVideoItem] = useState<any | null>(null);
+  const lastNonCinemaTabRef = useRef<string>('ALL');
   const [selectedBounds, setSelectedBounds] = useState<LightboxBounds | null>(null);
 
   const PAGE_SIZE = 60;
@@ -260,36 +265,49 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     color: scrollY.value >= exactTouchPoint ? (isCinema ? '#ffffff' : '#3a3632') : '#ffffff',
   }));
 
-  // ─── Gallery → Cinema Theatrical Transition Engine (250ms "Lights Down") ───
+  // ─── Gallery → Cinema Theatrical Transition & iOS Swipe-Back Engine ───
   const isCinema = activeTab.trim().toUpperCase() === 'CINEMA';
   const cinemaProgress = useSharedValue(isCinema ? 1 : 0);
+  const isCinemaShared = useSharedValue(isCinema);
+  const cinemaSwipeX = useSharedValue(0);
+  const cinemaScrollRef = useAnimatedRef<Animated.ScrollView>();
+  const cinemaScrollY = useSharedValue(0);
+  const cinemaScrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      cinemaScrollY.value = e.contentOffset.y;
+    },
+  });
 
   useEffect(() => {
+    if (!isCinema && activeTab) {
+      lastNonCinemaTabRef.current = activeTab;
+    }
+  }, [isCinema, activeTab]);
+
+  useEffect(() => {
+    isCinemaShared.value = isCinema;
+    if (!isCinema) {
+      cinemaSwipeX.value = 0;
+    }
     cinemaProgress.value = withTiming(isCinema ? 1 : 0, {
       duration: 250,
       easing: Easing.out(Easing.quad),
     });
-  }, [isCinema, cinemaProgress]);
+  }, [isCinema, cinemaProgress, isCinemaShared, cinemaSwipeX]);
 
-  const animatedScreenBgStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      cinemaProgress.value,
-      [0, 1],
-      ['#ffffff', '#000000']
-    ),
+  const cinemaAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: cinemaSwipeX.value }],
   }));
 
-  const animatedCinemaCoverOverlayStyle = useAnimatedStyle(() => ({
-    opacity: cinemaProgress.value,
-  }));
+  const photosDimAnimatedStyle = useAnimatedStyle(() => {
+    if (!isCinemaShared.value) return { opacity: 0 };
+    const progress = cinemaSwipeX.value / width;
+    return {
+      opacity: interpolate(progress, [0, 1], [0.15, 0], 'clamp'),
+    };
+  });
 
-  const animatedPhotoMetaStyle = useAnimatedStyle(() => ({
-    opacity: 1 - cinemaProgress.value,
-  }));
 
-  const animatedCinemaMetaStyle = useAnimatedStyle(() => ({
-    opacity: cinemaProgress.value,
-  }));
 
   const animatedHeroContainerStyle = useAnimatedStyle(() => ({
     height: Math.round(screenHeight * 0.70),
@@ -400,8 +418,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }));
 
   useEffect(() => {
-    isLightboxOpen.value = activeImageIndex !== null;
-  }, [activeImageIndex]);
+    isLightboxOpen.value = activeImageIndex !== null || activeVideoItem !== null || isMoreDrawerOpen;
+  }, [activeImageIndex, activeVideoItem, isMoreDrawerOpen, isLightboxOpen]);
 
   useEffect(() => {
     if (eventSlug) {
@@ -410,36 +428,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       screenSwipeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.quad) });
     }
   }, [eventSlug]);
-
-  const handleBackAction = useCallback(() => {
-    if (activeTab === 'CINEMA') {
-      setActiveTab('ALL');
-      return;
-    }
-    if (activeImageIndex !== null) {
-      setActiveImageIndex(null);
-      return;
-    }
-    if (isClosingRef.current) return;
-    isClosingRef.current = true;
-
-    screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
-      'worklet';
-      if (finished) {
-        runOnJS(onChangeEvent)();
-      }
-    });
-  }, [activeImageIndex, onChangeEvent, screenSwipeX, activeTab]);
-
-  // Native Android Back Button Listener
-  useEffect(() => {
-    const onBack = () => {
-      handleBackAction();
-      return true;
-    };
-    const subscription = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => subscription.remove();
-  }, [handleBackAction]);
 
   // Viewport-Proximity & Page Batch Pre-Fetch Engine: Prefetches upcoming 20 thumbnail photos into native image cache
   const scheduleBatchPrefetch = useCallback((mappedList: Photo[]) => {
@@ -1006,7 +994,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [eventSlug, tabCache]);
 
   useEffect(() => {
-    if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES') {
+    if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES' && activeTab.trim().toUpperCase() !== 'CINEMA') {
       fetchTabPhotos(activeTab);
     }
   }, [activeTab, fetchTabPhotos]);
@@ -1122,12 +1110,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // 1. Lock onScroll during tab transition so native height clamping doesn't erase saved scroll Y
     isTabSwitchingRef.current = true;
 
-    // 2. Save exact scroll position of the tab we are leaving
-    tabOffsetsRef.current[currentNorm] = currentYRef.current;
+    // 2. Save exact scroll position of the photo tab we are leaving
+    if (currentNorm !== 'CINEMA') {
+      tabOffsetsRef.current[currentNorm] = currentYRef.current;
+    }
 
     // 3. Switch tab
     setActiveTab(newTab);
-    fetchTabPhotos(newTab);
+    if (newNorm !== 'CINEMA') {
+      fetchTabPhotos(newTab);
+    }
 
     // 4. Shared index update
     const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
@@ -1144,12 +1136,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [activeTab, availableTabs, fetchTabPhotos]);
 
-  // Per-tab scroll restoration effect: triggers ONLY when activeTab changes
+  // Per-tab scroll restoration effect: triggers ONLY when activeTab changes between photo tabs
   useEffect(() => {
     if (isLoading || isTabLoading) return;
 
     if (prevTabRef.current !== activeTab) {
+      const prevTab = prevTabRef.current;
       prevTabRef.current = activeTab;
+
+      // When entering or exiting CINEMA, do not touch scroll: Photos gallery is preserved underneath!
+      if ((prevTab && prevTab.trim().toUpperCase() === 'CINEMA') || activeTab.trim().toUpperCase() === 'CINEMA') {
+        isTabSwitchingRef.current = false;
+        return;
+      }
 
       const norm = activeTab.toUpperCase();
       const targetY = tabOffsetsRef.current[norm] ?? 0;
@@ -1182,6 +1181,66 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [availableTabs, changeTabWithScrollMemory]);
 
+  const finalizeCinemaExit = useCallback(() => {
+    const targetTab = (lastNonCinemaTabRef.current && availableTabs.includes(lastNonCinemaTabRef.current))
+      ? lastNonCinemaTabRef.current
+      : (availableTabs.includes('ALL') ? 'ALL' : (availableTabs.find((t) => t.trim().toUpperCase() !== 'CINEMA') || 'ALL'));
+
+    const targetNorm = targetTab.toUpperCase();
+    const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === targetNorm);
+    if (newIdx >= 0) {
+      activeCategorySharedIndex.value = newIdx;
+      categoryTranslateX.value = 0;
+    }
+
+    prevTabRef.current = targetTab;
+    isTabSwitchingRef.current = false;
+    setActiveTab(targetTab);
+  }, [availableTabs, activeCategorySharedIndex, categoryTranslateX]);
+
+  const handleBackAction = useCallback(() => {
+    if (isMoreDrawerOpen) {
+      closeDrawerWithAnimation();
+      return;
+    }
+    if (activeVideoItem !== null) {
+      setActiveVideoItem(null);
+      return;
+    }
+    if (activeImageIndex !== null) {
+      setActiveImageIndex(null);
+      return;
+    }
+    if (isCinema) {
+      cinemaSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+        'worklet';
+        if (finished) {
+          runOnJS(finalizeCinemaExit)();
+        }
+      });
+      return;
+    }
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+      'worklet';
+      if (finished) {
+        runOnJS(onChangeEvent)();
+      }
+    });
+  }, [isMoreDrawerOpen, closeDrawerWithAnimation, activeVideoItem, activeImageIndex, isCinema, cinemaSwipeX, finalizeCinemaExit, isClosingRef, screenSwipeX, onChangeEvent]);
+
+  // Native Android Back Button Listener
+  useEffect(() => {
+    const onBack = () => {
+      handleBackAction();
+      return true;
+    };
+    const subscription = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => subscription.remove();
+  }, [handleBackAction]);
+
   // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
     .activeOffsetX(30)
@@ -1194,7 +1253,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       'worklet';
       if (!touchStartedOnLeftEdge.value) return;
       if (e.translationX > 0) {
-        screenSwipeX.value = e.translationX;
+        if (isCinemaShared.value) {
+          cinemaSwipeX.value = e.translationX;
+          screenSwipeX.value = 0;
+        } else {
+          screenSwipeX.value = e.translationX;
+        }
       }
     })
     .onEnd((e) => {
@@ -1203,13 +1267,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       if (touchStartedOnLeftEdge.value) {
         if (e.translationX > width * 0.20 || e.velocityX > 250) {
-          screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
-            if (finished) {
-              runOnJS(onChangeEvent)();
-            }
-          });
+          if (isCinemaShared.value) {
+            cinemaSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+              if (finished) {
+                runOnJS(finalizeCinemaExit)();
+              }
+            });
+          } else {
+            screenSwipeX.value = withTiming(width, { duration: 220, easing: Easing.out(Easing.quad) }, (finished) => {
+              if (finished) {
+                runOnJS(onChangeEvent)();
+              }
+            });
+          }
         } else {
-          screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+          if (isCinemaShared.value) {
+            cinemaSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+          } else {
+            screenSwipeX.value = withSpring(0, { damping: 25, stiffness: 200 });
+          }
         }
         touchStartedOnLeftEdge.value = false;
       }
@@ -1274,8 +1350,22 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     };
   }, []);
 
+  // Current active photo tab: resolves to last non-cinema tab (e.g. ALL) when in Cinema
+  const currentPhotoTab = useMemo(() => {
+    if (!isCinema) return activeTab;
+    return (lastNonCinemaTabRef.current && lastNonCinemaTabRef.current.trim().toUpperCase() !== 'CINEMA')
+      ? lastNonCinemaTabRef.current
+      : (availableTabs.includes('ALL') ? 'ALL' : (availableTabs.find((t) => t.trim().toUpperCase() !== 'CINEMA') || 'ALL'));
+  }, [isCinema, activeTab, availableTabs]);
+
+  const activeCinemaVideos = useMemo(() => {
+    const cached = tabCache['CINEMA'];
+    if (cached && cached.length > 0) return cached;
+    return allPhotos.filter((p: any) => isVideoMedia(p));
+  }, [tabCache, allPhotos]);
+
   const activeList = React.useMemo(() => {
-    const currentUpper = activeTab.toUpperCase();
+    const currentUpper = currentPhotoTab.toUpperCase();
     const isLockedTab = currentUpper.includes('LOCKED');
 
     const isPhotoLocked = (p: any) => {
@@ -1328,14 +1418,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
 
     return sourceList.filter((p) => !isPhotoLocked(p));
-  }, [activeTab, photos, allPhotos, tabCache, lockedPhotoIds]);
+  }, [currentPhotoTab, photos, allPhotos, tabCache, lockedPhotoIds]);
 
   activeListRef.current = activeList;
 
   // Predictive Instagram-style Video Pre-Buffering:
   // Pre-warms native player instances for the upcoming videos in the background
   useEffect(() => {
-    const videoItems = activeList.filter((item) => isVideoMedia(item));
+    const videoItems = activeCinemaVideos;
     if (videoItems.length > 0) {
       videoItems.slice(0, 3).forEach((vid) => {
         const vUrl = vid.videoUrl || vid.fullUri || vid.r2Url || (typeof vid.uri === 'string' && vid.uri.startsWith('http') ? vid.uri : null);
@@ -1343,13 +1433,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (vUrl) {
           videoPreloadManager.preload(vUrl, tUrl);
           // Queue silent background download for cinema videos
-          if (activeTab === 'CINEMA') {
+          if (isCinema) {
             videoDownloadManager.queue(vUrl);
           }
         }
       });
     }
-  }, [activeList, activeTab]);
+  }, [activeCinemaVideos, isCinema]);
 
   const downloadCurrentTabPhotos = useCallback(async () => {
     const listToDownload = activeListRef.current || [];
@@ -1680,50 +1770,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           style={styles.heroOverlay}
         />
 
-        {/* Theatrical Key-Art Vignette Overlay (Dims into #0B0B0C over 250ms when Cinema is active) */}
-        <Animated.View style={[styles.heroOverlay, animatedCinemaCoverOverlayStyle]} pointerEvents="none">
-          <LinearGradient
-            colors={['rgba(11,11,12,0.85)', 'rgba(11,11,12,0.35)', '#0B0B0C']}
-            locations={[0, 0.5, 1]}
-            style={StyleSheet.absoluteFillObject}
-          />
-        </Animated.View>
-
         {/* Cover Title Container */}
         <Animated.View style={[styles.titleContainer, animatedTitleContainerStyle]}>
-          {/* Photo Subtitle (Location / Date) */}
-          <Animated.View style={animatedPhotoMetaStyle} pointerEvents={isCinema ? 'none' : 'auto'}>
-            {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
-            <Text style={styles.storyTitle}>{cleanTitle}</Text>
-            {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
-          </Animated.View>
-
-          {/* Cinema Subtitle ("THE WEDDING CINEMA") */}
-          <Animated.View
-            style={[StyleSheet.absoluteFillObject, animatedCinemaMetaStyle, styles.cinemaMetaWrapper]}
-            pointerEvents={isCinema ? 'auto' : 'none'}
-          >
-            <Text style={styles.cinemaCoverLeadIn}>THE WEDDING CINEMA</Text>
-            <Text style={styles.cinemaStoryTitle}>{cleanTitle}</Text>
-            {dateText ? <Text style={styles.cinemaCoverDate}>{dateText}</Text> : null}
-          </Animated.View>
+          {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
+          <Text style={styles.storyTitle}>{cleanTitle}</Text>
+          {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
         </Animated.View>
       </Animated.View>
     );
-  }, [coverUrl, cleanTitle, locationText, dateText, insets, isCinema, animatedHeroContainerStyle, animatedCinemaCoverOverlayStyle, animatedTitleContainerStyle, animatedPhotoMetaStyle, animatedCinemaMetaStyle]);
+  }, [coverUrl, cleanTitle, locationText, dateText, insets, animatedHeroContainerStyle, animatedTitleContainerStyle]);
 
   const renderStickyHeader = useCallback(() => {
     let activeTabCount: number | null = null;
-    if (activeTab.toUpperCase().includes('LOCKED')) {
+    if (currentPhotoTab.toUpperCase().includes('LOCKED')) {
       activeTabCount = activeList.length;
-    } else if (activeTab === 'MY PHOTOS') {
+    } else if (currentPhotoTab === 'MY PHOTOS') {
       activeTabCount = photos.length;
-    } else if (activeTab === 'MY FAVOURITES') {
+    } else if (currentPhotoTab === 'MY FAVOURITES') {
       activeTabCount = favoritesCount;
-    } else if (activeTab === 'ALL') {
+    } else if (currentPhotoTab === 'ALL') {
       activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
     } else {
-      const normKey = activeTab.trim().toUpperCase();
+      const normKey = currentPhotoTab.trim().toUpperCase();
       activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
     }
 
@@ -1733,9 +1801,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           styles.stickyHeaderContainer,
           {
             paddingTop: Math.max(insets.top + 4, 28),
-            backgroundColor: isCinema ? 'rgba(18, 18, 20, 0.95)' : '#ffffff',
+            backgroundColor: '#ffffff',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isCinema ? 'rgba(255, 255, 255, 0.08)' : '#e5e5ea',
+            borderBottomColor: '#e5e5ea',
           },
         ]}
       >
@@ -1753,15 +1821,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
               <Text
-                style={[
-                  styles.compactTabActiveTitleCentered,
-                  isCinema && styles.compactTabActiveTitleCenteredCinema,
-                ]}
+                style={styles.compactTabActiveTitleCentered}
                 numberOfLines={1}
               >
-                {activeTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
+                {currentPhotoTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
               </Text>
-              <Text style={[styles.downArrowIcon, isCinema && styles.downArrowIconCinema]}>▾</Text>
+              <Text style={styles.downArrowIcon}>▾</Text>
             </View>
           </TouchableOpacity>
 
@@ -1771,9 +1836,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             if (!allowBulkDownloads) return null;
 
             const isDownloadableTab = isBrideOrGroom || (
-              activeTab.trim().toUpperCase().includes('MY PHOTO') ||
-              activeTab.trim().toUpperCase().includes('MY FAVOURITES') ||
-              activeTab.trim().toUpperCase().includes('MY FAVORITE')
+              currentPhotoTab.trim().toUpperCase().includes('MY PHOTO') ||
+              currentPhotoTab.trim().toUpperCase().includes('MY FAVOURITES') ||
+              currentPhotoTab.trim().toUpperCase().includes('MY FAVORITE')
             );
             if (!isDownloadableTab) return null;
             return (
@@ -1800,7 +1865,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         </View>
       </View>
     );
-  }, [activeTab, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom, isCinema]);
+  }, [currentPhotoTab, activeList.length, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
@@ -1853,92 +1918,112 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     >
       <GestureHandlerRootView style={styles.container}>
         <GestureDetector gesture={edgeSwipeGesture}>
-          <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle, animatedScreenBgStyle]}>
+          <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-          {/* Borderless Editorial Back Button (Exact Featured Story Style - Hidden in Cinema) */}
-          {!isCinema && (
-            <Pressable
-              style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
-              onPress={handleBackAction}
-              hitSlop={16}
-            >
-              <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
-            </Pressable>
-          )}
-
-          {isCinema ? (
-            <CinemaLibraryView
-              videos={activeList as any}
-              coverUrl={coverUrl}
-              eventTitle={cleanTitle}
-              onSelectVideo={(video, resumeTimeSec) => {
-                openLightbox({ ...video, resumeTimeSec }, null);
-              }}
-              onBackToGallery={() => {
-                setActiveTab('ALL');
-              }}
-              onScroll={scrollHandler}
-              mainScrollRef={mainScrollRef}
-              refreshControl={
-                <RefreshControl
-                  refreshing={isRefreshingGallery}
-                  onRefresh={handleRefreshGallery}
-                  tintColor="#E5C483"
-                />
-              }
-              isLoading={isTabLoading}
-            />
-          ) : (
-            <MasonryFlashList
-              mainScrollRef={mainScrollRef}
-              data={displayData as any}
-              numColumns={2}
-              onScroll={scrollHandler}
-              scrollSharedValue={scrollY}
-              onEndReached={loadMorePhotos}
-              onEndReachedThreshold={0.6}
-              renderHeroCover={renderHeroCover}
-              renderStickyHeader={renderStickyHeader}
-              ListFooterComponent={renderFooter()}
-              refreshControl={
-                <RefreshControl
-                  refreshing={isRefreshingGallery}
-                  onRefresh={handleRefreshGallery}
-                  tintColor="#ffffff"
-                />
-              }
-              renderItem={({ item, index, isColumn0 }) => (
-                item.isSkeleton ? (
-                  <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
-                ) : (
-                  <MasonryCard
-                    img={item}
-                    index={index}
-                    isColumn0={isColumn0}
-                    isHighPriority={index < 12}
-                    onSelect={(bounds) => openLightbox(item, bounds)}
-                    onRegisterRef={(id, ref) => {
-                      const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
-                      if (id) cardRefs.current[id] = ref;
-                      if (refId) cardRefs.current[refId] = ref;
-                    }}
-                    onToggleLike={handleToggleLike}
-                  />
-                )
+            {/* ── Base Layer: Photos Gallery View (Remains mounted underneath Cinema) ── */}
+            <View style={StyleSheet.absoluteFillObject} pointerEvents={isCinema ? 'none' : 'auto'}>
+              {/* Borderless Editorial Back Button */}
+              {!isCinema && (
+                <Pressable
+                  style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
+                  onPress={handleBackAction}
+                  hitSlop={16}
+                >
+                  <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
+                </Pressable>
               )}
-            />
-          )}
 
-          {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
-          <Animated.View
-            style={[
-              styles.backToTopContainer,
-              { bottom: Math.max(insets.bottom + 20, 30) },
-              backToTopAnimatedStyle,
-            ]}
-            pointerEvents={isPast60Photos ? 'auto' : 'none'}
-          >
+              <MasonryFlashList
+                mainScrollRef={mainScrollRef}
+                data={displayData as any}
+                numColumns={2}
+                onScroll={scrollHandler}
+                scrollSharedValue={scrollY}
+                onEndReached={loadMorePhotos}
+                onEndReachedThreshold={0.6}
+                renderHeroCover={renderHeroCover}
+                renderStickyHeader={renderStickyHeader}
+                ListFooterComponent={renderFooter()}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={isRefreshingGallery}
+                    onRefresh={handleRefreshGallery}
+                    tintColor="#ffffff"
+                  />
+                }
+                renderItem={({ item, index, isColumn0 }) => (
+                  item.isSkeleton ? (
+                    <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
+                  ) : (
+                    <MasonryCard
+                      img={item}
+                      index={index}
+                      isColumn0={isColumn0}
+                      isHighPriority={index < 12}
+                      onSelect={(bounds) => openLightbox(item, bounds)}
+                      onRegisterRef={(id, ref) => {
+                        const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);
+                        if (id) cardRefs.current[id] = ref;
+                        if (refId) cardRefs.current[refId] = ref;
+                      }}
+                      onToggleLike={handleToggleLike}
+                    />
+                  )
+                )}
+              />
+
+              {/* iOS Underlay Dimming Overlay (Fades from 0.15 to 0 as Cinema slides away) */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  { backgroundColor: '#000000', zIndex: 5 },
+                  photosDimAnimatedStyle,
+                ]}
+              />
+            </View>
+
+            {/* ── Top Layer: Cinema Library View (Mounted when isCinema is true; slides to reveal Photos on Apple back swipe) ── */}
+            {isCinema && (
+              <Animated.View
+                style={[
+                  styles.cinemaOverlayContainer,
+                  cinemaAnimatedStyle,
+                ]}
+              >
+                <CinemaLibraryView
+                  videos={activeCinemaVideos as any}
+                  coverUrl={coverUrl}
+                  eventTitle={cleanTitle}
+                  onSelectVideo={(video, resumeTimeSec) => {
+                    openLightbox({ ...video, resumeTimeSec }, null);
+                  }}
+                  onBackToGallery={handleBackAction}
+                  onScroll={cinemaScrollHandler}
+                  mainScrollRef={cinemaScrollRef}
+                  refreshControl={
+                    <RefreshControl
+                      refreshing={isRefreshingGallery}
+                      onRefresh={handleRefreshGallery}
+                      tintColor="#E5C483"
+                    />
+                  }
+                  isLoading={isTabLoading}
+                />
+              </Animated.View>
+            )}
+
+            {/* ── Floating Editorial Back to Top Button with Slow Smooth Fade-In ── */}
+            <Animated.View
+              style={[
+                styles.backToTopContainer,
+                { bottom: Math.max(insets.bottom + 20, 30) },
+                backToTopAnimatedStyle,
+                isCinema && { opacity: 0 },
+              ]}
+              pointerEvents={isPast60Photos && !isCinema ? 'auto' : 'none'}
+            >
             <TouchableOpacity
               style={styles.backToTopButton}
               onPress={scrollToTopSmoothly}
@@ -2099,6 +2184,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  cinemaOverlayContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
+    backgroundColor: '#000000',
+    shadowColor: '#000000',
+    shadowOffset: { width: -4, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 8,
   },
   editorialBackButton: {
     position: 'absolute',

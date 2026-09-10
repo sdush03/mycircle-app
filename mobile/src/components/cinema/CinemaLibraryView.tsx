@@ -15,9 +15,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  FONT_FUTURA,
   FONT_MONTSERRAT_REGULAR,
   FONT_MONTSERRAT_MEDIUM,
   FONT_MONTSERRAT_SEMIBOLD,
+  FONT_JOST_REGULAR,
 } from '../../constants/fonts';
 import {
   CinemaVideoCard,
@@ -95,16 +97,46 @@ function formatDuration(sec?: number): string {
 
 function formatDisplayTitle(video?: CinemaVideoItem | null): string {
   if (!video) return 'The Wedding Film';
-  if (video.title && video.title.trim()) {
-    return video.title.replace(/\.[a-zA-Z0-9]+$/, '').replace(/_/g, ' ').trim();
-  }
-  if (video.name && video.name.trim()) {
-    return video.name.replace(/\.[a-zA-Z0-9]+$/, '').replace(/_/g, ' ').trim();
+  const t = video.title || video.exif?.title || video.name;
+  if (t && t.trim()) {
+    return t.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[_.-]+/g, ' ').trim();
   }
   if (video.category) {
     return video.category.toUpperCase();
   }
   return 'The Wedding Film';
+}
+
+export function classifyCinemaCategory(video: CinemaVideoItem): string {
+  const explicit = (video.cinemaCategory || video.exif?.cinemaCategory || video.category || video.meta?.category || '').trim().toUpperCase().replace(/['']/g, '’');
+  if (explicit.includes('DIRECTOR')) return 'THE DIRECTORS’ CUT';
+  if (explicit.includes('CANDID') || explicit.includes('REEL') || explicit.includes('DIAR')) return 'CANDID DIARIES';
+  if (explicit.includes('STAGE') || explicit.includes('SPOTLIGHT') || explicit.includes('PERFORMANCE') || explicit.includes('DANCE')) return 'STAGE & SPOTLIGHT';
+  if (explicit.includes('EXTENDED') || explicit.includes('CUTS') || explicit.includes('CHAPTER') || explicit.includes('CEREMONY')) return 'THE EXTENDED CUTS';
+
+  // Fallback auto-detection from orientation & keywords:
+  if (isVerticalVideo(video)) {
+    return 'CANDID DIARIES';
+  }
+
+  const clean = ((video.title || video.name || video.filename || '') + ' ' + (video.caption || '')).toLowerCase();
+  if (clean.includes('dance') || clean.includes('performance') || clean.includes('solo') || clean.includes('squad') || clean.includes('choreography') || clean.includes('stage')) {
+    return 'STAGE & SPOTLIGHT';
+  }
+  if (clean.includes('haldi') || clean.includes('mehendi') || clean.includes('mehndi') || clean.includes('sangeet') || clean.includes('wedding') || clean.includes('phera') || clean.includes('vow') || clean.includes('mandap') || clean.includes('reception') || clean.includes('engagement') || clean.includes('roka') || clean.includes('chapter')) {
+    return 'THE EXTENDED CUTS';
+  }
+
+  return 'THE DIRECTORS’ CUT';
+}
+
+function sortCinemaVideos(list: CinemaVideoItem[]): CinemaVideoItem[] {
+  return [...list].sort((a, b) => {
+    const orderA = a.sortOrder !== undefined ? a.sortOrder : (a.exif?.sortOrder !== undefined ? a.exif.sortOrder : 9999);
+    const orderB = b.sortOrder !== undefined ? b.sortOrder : (b.exif?.sortOrder !== undefined ? b.exif.sortOrder : 9999);
+    if (orderA !== orderB) return orderA - orderB;
+    return 0;
+  });
 }
 
 export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
@@ -131,86 +163,108 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   }, []);
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Content Partitioning & Editorial Hierarchy (Metadata & Content Driven)
+  // Content Partitioning & Editorial Hierarchy (4 Finalized Shelves: 1, 4, 3, 2)
   // ───────────────────────────────────────────────────────────────────────────
   const {
     primaryVideo,
-    remainingHorizontals,
-    remainingVerticals,
+    shelves,
     totalVideos,
   } = useMemo(() => {
     if (!videos || videos.length === 0) {
       return {
         primaryVideo: null,
-        remainingHorizontals: [],
-        remainingVerticals: [],
+        shelves: [],
         totalVideos: 0,
       };
     }
 
-    const horizontals: CinemaVideoItem[] = [];
-    const verticals: CinemaVideoItem[] = [];
+    const directorsCut: CinemaVideoItem[] = [];
+    const candidDiaries: CinemaVideoItem[] = [];
+    const stageSpotlight: CinemaVideoItem[] = [];
+    const extendedCuts: CinemaVideoItem[] = [];
 
     videos.forEach((v) => {
-      if (isVerticalVideo(v)) {
-        verticals.push(v);
-      } else {
-        horizontals.push(v);
-      }
+      const cat = classifyCinemaCategory(v);
+      if (cat === 'THE DIRECTORS’ CUT') directorsCut.push(v);
+      else if (cat === 'CANDID DIARIES') candidDiaries.push(v);
+      else if (cat === 'STAGE & SPOTLIGHT') stageSpotlight.push(v);
+      else if (cat === 'THE EXTENDED CUTS') extendedCuts.push(v);
+      else directorsCut.push(v);
     });
 
-    // 1. Check if ANY video in the gallery is explicitly marked as featured
+    const sortedDirectorsCut = sortCinemaVideos(directorsCut);
+    const sortedCandidDiaries = sortCinemaVideos(candidDiaries);
+    const sortedStageSpotlight = sortCinemaVideos(stageSpotlight);
+    const sortedExtendedCuts = sortCinemaVideos(extendedCuts);
+
+    // 1. Determine Featured Video for Hero Spotlight
     const explicitPrimary = videos.find(isExplicitlyPrimary);
     let primary: CinemaVideoItem | null = explicitPrimary || null;
-    let remainingH: CinemaVideoItem[] = [];
-    let remainingV: CinemaVideoItem[] = [];
 
-    if (primary) {
-      if (isVerticalVideo(primary)) {
-        remainingH = [...horizontals];
-        remainingV = verticals.filter((v) => v.id !== primary?.id);
-      } else {
-        remainingH = horizontals.filter((h) => h.id !== primary?.id);
-        remainingV = [...verticals];
-      }
-    } else {
-      // Fallback waterfall if no video is explicitly marked featured:
-      if (horizontals.length > 0) {
-        let primaryIdx = horizontals.findIndex(hasPrimaryTitleKeywords);
-
-        if (primaryIdx === -1) {
+    if (!primary) {
+      if (sortedDirectorsCut.length > 0) {
+        let pIdx = sortedDirectorsCut.findIndex(hasPrimaryTitleKeywords);
+        if (pIdx === -1) {
           let maxDuration = -1;
           let longestIdx = -1;
-          horizontals.forEach((v, idx) => {
+          sortedDirectorsCut.forEach((v, idx) => {
             const d = Number(v.duration) || 0;
             if (d > maxDuration) {
               maxDuration = d;
               longestIdx = idx;
             }
           });
-          if (longestIdx !== -1 && maxDuration > 0) {
-            primaryIdx = longestIdx;
-          }
+          pIdx = (longestIdx !== -1 && maxDuration > 0) ? longestIdx : 0;
         }
-
-        if (primaryIdx === -1) {
-          primaryIdx = 0;
-        }
-
-        primary = horizontals[primaryIdx];
-        remainingH = horizontals.filter((_, idx) => idx !== primaryIdx);
-        remainingV = [...verticals];
-      } else if (verticals.length > 0) {
-        primary = verticals[0];
-        remainingH = [];
-        remainingV = verticals.slice(1);
+        primary = sortedDirectorsCut[pIdx];
+      } else if (sortedExtendedCuts.length > 0) {
+        primary = sortedExtendedCuts[0];
+      } else if (sortedStageSpotlight.length > 0) {
+        primary = sortedStageSpotlight[0];
+      } else if (sortedCandidDiaries.length > 0) {
+        primary = sortedCandidDiaries[0];
       }
     }
 
+    // Exact finalized sequence: 1, 4, 3, 2
+    // 1: THE DIRECTORS’ CUT
+    // 2: CANDID DIARIES
+    // 3: STAGE & SPOTLIGHT
+    // 4: THE EXTENDED CUTS
+    // Note: Primary film also appears in its shelf below as a 2:3 portrait card!
+    type ShelfItem = {
+      title: string;
+      type: 'directors-cut' | 'candid-diaries' | 'stage-spotlight' | 'extended-cuts';
+      items: CinemaVideoItem[];
+    };
+
+    const rawShelves: ShelfItem[] = [
+      {
+        title: 'THE DIRECTORS’ CUT',
+        type: 'directors-cut',
+        items: sortedDirectorsCut,
+      },
+      {
+        title: 'CANDID DIARIES',
+        type: 'candid-diaries',
+        items: sortedCandidDiaries,
+      },
+      {
+        title: 'STAGE & SPOTLIGHT',
+        type: 'stage-spotlight',
+        items: sortedStageSpotlight,
+      },
+      {
+        title: 'THE EXTENDED CUTS',
+        type: 'extended-cuts',
+        items: sortedExtendedCuts,
+      },
+    ];
+    const shelfList = rawShelves.filter((s) => s.items.length > 0);
+
     return {
       primaryVideo: primary,
-      remainingHorizontals: remainingH,
-      remainingVerticals: remainingV,
+      shelves: shelfList,
       totalVideos: videos.length,
     };
   }, [videos]);
@@ -218,6 +272,25 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const getProgress = useCallback((item: CinemaVideoItem): WatchProgress | null => {
     return videoWatchProgressManager.getProgress(item);
   }, []);
+
+  const getBadgeForFilm = useCallback((film: CinemaVideoItem, index: number, shelfType: string) => {
+    if (shelfType === 'directors-cut') {
+      if (film.id === primaryVideo?.id || isExplicitlyPrimary(film)) return 'FEATURE';
+      const t = (film.title || film.name || '').toLowerCase();
+      if (t.includes('prewed') || t.includes('pre-wed') || t.includes('pre wed')) return 'PRE-WED';
+      return undefined;
+    }
+    if (shelfType === 'candid-diaries') {
+      return 'REEL';
+    }
+    if (shelfType === 'stage-spotlight') {
+      return `PART ${String(index + 1).padStart(2, '0')}`;
+    }
+    if (shelfType === 'extended-cuts') {
+      return `CHAPTER ${String(index + 1).padStart(2, '0')}`;
+    }
+    return undefined;
+  }, [primaryVideo]);
 
   const handleWatchPrimary = useCallback(() => {
     if (!primaryVideo) return;
@@ -227,8 +300,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     onSelectVideo(primaryVideo, resumeTime);
   }, [primaryVideo, getProgress, onSelectVideo]);
 
-  // Floating Hero Poster Card Height (~53vh)
-  const heroCardHeight = Math.round(SCREEN_HEIGHT * 0.53);
+  // Option B: Full-Bleed 70vh Circle Gallery Cover
+  const heroCoverHeight = Math.round(SCREEN_HEIGHT * 0.70);
   const primaryVideoThumb = primaryVideo ? getValidImageThumbnail(primaryVideo) : undefined;
   // Featured video strictly showcases the gallery cover on the Hero Marquee.
   // The video's own custom poster is preserved for shelf cards when not featured.
@@ -245,16 +318,42 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
 
   const heroFilmTitle = formatDisplayTitle(primaryVideo);
   const primaryDuration = formatDuration(primaryVideo?.duration);
+  const heroSynopsis = primaryVideo?.description || primaryVideo?.exif?.description || 'The moment everything changed — nervous anticipation, heartfelt promises, and the beginning of forever.';
 
   return (
     <View style={styles.screenContainer}>
-      {/* 1. Floating Netflix Top Header */}
-      <View style={[styles.floatingNavBar, { paddingTop: Math.max(insets.top + 6, 44) }]}>
-        <Pressable onPress={onBackToGallery} hitSlop={16} style={styles.navBackBtn}>
-          <Text style={styles.navBackText}>← Photos</Text>
+      {/* 1. Floating Top Navigation (Matching Gallery Header Position) */}
+      <View
+        style={[
+          styles.floatingNavBar,
+          { height: Math.max(insets.top + 50, 88) },
+        ]}
+        pointerEvents="box-none"
+      >
+        <LinearGradient
+          colors={['rgba(0, 0, 0, 0.70)', 'rgba(0, 0, 0, 0.25)', 'transparent']}
+          locations={[0, 0.6, 1]}
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+        />
+
+        {/* Center: Brand Logo (Exact Gallery Position) */}
+        <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
+          <Image
+            source={require('../../../assets/images/logo-header-white.png')}
+            style={styles.coverHeaderLogo}
+            contentFit="contain"
+          />
+        </View>
+
+        {/* Left: ← PHOTOS (Exact Gallery Position) */}
+        <Pressable
+          onPress={onBackToGallery}
+          hitSlop={16}
+          style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
+        >
+          <Text style={styles.editorialBackText}>← PHOTOS</Text>
         </Pressable>
-        <Text style={styles.navBrandText}>MISTY VISUALS</Text>
-        <View style={styles.navRightPlaceholder} />
       </View>
 
       <Animated.ScrollView
@@ -263,44 +362,39 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         scrollEventThrottle={scrollEventThrottle}
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
-        contentContainerStyle={[
-          styles.contentContainer,
-          { paddingTop: Math.max(insets.top + 52, 92) },
-        ]}
+        contentContainerStyle={styles.contentContainer}
         refreshControl={refreshControl}
       >
-        {/* 2. Floating Rounded Billboard Poster Card (Wedflix Strategy 1) */}
-        <View style={[styles.heroCardContainer, { height: heroCardHeight }]}>
+        {/* 2. Option B: Full-Bleed 70vh Circle Gallery Cover with Wedflix Red Theme */}
+        <View style={[styles.heroCoverContainer, { height: heroCoverHeight }]}>
           {heroImageUri ? (
             <Image
               source={{ uri: heroImageUri }}
-              style={styles.heroImage}
+              style={styles.heroCoverImage}
               contentFit="cover"
               contentPosition="center"
               priority="high"
               cachePolicy="memory-disk"
             />
           ) : (
-            <View style={[styles.heroImage, styles.heroFallbackBg]} />
+            <View style={[styles.heroCoverImage, styles.heroFallbackBg]}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            </View>
           )}
 
-          {/* Top Red Brand Pill inside Hero (Wedflix/Netflix Style) */}
-          <View style={styles.heroTopBrandRow}>
-            <View style={styles.heroBrandPill}>
-              <Text style={styles.heroBrandPillText}>MV</Text>
-            </View>
-          </View>
-
-          {/* Multi-Stage Dark Bottom Vignette */}
+          {/* Multi-Stage Dark Vignette Overlay (Top dark for header, subtle mid, dark bottom for controls) */}
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.68)', '#0B0B0C']}
-            locations={[0, 0.4, 0.72, 1]}
+            colors={['rgba(0,0,0,0.60)', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.72)', '#000000']}
+            locations={[0, 0.35, 0.70, 1]}
             style={StyleSheet.absoluteFillObject}
             pointerEvents="none"
           />
 
-          {/* Lower Content Inside Hero Card (Wedflix ss5 Style) */}
+          {/* Lower Content Inside Hero Cover */}
           <View style={styles.heroContentLayer}>
+            {/* Netflix Franchise Brand Prefix: On top in champagne gold */}
+            <Text style={styles.heroOriginalPrefixText}>A MISTY VISUALS FILM</Text>
+
             {/* Couple Subtitle */}
             <Text style={styles.heroCoupleSubtitle} numberOfLines={1}>
               {coupleSubtitle}
@@ -311,23 +405,16 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               {heroFilmTitle}
             </Text>
 
-            {/* Wedflix #1 in Love Stories Today Badge Row (ss5) */}
-            <View style={styles.heroBadgeRow}>
-              <View style={styles.top10Badge}>
-                <Text style={styles.top10BadgeText}>TOP 10</Text>
+            {/* Film Duration (if available) */}
+            {primaryDuration ? (
+              <View style={styles.heroDurationRow}>
+                <Text style={styles.heroDurationText}>{primaryDuration}</Text>
               </View>
-              <Text style={styles.heroRankText}>#1 in Love Stories Today</Text>
-              {primaryDuration ? (
-                <>
-                  <Text style={styles.heroBullet}>•</Text>
-                  <Text style={styles.heroDurationText}>{primaryDuration}</Text>
-                </>
-              ) : null}
-            </View>
+            ) : null}
 
-            {/* Romantic Cinematic Synopsis (Wedflix ss5) */}
+            {/* Romantic Cinematic Synopsis */}
             <Text style={styles.heroSynopsisText} numberOfLines={2}>
-              The moment everything changed — nervous anticipation, heartfelt surprises, and the beginning of forever.
+              {heroSynopsis}
             </Text>
 
             {/* Two Action Buttons Row: [ ▶ Play ] + [ ⓘ More Info ] */}
@@ -381,7 +468,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
           </View>
         </View>
 
-        {/* 3. Vertical Movie Poster Shelves (Wedflix ss6 & Strategy 1) */}
+        {/* 3. Vertical Movie Poster Shelves (Option B - 4 Finalized Shelves) */}
         <View style={styles.shelvesContainer}>
           {isLoading && totalVideos === 0 ? (
             <View style={styles.loadingContainer}>
@@ -394,10 +481,12 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
             </View>
           ) : (
             <View style={styles.shelvesFlow}>
-              {/* Shelf 1: OUR FILMS (Horizontal Films displayed as Movie Posters) */}
-              {remainingHorizontals.length > 0 ? (
-                <View style={styles.shelfBlock}>
-                  <Text style={styles.shelfTitle}>OUR FILMS</Text>
+              {shelves.map((shelf, shelfIdx) => (
+                <View
+                  key={shelf.title}
+                  style={[styles.shelfBlock, shelfIdx > 0 && styles.shelfBlockSpaced]}
+                >
+                  <Text style={styles.shelfTitle}>{shelf.title}</Text>
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -405,10 +494,11 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                     snapToInterval={POSTER_CARD_WIDTH + 10}
                     decelerationRate="fast"
                   >
-                    {remainingHorizontals.map((film) => (
+                    {shelf.items.map((film, index) => (
                       <CinemaVideoCard
-                        key={String(film.id || film.videoUrl || film.uri)}
+                        key={String(film.id || film.videoUrl || film.uri || index)}
                         video={film}
+                        badge={getBadgeForFilm(film, index, shelf.type)}
                         variant="poster"
                         watchProgress={getProgress(film)}
                         onPress={onSelectVideo}
@@ -416,31 +506,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                     ))}
                   </ScrollView>
                 </View>
-              ) : null}
-
-              {/* Shelf 2: UNSCRIPTED MOMENTS (Reels & Highlights displayed as Movie Posters) */}
-              {remainingVerticals.length > 0 ? (
-                <View style={[styles.shelfBlock, remainingHorizontals.length > 0 && styles.shelfBlockSpaced]}>
-                  <Text style={styles.shelfTitle}>UNSCRIPTED MOMENTS</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.shelfScrollContent}
-                    snapToInterval={POSTER_CARD_WIDTH + 10}
-                    decelerationRate="fast"
-                  >
-                    {remainingVerticals.map((reel) => (
-                      <CinemaVideoCard
-                        key={String(reel.id || reel.videoUrl || reel.uri)}
-                        video={reel}
-                        variant="poster"
-                        watchProgress={getProgress(reel)}
-                        onPress={onSelectVideo}
-                      />
-                    ))}
-                  </ScrollView>
-                </View>
-              ) : null}
+              ))}
             </View>
           )}
 
@@ -476,30 +542,23 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               <Text style={styles.modalCloseText}>✕</Text>
             </Pressable>
 
+            {/* Franchise Brand: On top in champagne gold */}
+            <Text style={styles.modalOriginalPrefixText}>A MISTY VISUALS FILM</Text>
+
             {/* Couple Subtitle & Main Title */}
             <Text style={styles.modalCoupleSubtitle}>{coupleSubtitle}</Text>
             <Text style={styles.modalFilmTitle}>{heroFilmTitle}</Text>
 
-            {/* Badges & Meta */}
-            <View style={styles.modalMetaRow}>
-              <View style={styles.top10Badge}>
-                <Text style={styles.top10BadgeText}>TOP 10</Text>
-              </View>
-              <Text style={styles.modalMatchText}>#1 in Love Stories Today</Text>
-              <View style={styles.modalSpecBadge}>
-                <Text style={styles.modalSpecBadgeText}>4K UHD</Text>
-              </View>
-              <View style={styles.modalSpecBadge}>
-                <Text style={styles.modalSpecBadgeText}>DOLBY</Text>
-              </View>
-              {primaryDuration ? (
+            {/* Duration */}
+            {primaryDuration ? (
+              <View style={styles.modalMetaRow}>
                 <Text style={styles.modalDurationText}>{primaryDuration}</Text>
-              ) : null}
-            </View>
+              </View>
+            ) : null}
 
             {/* Synopsis */}
             <Text style={styles.modalSynopsis}>
-              The moment everything changed — nervous anticipation, heartfelt surprises, and the beginning of forever. Captured in cinematic high-definition with original audio master.
+              {heroSynopsis}
             </Text>
 
             {/* Big Play / Resume Button */}
@@ -547,155 +606,124 @@ const styles = StyleSheet.create({
     paddingBottom: 60,
   },
 
-  // ─── Floating Top Navigation ──────────────────────────────────────────────
+  // ─── Floating Top Navigation (Matching Gallery Header) ────────────────────
   floatingNavBar: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 50,
+  },
+  coverHeaderLogoContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 95,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverHeaderLogo: {
+    width: 135,
+    height: 38,
+  },
+  editorialBackButton: {
+    position: 'absolute',
+    left: 24,
+    zIndex: 100,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
   },
-  navBackBtn: {
-    paddingVertical: 4,
-    paddingRight: 12,
-  },
-  navBackText: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 14,
-    letterSpacing: 0.3,
-    color: '#FFFFFF',
-  },
-  navBrandText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 13,
-    letterSpacing: 3,
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-  },
-  navRightPlaceholder: {
-    width: 50,
+  editorialBackText: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.5,
+    color: '#ffffff',
   },
 
-  // ─── Floating Billboard Hero Card (Netflix ss1 & Wedflix ss5) ─────────────
-  heroCardContainer: {
-    width: SCREEN_WIDTH - 32,
-    marginHorizontal: 16,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: '#121214',
+  // ─── Option B: Full-Bleed 70vh Circle Gallery Cover ────────────────────────
+  heroCoverContainer: {
+    width: '100%',
     position: 'relative',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    marginBottom: 26,
+    backgroundColor: '#1c1a18',
+    overflow: 'hidden',
+    marginBottom: 24,
   },
-  heroImage: {
+  heroCoverImage: {
     width: '100%',
     height: '100%',
   },
   heroFallbackBg: {
-    backgroundColor: '#161618',
-  },
-  heroTopBrandRow: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    zIndex: 2,
-  },
-  heroBrandPill: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
-    shadowColor: '#E50914',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-  },
-  heroBrandPillText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    color: '#FFFFFF',
+    backgroundColor: '#1c1a18',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   heroContentLayer: {
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 18,
+    bottom: 22,
     alignItems: 'center',
-    zIndex: 2,
+    zIndex: 10,
+  },
+  heroOriginalPrefixText: {
+    fontFamily: FONT_FUTURA,
+    fontSize: 10.5,
+    letterSpacing: 2.8,
+    color: '#E5C483',
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    marginBottom: 4,
   },
   heroCoupleSubtitle: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 11,
-    letterSpacing: 2,
-    color: 'rgba(255, 255, 255, 0.8)',
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 18,
+    lineHeight: 23,
+    letterSpacing: 1.2,
+    color: 'rgba(255, 255, 255, 0.95)',
     textAlign: 'center',
     marginBottom: 4,
     textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1.5 },
+    textShadowRadius: 5,
   },
   heroFilmTitle: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 24,
+    fontSize: 23,
     lineHeight: 28,
     letterSpacing: 0.8,
     color: '#FFFFFF',
     textAlign: 'center',
     textTransform: 'uppercase',
-    marginBottom: 8,
+    marginBottom: 6,
     textShadowColor: 'rgba(0, 0, 0, 0.95)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 6,
   },
-  heroBadgeRow: {
+  heroDurationRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
   },
-  top10Badge: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  top10BadgeText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 9,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-  heroRankText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 12,
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
-  },
-  heroBullet: {
-    fontSize: 10,
-    color: '#8E8E93',
-    marginHorizontal: 6,
-  },
   heroDurationText: {
     fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 11,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
     color: '#E5C483',
   },
   heroSynopsisText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 11,
-    lineHeight: 15,
-    color: 'rgba(255, 255, 255, 0.72)',
+    lineHeight: 15.5,
+    color: 'rgba(255, 255, 255, 0.75)',
     textAlign: 'center',
+    maxWidth: 320,
     paddingHorizontal: 12,
-    marginBottom: 16,
+    marginBottom: 14,
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -707,12 +735,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
+    maxWidth: 280,
     gap: 12,
+    marginBottom: 2,
   },
   netflixPlayBtn: {
     flex: 1,
-    maxWidth: 160,
-    height: 42,
+    maxWidth: 135,
+    height: 40,
     borderRadius: 6,
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
@@ -726,16 +756,18 @@ const styles = StyleSheet.create({
   },
   netflixPlayText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 15,
+    fontSize: 14,
     color: '#000000',
     letterSpacing: 0.3,
   },
   netflixInfoBtn: {
     flex: 1,
-    maxWidth: 140,
-    height: 42,
+    maxWidth: 135,
+    height: 40,
     borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.28)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -747,7 +779,7 @@ const styles = StyleSheet.create({
   },
   netflixInfoText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 14,
+    fontSize: 13.5,
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
@@ -890,11 +922,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: 'bold',
   },
+  modalOriginalPrefixText: {
+    fontFamily: FONT_FUTURA,
+    fontSize: 10,
+    letterSpacing: 2.5,
+    color: '#E5C483',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
   modalCoupleSubtitle: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 11,
-    letterSpacing: 2,
-    color: 'rgba(255, 255, 255, 0.65)',
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 17,
+    lineHeight: 22,
+    letterSpacing: 1.2,
+    color: 'rgba(255, 255, 255, 0.92)',
     textTransform: 'uppercase',
     marginBottom: 4,
   },
@@ -913,26 +954,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
     marginBottom: 14,
-  },
-  modalMatchText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 12,
-    color: '#FFFFFF',
-    marginRight: 4,
-  },
-  modalSpecBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  modalSpecBadgeText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 9,
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
   },
   modalDurationText: {
     fontFamily: FONT_MONTSERRAT_MEDIUM,
