@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Pressable,
   Modal,
+  Platform,
 } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -25,6 +26,7 @@ import {
   CinemaVideoCard,
   CinemaVideoItem,
   POSTER_CARD_WIDTH,
+  POSTER_CARD_HEIGHT,
   getValidImageThumbnail,
 } from './CinemaVideoCard';
 import {
@@ -138,6 +140,68 @@ function sortCinemaVideos(list: CinemaVideoItem[]): CinemaVideoItem[] {
     return 0;
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Netflix-Style Outlined Top-Ranked Numbers (1, 2, ... 10, 11, 12)
+// ─────────────────────────────────────────────────────────────────────────────
+const STROKE_WIDTH = 2.2;
+const STROKE_OFFSETS: [number, number][] = [
+  [STROKE_WIDTH, 0],
+  [STROKE_WIDTH * 0.92, STROKE_WIDTH * 0.38],
+  [STROKE_WIDTH * 0.71, STROKE_WIDTH * 0.71],
+  [STROKE_WIDTH * 0.38, STROKE_WIDTH * 0.92],
+  [0, STROKE_WIDTH],
+  [-STROKE_WIDTH * 0.38, STROKE_WIDTH * 0.92],
+  [-STROKE_WIDTH * 0.71, STROKE_WIDTH * 0.71],
+  [-STROKE_WIDTH * 0.92, STROKE_WIDTH * 0.38],
+  [-STROKE_WIDTH, 0],
+  [-STROKE_WIDTH * 0.92, -STROKE_WIDTH * 0.38],
+  [-STROKE_WIDTH * 0.71, -STROKE_WIDTH * 0.71],
+  [-STROKE_WIDTH * 0.38, -STROKE_WIDTH * 0.92],
+  [0, -STROKE_WIDTH],
+  [STROKE_WIDTH * 0.38, -STROKE_WIDTH * 0.92],
+  [STROKE_WIDTH * 0.71, -STROKE_WIDTH * 0.71],
+  [STROKE_WIDTH * 0.92, -STROKE_WIDTH * 0.38],
+];
+
+const RANK_FONT_FAMILY = Platform.select({
+  ios: 'HelveticaNeue-CondensedBold',
+  android: 'sans-serif-condensed',
+  default: 'System',
+});
+
+interface OutlinedRankNumberProps {
+  rank: number;
+}
+
+const OutlinedRankNumber: React.FC<OutlinedRankNumberProps> = React.memo(({ rank }) => {
+  const text = String(rank);
+
+  return (
+    <View style={styles.rankNumberContainer} pointerEvents="none">
+      {/* 16-direction circular outline for smooth stroke */}
+      {STROKE_OFFSETS.map(([dx, dy], i) => (
+        <Text
+          key={i}
+          style={[
+            styles.rankNumberText,
+            styles.rankNumberStroke,
+            {
+              transform: [{ translateX: dx }, { translateY: dy }],
+            },
+          ]}
+        >
+          {text}
+        </Text>
+      ))}
+
+      {/* Solid black inner fill */}
+      <Text style={[styles.rankNumberText, styles.rankNumberFill]}>
+        {text}
+      </Text>
+    </View>
+  );
+});
 
 export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   videos,
@@ -282,11 +346,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     if (shelfType === 'candid-diaries') {
       return 'REEL';
     }
-    if (shelfType === 'stage-spotlight') {
-      return `PART ${String(index + 1).padStart(2, '0')}`;
-    }
-    if (shelfType === 'extended-cuts') {
-      return `CHAPTER ${String(index + 1).padStart(2, '0')}`;
+    if (shelfType === 'stage-spotlight' || shelfType === 'extended-cuts') {
+      return undefined;
     }
     return undefined;
   }, []);
@@ -480,32 +541,68 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
             </View>
           ) : (
             <View style={styles.shelvesFlow}>
-              {shelves.map((shelf, shelfIdx) => (
-                <View
-                  key={shelf.title}
-                  style={[styles.shelfBlock, shelfIdx > 0 && styles.shelfBlockSpaced]}
-                >
-                  <Text style={styles.shelfTitle}>{shelf.title}</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.shelfScrollContent}
-                    snapToInterval={POSTER_CARD_WIDTH + 10}
-                    decelerationRate="fast"
+              {shelves.map((shelf, shelfIdx) => {
+                const isRanked = shelf.type === 'stage-spotlight' || shelf.type === 'extended-cuts';
+                return (
+                  <View
+                    key={shelf.title}
+                    style={[styles.shelfBlock, shelfIdx > 0 && styles.shelfBlockSpaced]}
                   >
-                    {shelf.items.map((film, index) => (
-                      <CinemaVideoCard
-                        key={String(film.id || film.videoUrl || film.uri || index)}
-                        video={film}
-                        badge={getBadgeForFilm(film, index, shelf.type)}
-                        variant="poster"
-                        watchProgress={getProgress(film)}
-                        onPress={onSelectVideo}
-                      />
-                    ))}
-                  </ScrollView>
-                </View>
-              ))}
+                    <Text style={styles.shelfTitle}>{shelf.title}</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.shelfScrollContent}
+                      snapToInterval={isRanked ? undefined : POSTER_CARD_WIDTH + 10}
+                      decelerationRate="fast"
+                    >
+                      {shelf.items.map((film, index) => {
+                        if (isRanked) {
+                          const rank = index + 1;
+                          return (
+                            <View
+                              key={String(film.id || film.videoUrl || film.uri || index)}
+                              style={styles.rankedItemRow}
+                            >
+                              <Pressable
+                                onPress={() => {
+                                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                                  const progress = getProgress(film);
+                                  const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;
+                                  onSelectVideo(film, resumeTime);
+                                }}
+                                style={styles.rankNumberPressable}
+                              >
+                                <OutlinedRankNumber rank={rank} />
+                              </Pressable>
+                              <View style={[styles.rankedCardOverlap, { marginLeft: rank >= 10 ? -44 : -26 }]}>
+                                <CinemaVideoCard
+                                  video={film}
+                                  badge={getBadgeForFilm(film, index, shelf.type)}
+                                  variant="poster"
+                                  watchProgress={getProgress(film)}
+                                  onPress={onSelectVideo}
+                                />
+                              </View>
+                            </View>
+                          );
+                        }
+
+                        return (
+                          <CinemaVideoCard
+                            key={String(film.id || film.videoUrl || film.uri || index)}
+                            video={film}
+                            badge={getBadgeForFilm(film, index, shelf.type)}
+                            variant="poster"
+                            watchProgress={getProgress(film)}
+                            onPress={onSelectVideo}
+                          />
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                );
+              })}
             </View>
           )}
 
@@ -862,6 +959,46 @@ const styles = StyleSheet.create({
   shelfScrollContent: {
     paddingLeft: 16,
     paddingRight: 16,
+  },
+
+  // ─── Netflix-Style Ranked Shelves Layout (1, 2, ... 10, 11, 12) ──────────
+  rankedItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    position: 'relative',
+  },
+  rankNumberPressable: {
+    zIndex: 1,
+  },
+  rankedCardOverlap: {
+    zIndex: 2,
+    position: 'relative',
+  },
+  rankNumberContainer: {
+    height: POSTER_CARD_HEIGHT,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    position: 'relative',
+    overflow: 'visible',
+  },
+  rankNumberText: {
+    fontFamily: RANK_FONT_FAMILY,
+    fontWeight: '900',
+    fontSize: 148,
+    lineHeight: 148,
+    letterSpacing: -2,
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  rankNumberStroke: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    color: '#FFFFFF',
+  },
+  rankNumberFill: {
+    color: '#000000',
   },
 
   // ─── Footer ───────────────────────────────────────────────────────────────
