@@ -33,8 +33,11 @@ api.interceptors.request.use(
 // Handle API responses — auto-refresh token if present, and auto-logout on 401 when session expires
 api.interceptors.response.use(
   (response) => {
-    // If backend returns a refreshed token (e.g. from /api/gallery/family/events), persist it
-    if (response.data?.token && typeof response.data.token === 'string') {
+    // Only persist refreshed tokens from family endpoints (e.g. /api/gallery/family/events or /auth)
+    // NEVER overwrite the global family token with event-specific guest tokens (e.g. /auth-from-family)
+    const url: string = response.config?.url || '';
+    const isFamilyEndpoint = url.includes('/api/gallery/family');
+    if (isFamilyEndpoint && response.data?.token && typeof response.data.token === 'string') {
       useAuthStore.getState().updateToken(response.data.token).catch(() => {});
     }
     return response;
