@@ -575,7 +575,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                               >
                                 <OutlinedRankNumber rank={rank} />
                               </Pressable>
-                              <View style={[styles.rankedCardOverlap, { marginLeft: rank >= 10 ? -44 : -26 }]}>
+                              <View style={[styles.rankedCardOverlap, { marginLeft: rank >= 10 ? -36 : -22 }]}>
                                 <CinemaVideoCard
                                   video={film}
                                   badge={getBadgeForFilm(film, index, shelf.type)}
@@ -957,8 +957,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   shelfScrollContent: {
-    paddingLeft: 16,
-    paddingRight: 16,
+    paddingLeft: 12,
+    paddingRight: 12,
   },
 
   // ─── Netflix-Style Ranked Shelves Layout (1, 2, ... 10, 11, 12) ──────────
@@ -984,8 +984,8 @@ const styles = StyleSheet.create({
   rankNumberText: {
     fontFamily: RANK_FONT_FAMILY,
     fontWeight: '900',
-    fontSize: 148,
-    lineHeight: 148,
+    fontSize: 130,
+    lineHeight: 130,
     letterSpacing: -2,
     textAlign: 'center',
     includeFontPadding: false,

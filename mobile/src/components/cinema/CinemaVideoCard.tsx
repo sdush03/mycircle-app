@@ -13,8 +13,8 @@ import { WatchProgress } from '../../services/videoWatchProgressManager';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Vertical Movie Poster Card Dimensions (~2:3 ratio, matching Netflix & Wedflix)
-export const POSTER_CARD_WIDTH = 140;
-export const POSTER_CARD_HEIGHT = 210;
+export const POSTER_CARD_WIDTH = 110;
+export const POSTER_CARD_HEIGHT = 162;
 
 // Backward-compatible exports for any shelf imports
 export const SHELF_FILM_WIDTH = POSTER_CARD_WIDTH;
@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
   cardContainer: {
     width: POSTER_CARD_WIDTH,
     height: POSTER_CARD_HEIGHT,
-    marginRight: 10,
+    marginRight: 8,
   },
   cardPressed: {
     opacity: 0.9,
@@ -222,7 +222,7 @@ const styles = StyleSheet.create({
   mediaFrame: {
     width: POSTER_CARD_WIDTH,
     height: POSTER_CARD_HEIGHT,
-    borderRadius: 12,
+    borderRadius: 6,
     overflow: 'hidden',
     backgroundColor: '#161618',
     position: 'relative',
@@ -241,34 +241,34 @@ const styles = StyleSheet.create({
   // ─── Top Badges ───────────────────────────────────────────────────────────
   topBadgesRow: {
     position: 'absolute',
-    top: 8,
-    left: 8,
-    right: 8,
+    top: 6,
+    left: 6,
+    right: 6,
     flexDirection: 'row',
     alignItems: 'center',
     zIndex: 2,
   },
   currentlyViewingBadge: {
     backgroundColor: '#E50914',
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 3,
   },
   currentlyViewingText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 8,
+    fontSize: 7.5,
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
   top10Badge: {
     backgroundColor: '#E50914',
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     paddingVertical: 2,
     borderRadius: 3,
   },
   top10BadgeText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 8,
+    fontSize: 7.5,
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
@@ -276,13 +276,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.70)',
     borderWidth: 1,
     borderColor: '#E5C483',
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 3,
   },
   customBadgeText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 8,
+    fontSize: 7.5,
     color: '#E5C483',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
@@ -295,9 +295,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   playIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: 'rgba(0, 0, 0, 0.55)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.25)',
@@ -306,26 +306,26 @@ const styles = StyleSheet.create({
     paddingLeft: 2,
   },
   playIconGlyph: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#FFFFFF',
   },
 
   // ─── Bottom Typography Inside Card (Wedflix/Netflix Style) ────────────────
   posterBottomContent: {
     position: 'absolute',
-    left: 6,
-    right: 6,
-    bottom: 8,
+    left: 4,
+    right: 4,
+    bottom: 6,
     alignItems: 'center',
     zIndex: 2,
   },
   posterTitle: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 12,
-    lineHeight: 15,
+    fontSize: 10,
+    lineHeight: 12.5,
     color: '#FFFFFF',
     textAlign: 'center',
-    letterSpacing: 0.6,
+    letterSpacing: 0.4,
     textTransform: 'uppercase',
     textShadowColor: 'rgba(0, 0, 0, 0.95)',
     textShadowOffset: { width: 0, height: 1 },
@@ -333,11 +333,11 @@ const styles = StyleSheet.create({
   },
   posterDuration: {
     fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 10,
+    fontSize: 8.5,
     color: '#E5C483',
     textAlign: 'center',
-    marginTop: 2,
-    letterSpacing: 0.4,
+    marginTop: 1.5,
+    letterSpacing: 0.3,
     textShadowColor: 'rgba(0, 0, 0, 0.95)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
