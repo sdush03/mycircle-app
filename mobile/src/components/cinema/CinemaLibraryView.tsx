@@ -358,17 +358,6 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   }, [videos, progressTick]);
 
   const getBadgeForFilm = useCallback((film: CinemaVideoItem, index: number, shelfType: string) => {
-    if (shelfType === 'directors-cut') {
-      const t = (film.title || film.name || '').toLowerCase();
-      if (t.includes('prewed') || t.includes('pre-wed') || t.includes('pre wed')) return 'PRE-WED';
-      return undefined;
-    }
-    if (shelfType === 'candid-diaries') {
-      return 'REEL';
-    }
-    if (shelfType === 'stage-spotlight' || shelfType === 'extended-cuts') {
-      return undefined;
-    }
     return undefined;
   }, []);
 
