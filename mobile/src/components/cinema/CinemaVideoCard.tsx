@@ -12,9 +12,9 @@ import { WatchProgress } from '../../services/videoWatchProgressManager';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Vertical Movie Poster Card Dimensions (~2:3 ratio, matching Netflix & Wedflix)
+// Vertical Movie Poster Card Dimensions (5:7 ratio, matching Netflix mobile)
 export const POSTER_CARD_WIDTH = 110;
-export const POSTER_CARD_HEIGHT = 162;
+export const POSTER_CARD_HEIGHT = 154;
 
 // Backward-compatible exports for any shelf imports
 export const SHELF_FILM_WIDTH = POSTER_CARD_WIDTH;

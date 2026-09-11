@@ -984,8 +984,8 @@ const styles = StyleSheet.create({
   rankNumberText: {
     fontFamily: RANK_FONT_FAMILY,
     fontWeight: '900',
-    fontSize: 130,
-    lineHeight: 130,
+    fontSize: 124,
+    lineHeight: 124,
     letterSpacing: -2,
     textAlign: 'center',
     includeFontPadding: false,
