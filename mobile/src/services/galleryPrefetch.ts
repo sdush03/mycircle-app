@@ -50,6 +50,33 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
         blurhash: p.blurhash || p.blur_hash || p.blurHash || null,
         isLiked: typeof p.isLiked === 'boolean' ? p.isLiked : !!(p.likes && p.likes.length > 0),
         likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
+        title: p.title || p.exif?.title || p.name || p.caption || p.filename || undefined,
+        description: p.description || p.exif?.description || undefined,
+        cinemaCategory: p.cinemaCategory || p.exif?.cinemaCategory || undefined,
+        sortOrder: p.sortOrder !== undefined ? p.sortOrder : (p.exif?.sortOrder !== undefined ? p.exif.sortOrder : undefined),
+        duration: p.duration || p.meta?.duration || p.metadata?.duration || undefined,
+        isFeatured: Boolean(p.isFeatured || p.featured || p.meta?.isFeatured || p.exif?.isFeatured),
+        category: p.category || p.videoCategory || p.meta?.category || undefined,
+        createdAt:
+          p.createdAt ||
+          p.created_at ||
+          p.uploadedAt ||
+          p.uploaded_at ||
+          p.uploadDate ||
+          p.upload_date ||
+          p.addedAt ||
+          p.date ||
+          p.timestamp ||
+          p.meta?.createdAt ||
+          p.meta?.created_at ||
+          p.metadata?.createdAt ||
+          p.metadata?.created_at ||
+          p.exif?.DateTimeOriginal ||
+          p.exif?.CreateDate ||
+          undefined,
+        created_at: p.created_at || p.createdAt || undefined,
+        exif: p.exif || undefined,
+        raw: p,
       };
     };
 

@@ -142,9 +142,8 @@ function sortCinemaVideos(list: CinemaVideoItem[]): CinemaVideoItem[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Netflix-Style Outlined Top-Ranked Numbers (1, 2, ... 10, 11, 12)
-// ─────────────────────────────────────────────────────────────────────────────
-const STROKE_WIDTH = 2.2;
+// ─── Hairline Didone Serif Ranked Numbers (Option 01: Vogue / Met Gala) ──
+const STROKE_WIDTH = 1.2;
 const STROKE_OFFSETS: [number, number][] = [
   [STROKE_WIDTH, 0],
   [STROKE_WIDTH * 0.92, STROKE_WIDTH * 0.38],
@@ -165,9 +164,9 @@ const STROKE_OFFSETS: [number, number][] = [
 ];
 
 const RANK_FONT_FAMILY = Platform.select({
-  ios: 'HelveticaNeue-CondensedBold',
-  android: 'sans-serif-condensed',
-  default: 'System',
+  ios: 'Didot',
+  android: 'serif',
+  default: 'Georgia',
 });
 
 interface OutlinedRankNumberProps {
@@ -176,29 +175,39 @@ interface OutlinedRankNumberProps {
 
 const OutlinedRankNumber: React.FC<OutlinedRankNumberProps> = React.memo(({ rank }) => {
   const text = String(rank);
+  const letterSpacing = rank >= 10 ? -28 : -6;
 
   return (
-    <View style={styles.rankNumberContainer} pointerEvents="none">
-      {/* 16-direction circular outline for smooth stroke */}
-      {STROKE_OFFSETS.map(([dx, dy], i) => (
-        <Text
-          key={i}
-          style={[
-            styles.rankNumberText,
-            styles.rankNumberStroke,
-            {
-              transform: [{ translateX: dx }, { translateY: dy }],
-            },
-          ]}
-        >
+    <View
+      style={[
+        styles.rankNumberContainer,
+        { minWidth: rank >= 10 ? 64 : 52 },
+      ]}
+      pointerEvents="none"
+    >
+      <View style={styles.rankNumberInner}>
+        {/* 16-direction circular outline for smooth stroke */}
+        {STROKE_OFFSETS.map(([dx, dy], i) => (
+          <Text
+            key={i}
+            style={[
+              styles.rankNumberText,
+              styles.rankNumberStroke,
+              {
+                letterSpacing,
+                transform: [{ translateX: dx }, { translateY: dy }],
+              },
+            ]}
+          >
+            {text}
+          </Text>
+        ))}
+
+        {/* Solid black inner fill */}
+        <Text style={[styles.rankNumberText, styles.rankNumberFill, { letterSpacing }]}>
           {text}
         </Text>
-      ))}
-
-      {/* Solid black inner fill */}
-      <Text style={[styles.rankNumberText, styles.rankNumberFill]}>
-        {text}
-      </Text>
+      </View>
     </View>
   );
 });
@@ -216,7 +225,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   isLoading = false,
 }) => {
   const insets = useSafeAreaInsets();
-  const [, setProgressTick] = useState(0);
+  const [progressTick, setProgressTick] = useState(0);
   const [infoModalVisible, setInfoModalVisible] = useState<boolean>(false);
 
   useEffect(() => {
@@ -336,6 +345,17 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const getProgress = useCallback((item: CinemaVideoItem): WatchProgress | null => {
     return videoWatchProgressManager.getProgress(item);
   }, []);
+
+  const continueWatchingVideos = useMemo(() => {
+    if (!videos || videos.length === 0) return [];
+    return videos
+      .filter((v) => videoWatchProgressManager.isCurrentlyViewing(v))
+      .sort((a, b) => {
+        const pA = videoWatchProgressManager.getProgress(a);
+        const pB = videoWatchProgressManager.getProgress(b);
+        return (pB?.updatedAt || 0) - (pA?.updatedAt || 0);
+      });
+  }, [videos, progressTick]);
 
   const getBadgeForFilm = useCallback((film: CinemaVideoItem, index: number, shelfType: string) => {
     if (shelfType === 'directors-cut') {
@@ -541,12 +561,40 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
             </View>
           ) : (
             <View style={styles.shelvesFlow}>
+              {/* 0. Continue Watching Shelf (Only visible when there are active in-progress videos) */}
+              {continueWatchingVideos.length > 0 && (
+                <View style={[styles.shelfBlock, styles.continueWatchingBlock]}>
+                  <Text style={styles.shelfTitle}>CONTINUE WATCHING</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.shelfScrollContent}
+                    snapToInterval={POSTER_CARD_WIDTH + 8}
+                    decelerationRate="fast"
+                  >
+                    {continueWatchingVideos.map((film, index) => (
+                      <CinemaVideoCard
+                        key={`cw-${film.id || film.videoUrl || film.uri || index}`}
+                        video={film}
+                        variant="poster"
+                        isContinueWatching={true}
+                        watchProgress={getProgress(film)}
+                        onPress={onSelectVideo}
+                      />
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
               {shelves.map((shelf, shelfIdx) => {
-                const isRanked = shelf.type === 'stage-spotlight' || shelf.type === 'extended-cuts';
+                const isRanked = shelf.type === 'stage-spotlight';
                 return (
                   <View
                     key={shelf.title}
-                    style={[styles.shelfBlock, shelfIdx > 0 && styles.shelfBlockSpaced]}
+                    style={[
+                      styles.shelfBlock,
+                      (shelfIdx > 0 || continueWatchingVideos.length > 0) && styles.shelfBlockSpaced,
+                    ]}
                   >
                     <Text style={styles.shelfTitle}>{shelf.title}</Text>
                     <ScrollView
@@ -575,7 +623,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                               >
                                 <OutlinedRankNumber rank={rank} />
                               </Pressable>
-                              <View style={[styles.rankedCardOverlap, { marginLeft: rank >= 10 ? -36 : -22 }]}>
+                              <View style={[styles.rankedCardOverlap, { marginLeft: rank >= 10 ? -26 : -22 }]}>
                                 <CinemaVideoCard
                                   video={film}
                                   badge={getBadgeForFilm(film, index, shelf.type)}
@@ -944,6 +992,9 @@ const styles = StyleSheet.create({
   shelfBlock: {
     marginBottom: 18,
   },
+  continueWatchingBlock: {
+    marginBottom: 20,
+  },
   shelfBlockSpaced: {
     marginTop: 8,
   },
@@ -961,11 +1012,12 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
 
-  // ─── Netflix-Style Ranked Shelves Layout (1, 2, ... 10, 11, 12) ──────────
+  // ─── Ranked Shelves Layout (Option 01: Hairline Didone Serif) ─────────
   rankedItemRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     position: 'relative',
+    marginRight: 18,
   },
   rankNumberPressable: {
     zIndex: 1,
@@ -977,17 +1029,29 @@ const styles = StyleSheet.create({
   rankNumberContainer: {
     height: POSTER_CARD_HEIGHT,
     justifyContent: 'flex-end',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     position: 'relative',
     overflow: 'visible',
+    opacity: 0.5,
+  },
+  rankNumberInner: {
+    transform: [
+      {
+        translateY: Platform.select({
+          ios: 30,
+          android: 18,
+          default: 24,
+        }),
+      },
+    ],
   },
   rankNumberText: {
     fontFamily: RANK_FONT_FAMILY,
-    fontWeight: '900',
-    fontSize: 124,
-    lineHeight: 124,
-    letterSpacing: -2,
-    textAlign: 'center',
+    fontStyle: 'italic',
+    fontSize: 130,
+    lineHeight: 130,
+    letterSpacing: -5,
+    textAlign: 'right',
     includeFontPadding: false,
   },
   rankNumberStroke: {
@@ -995,7 +1059,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    color: '#FFFFFF',
+    color: '#E5E5EA',
   },
   rankNumberFill: {
     color: '#000000',

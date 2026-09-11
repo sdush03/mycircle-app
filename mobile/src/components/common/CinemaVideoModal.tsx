@@ -294,10 +294,12 @@ function VideoPlayerView({
       sourceLoadSub?.remove?.();
       endSub?.remove?.();
       try {
-        const cur = player.currentTime ?? 0;
-        const dur = player.duration ?? 0;
-        if (videoItem && dur > 0 && cur > 0) {
-          videoWatchProgressManager.saveProgress(videoItem, cur, dur);
+        if (!isEndedRef.current) {
+          const cur = player.currentTime ?? 0;
+          const dur = player.duration ?? 0;
+          if (videoItem && dur > 0 && cur > 0) {
+            videoWatchProgressManager.saveProgress(videoItem, cur, dur);
+          }
         }
       } catch {}
       playbackFocusManager.notifyPlaybackStopped();

@@ -83,6 +83,15 @@ class VideoWatchProgressManager {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
+    if (entry.isCompleted) {
+      return {
+        ...entry,
+        progressPercent: 0,
+        isCompleted: true,
+        currentTime: 0,
+      };
+    }
+
     const ratio = entry.duration > 0 ? entry.currentTime / entry.duration : 0;
 
     // Completed threshold: >= 90%
@@ -95,8 +104,8 @@ class VideoWatchProgressManager {
       };
     }
 
-    // Meaningful progress threshold: >= 5%
-    if (ratio >= 0.05) {
+    // Meaningful progress threshold: >= 3% or >= 5 seconds watched
+    if (ratio >= 0.03 || entry.currentTime >= 5) {
       return {
         ...entry,
         progressPercent: Math.min(1, Math.max(0, ratio)),
@@ -104,7 +113,7 @@ class VideoWatchProgressManager {
       };
     }
 
-    // Below 5% is treated as unwatched
+    // Below threshold is treated as unwatched
     return null;
   }
 
@@ -138,6 +147,51 @@ class VideoWatchProgressManager {
     const key = this.getKey(item);
     if (!key) return;
     this.cache.delete(key);
+    this.persistToStorage();
+    this.notifyListeners();
+  }
+
+  /**
+   * Check whether a video item is currently being viewed (active, incomplete progress).
+   */
+  public isCurrentlyViewing(item: any): boolean {
+    const progress = this.getProgress(item);
+    return Boolean(
+      progress &&
+      !progress.isCompleted &&
+      progress.progressPercent > 0 &&
+      progress.currentTime > 0
+    );
+  }
+
+  /**
+   * Check whether a video item has been seen completely (>= 90% or explicitly completed).
+   */
+  public isSeenCompletely(item: any): boolean {
+    const key = this.getKey(item);
+    if (!key) return false;
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    if (entry.isCompleted) return true;
+    const ratio = entry.duration > 0 ? entry.currentTime / entry.duration : 0;
+    return ratio >= 0.9;
+  }
+
+  /**
+   * Explicitly mark a video as completed (seen completely).
+   */
+  public markCompleted(item: any): void {
+    const key = this.getKey(item);
+    if (!key) return;
+    const entry = this.cache.get(key);
+    const completedProgress: WatchProgress = {
+      currentTime: 0,
+      duration: entry?.duration ?? 0,
+      progressPercent: 0,
+      isCompleted: true,
+      updatedAt: Date.now(),
+    };
+    this.cache.set(key, completedProgress);
     this.persistToStorage();
     this.notifyListeners();
   }
