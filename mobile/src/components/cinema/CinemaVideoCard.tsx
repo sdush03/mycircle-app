@@ -226,8 +226,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#161618',
     position: 'relative',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   fillMedia: {
     width: '100%',
