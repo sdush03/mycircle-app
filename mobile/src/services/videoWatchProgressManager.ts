@@ -83,6 +83,15 @@ class VideoWatchProgressManager {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
+    // If video was replaced with a new version after this progress was saved, invalidate stale progress
+    const replacedRaw = item?.videoReplacedAt || item?.exif?.videoReplacedAt || item?.meta?.videoReplacedAt || item?.raw?.videoReplacedAt || item?.raw?.exif?.videoReplacedAt;
+    if (replacedRaw) {
+      const replacedTime = new Date(replacedRaw).getTime();
+      if (!isNaN(replacedTime) && entry.updatedAt && entry.updatedAt < replacedTime) {
+        return null;
+      }
+    }
+
     if (entry.isCompleted) {
       return {
         ...entry,
@@ -172,6 +181,16 @@ class VideoWatchProgressManager {
     if (!key) return false;
     const entry = this.cache.get(key);
     if (!entry) return false;
+
+    // If video was replaced with a new version after this was completed, it hasn't been seen completely
+    const replacedRaw = item?.videoReplacedAt || item?.exif?.videoReplacedAt || item?.meta?.videoReplacedAt || item?.raw?.videoReplacedAt || item?.raw?.exif?.videoReplacedAt;
+    if (replacedRaw) {
+      const replacedTime = new Date(replacedRaw).getTime();
+      if (!isNaN(replacedTime) && entry.updatedAt && entry.updatedAt < replacedTime) {
+        return false;
+      }
+    }
+
     if (entry.isCompleted) return true;
     const ratio = entry.duration > 0 ? entry.currentTime / entry.duration : 0;
     return ratio >= 0.9;

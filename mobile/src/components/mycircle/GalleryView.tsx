@@ -181,6 +181,8 @@ function mapPhotoItem(p: any): Photo {
       p.exif?.CreateDate ||
       undefined,
     created_at: p.created_at || p.createdAt || undefined,
+    videoReplacedAt: p.videoReplacedAt || p.exif?.videoReplacedAt || p.meta?.videoReplacedAt || undefined,
+    version: p.version || p.exif?.version || p.meta?.version || undefined,
     exif: p.exif || undefined,
     raw: p,
   };

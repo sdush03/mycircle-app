@@ -17,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   FONT_FUTURA,
+  FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
   FONT_MONTSERRAT_MEDIUM,
   FONT_MONTSERRAT_SEMIBOLD,
@@ -29,6 +30,7 @@ import {
   POSTER_CARD_HEIGHT,
   getValidImageThumbnail,
   isVideoComingSoon,
+  isVideoNewVersion,
   hasActualVideoFile,
 } from './CinemaVideoCard';
 import {
@@ -377,6 +379,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   }, [onSelectVideo]);
 
   const isPrimaryComingSoon = isVideoComingSoon(primaryVideo);
+  const isPrimaryNewVersion = isVideoNewVersion(primaryVideo);
 
   const handleWatchPrimary = useCallback(() => {
     if (!primaryVideo) return;
@@ -495,10 +498,17 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               {heroFilmTitle}
             </Text>
 
-            {/* Film Duration (if available) */}
-            {primaryDuration ? (
+            {/* Film Duration (if available) & New Version Badge */}
+            {(primaryDuration || isPrimaryNewVersion) ? (
               <View style={styles.heroDurationRow}>
-                <Text style={styles.heroDurationText}>{primaryDuration}</Text>
+                {primaryDuration ? (
+                  <Text style={styles.heroDurationText}>{primaryDuration}</Text>
+                ) : null}
+                {isPrimaryNewVersion ? (
+                  <View style={styles.heroNewVersionPill}>
+                    <Text style={styles.heroNewVersionText}>NEW VERSION</Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 
@@ -948,12 +958,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
+    gap: 8,
   },
   heroDurationText: {
     fontFamily: FONT_MONTSERRAT_MEDIUM,
     fontSize: 11.5,
     letterSpacing: 0.3,
     color: '#E5C483',
+  },
+  heroNewVersionPill: {
+    backgroundColor: '#E50914',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroNewVersionText: {
+    ...Platform.select({
+      ios: {
+        fontWeight: '700' as const,
+      },
+      android: {
+        fontFamily: FONT_FUTURA_BOLD,
+      },
+      default: {
+        fontWeight: '700' as const,
+      },
+    }),
+    fontSize: 8.5,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+    includeFontPadding: false,
   },
   heroSynopsisText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,

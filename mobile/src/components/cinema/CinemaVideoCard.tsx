@@ -55,6 +55,8 @@ export interface CinemaVideoItem {
   isOlderThan10Days?: boolean;
   isComingSoon?: boolean;
   comingSoon?: boolean;
+  videoReplacedAt?: string | number | Date;
+  version?: number;
   [key: string]: any;
 }
 
@@ -245,6 +247,38 @@ export function isVideoComingSoon(video?: any): boolean {
   return !hasActualVideoFile(video);
 }
 
+export function getVideoDaysSinceReplacement(video?: any): number | null {
+  if (!video) return null;
+  const raw = video.raw || {};
+  const exif = video.exif || video.raw?.exif || {};
+  const meta = video.meta || video.raw?.meta || {};
+
+  const candidates = [
+    video.videoReplacedAt,
+    raw.videoReplacedAt,
+    exif.videoReplacedAt,
+    meta.videoReplacedAt,
+  ];
+
+  for (const cand of candidates) {
+    const d = parseDateFlexible(cand);
+    if (d) {
+      const diffMs = Date.now() - d.getTime();
+      if (diffMs >= 0) {
+        return diffMs / (1000 * 60 * 60 * 24);
+      }
+    }
+  }
+
+  return null;
+}
+
+export function isVideoNewVersion(video?: any): boolean {
+  if (!video || isVideoComingSoon(video)) return false;
+  const daysSince = getVideoDaysSinceReplacement(video);
+  return daysSince !== null && daysSince >= 0 && daysSince <= 7;
+}
+
 function formatDuration(sec?: number): string {
   if (!sec || isNaN(sec) || sec <= 0) return '';
   const m = Math.floor(sec / 60);
@@ -294,19 +328,23 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   const isSeen = videoWatchProgressManager.isSeenCompletely(video);
   const hasWatched = Boolean(isSeen || (progress && (progress.currentTime > 0 || progress.isCompleted)));
 
+  const isComingSoon = isVideoComingSoon(video);
+  const isNewVersion = isVideoNewVersion(video);
+
   const daysOld = getVideoDaysOld(video);
   const isRecentlyAdded =
-    video.isRecentlyAdded === true ||
-    video.recentlyAdded === true ||
-    (daysOld !== null && daysOld <= 10);
+    !isComingSoon &&
+    !isNewVersion &&
+    (video.isRecentlyAdded === true ||
+      video.recentlyAdded === true ||
+      (daysOld !== null && daysOld <= 7));
 
-  const isOlderThan10Days =
-    video.isOlderThan10Days === true ||
-    video.isNewForYou === true ||
-    video.newForYou === true ||
-    (daysOld !== null && daysOld > 10);
-
-  const isComingSoon = isVideoComingSoon(video);
+  const isNewForYou =
+    !isComingSoon &&
+    !isNewVersion &&
+    !isViewing &&
+    !isRecentlyAdded &&
+    !hasWatched;
 
   const shouldShowPlayButton = isComingSoon ? false : (showPlayButton ?? isContinueWatching);
   const shouldShowProgressBar = isComingSoon ? false : (showProgressBar ?? isContinueWatching);
@@ -325,7 +363,9 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   // Top Badge: In Continue Watching, badges stick on top
   let topBadge: string | null = null;
   if (isContinueWatching && !isComingSoon) {
-    if (isRecentlyAdded) {
+    if (isNewVersion) {
+      topBadge = 'New version';
+    } else if (isRecentlyAdded) {
       topBadge = 'Recently added';
     } else if (displayBadge) {
       topBadge = displayBadge;
@@ -337,14 +377,17 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   if (!isContinueWatching) {
     if (isComingSoon) {
       bottomBadge = 'Coming soon';
+    } else if (isNewVersion) {
+      // Replaced video cut: strictly 7-day automatic expiry
+      bottomBadge = 'New version';
     } else if (isViewing) {
       // In continue watching progress, but on a catalog card below
       bottomBadge = 'Currently viewing';
     } else if (isRecentlyAdded) {
-      // Auto-removed after 10 days
+      // First 7 days of debut release
       bottomBadge = 'Recently added';
-    } else if (isOlderThan10Days && !hasWatched) {
-      // Upload > 10 days and user has not watched it yet
+    } else if (isNewForYou) {
+      // Catalog film not yet watched by this specific user
       bottomBadge = 'New for you';
     } else if (displayBadge) {
       bottomBadge = displayBadge;
