@@ -396,11 +396,16 @@ function VideoPlayerView({
     } catch {}
   }, [player, videoItem]);
 
-  const isVertical =
-    (videoItem?.aspectRatio && videoItem.aspectRatio < 0.9) ||
-    (videoItem?.height && videoItem?.width && videoItem.height > videoItem.width) ||
+  const videoW = Number(videoItem?.videoWidth || videoItem?.exif?.videoWidth || videoItem?.width || videoItem?.meta?.width) || 0;
+  const videoH = Number(videoItem?.videoHeight || videoItem?.exif?.videoHeight || videoItem?.height || videoItem?.meta?.height) || 0;
+  const isExplicitHorizontal = videoW > 0 && videoH > 0 && videoW > videoH;
+
+  const isVertical = !isExplicitHorizontal && (
+    (videoH > 0 && videoW > 0 && videoH > videoW) ||
+    (videoItem?.aspectRatio && videoItem.aspectRatio < 0.95) ||
     (videoItem?.category && videoItem.category.toLowerCase().includes('reel')) ||
-    (title && title.toLowerCase().includes('reel'));
+    (title && title.toLowerCase().includes('reel'))
+  );
 
   if (isVertical) {
     return (

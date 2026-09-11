@@ -52,8 +52,11 @@ interface CinemaLibraryViewProps {
 }
 
 function isVerticalVideo(video: CinemaVideoItem): boolean {
+  const w = Number(video.width) || Number(video.exif?.videoWidth) || 0;
+  const h = Number(video.height) || Number(video.exif?.videoHeight) || 0;
+  if (w > 0 && h > 0 && w > h) return false;
+  if (w > 0 && h > 0 && h > w) return true;
   if (video.aspectRatio && video.aspectRatio < 0.9) return true;
-  if (video.width && video.height && video.height > video.width) return true;
   const title = (video.title || video.name || '').toLowerCase();
   const cat = (video.category || '').toLowerCase();
   if (title.includes('reel') || cat.includes('reel') || title.includes('vertical') || title.includes('short')) return true;

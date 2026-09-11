@@ -127,10 +127,14 @@ function mapPhotoItem(p: any): Photo {
   const isImageThumb = typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoUrl(rawThumb);
   const validThumb = isImageThumb ? rawThumb : undefined;
   const thumbUri = validThumb || (isVideo && !isPhotoFile ? undefined : getThumbnailUrl(p, 400));
-  const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || (isVideo ? 16 : 0);
-  const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || (isVideo ? 9 : 0);
-  const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
-  const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || (isVideo ? 16 / 9 : null)));
+  const isActualVideo = isVideo && !isPhotoFile;
+  const w = Number(p.width) || Number(p.videoWidth) || Number(p.exif?.videoWidth) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || (isVideo ? 16 : 0);
+  const h = Number(p.height) || Number(p.videoHeight) || Number(p.exif?.videoHeight) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || (isVideo ? 9 : 0);
+  // For actual videos, use actual video dimensions (w/h) so 16:9 widescreen films are never misclassified by their 4:3/2:3 portrait poster thumbnail
+  const cachedAspect = isActualVideo ? null : (getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri));
+  const aspectRatio = isActualVideo
+    ? (w > 0 && h > 0 ? w / h : 16 / 9)
+    : (cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null)));
   return {
     id: p.id,
     r2Url: isVideo ? (isPhotoFile ? fullUri : (p.r2Url || p.file_url || fullUri)) : thumbUri,
