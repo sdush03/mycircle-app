@@ -101,6 +101,16 @@ function mapPhotoItem(p: any): Photo {
   const isVideo = isVideoMedia(p);
   const isPhotoFile = !hasActualVideoFile(p);
   const isComingSoon = isVideoComingSoon(p);
+  const isBaked = Boolean(
+    p.hasBakedCover ||
+    p.isCoverBaked ||
+    p.meta?.hasBakedCover ||
+    p.raw?.hasBakedCover ||
+    p.exif?.hasBakedCover ||
+    p.exif?.isCoverBaked ||
+    p.raw?.exif?.hasBakedCover ||
+    p.raw?.exif?.isCoverBaked
+  );
 
   const fullUri = (isVideo && !isPhotoFile)
     ? (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '')
@@ -130,6 +140,8 @@ function mapPhotoItem(p: any): Photo {
     videoUrl: isVideo && !isPhotoFile ? fullUri : undefined,
     isVideo,
     isComingSoon,
+    hasBakedCover: isBaked,
+    isCoverBaked: isBaked,
     subtitle: p.subtitle || p.exif?.subtitle || (isComingSoon ? 'COMING SOON • TEASER POSTER' : undefined),
     thumbnailUrl: validThumb || thumbUri || fullUri,
     width: w || undefined,
