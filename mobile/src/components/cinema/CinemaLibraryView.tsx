@@ -58,6 +58,19 @@ function isVerticalVideo(video: CinemaVideoItem): boolean {
   return false;
 }
 
+function isVideoComingSoon(video?: CinemaVideoItem | null): boolean {
+  if (!video) return false;
+  return Boolean(
+    video.isComingSoon ||
+    video.comingSoon ||
+    video.exif?.isComingSoon ||
+    video.exif?.comingSoon ||
+    video.meta?.isComingSoon ||
+    video.raw?.isComingSoon ||
+    video.raw?.exif?.isComingSoon
+  );
+}
+
 function isExplicitlyPrimary(video: CinemaVideoItem): boolean {
   if (
     video.isFeatured === true ||
@@ -227,6 +240,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const insets = useSafeAreaInsets();
   const [progressTick, setProgressTick] = useState(0);
   const [infoModalVisible, setInfoModalVisible] = useState<boolean>(false);
+  const [comingSoonModalVideo, setComingSoonModalVideo] = useState<CinemaVideoItem | null>(null);
 
   useEffect(() => {
     const unsubscribe = videoWatchProgressManager.subscribe(() => {
@@ -349,7 +363,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const continueWatchingVideos = useMemo(() => {
     if (!videos || videos.length === 0) return [];
     return videos
-      .filter((v) => videoWatchProgressManager.isCurrentlyViewing(v))
+      .filter((v) => !isVideoComingSoon(v) && videoWatchProgressManager.isCurrentlyViewing(v))
       .sort((a, b) => {
         const pA = videoWatchProgressManager.getProgress(a);
         const pB = videoWatchProgressManager.getProgress(b);
@@ -361,9 +375,24 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     return undefined;
   }, []);
 
+  const handleCardPress = useCallback((film: CinemaVideoItem, resumeTime?: number) => {
+    if (isVideoComingSoon(film)) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      setComingSoonModalVideo(film);
+      return;
+    }
+    onSelectVideo(film, resumeTime);
+  }, [onSelectVideo]);
+
+  const isPrimaryComingSoon = isVideoComingSoon(primaryVideo);
+
   const handleWatchPrimary = useCallback(() => {
     if (!primaryVideo) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (isVideoComingSoon(primaryVideo)) {
+      setComingSoonModalVideo(primaryVideo);
+      return;
+    }
     const progress = getProgress(primaryVideo);
     const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;
     onSelectVideo(primaryVideo, resumeTime);
@@ -486,21 +515,33 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               {heroSynopsis}
             </Text>
 
-            {/* Two Action Buttons Row: [ ▶ Play ] + [ ⓘ More Info ] */}
+            {/* Two Action Buttons Row: [ ▶ Play / ✨ Coming Soon ] + [ ⓘ More Info ] */}
             <View style={styles.heroButtonRow}>
-              {/* Solid White Play Button */}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.netflixPlayBtn,
-                  pressed && styles.btnPressed,
-                ]}
-                onPress={handleWatchPrimary}
-              >
-                <Text style={styles.netflixPlayIcon}>▶</Text>
-                <Text style={styles.netflixPlayText}>
-                  {primaryProgress && primaryProgress.currentTime > 0 ? 'Resume' : 'Play'}
-                </Text>
-              </Pressable>
+              {isPrimaryComingSoon ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.netflixComingSoonBtn,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={handleWatchPrimary}
+                >
+                  <Text style={styles.netflixComingSoonIcon}>✨</Text>
+                  <Text style={styles.netflixComingSoonText}>Coming Soon</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.netflixPlayBtn,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={handleWatchPrimary}
+                >
+                  <Text style={styles.netflixPlayIcon}>▶</Text>
+                  <Text style={styles.netflixPlayText}>
+                    {primaryProgress && primaryProgress.currentTime > 0 ? 'Resume' : 'Play'}
+                  </Text>
+                </Pressable>
+              )}
 
               {/* Frosted More Info Button */}
               <Pressable
@@ -510,7 +551,11 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                 ]}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  setInfoModalVisible(true);
+                  if (isPrimaryComingSoon) {
+                    setComingSoonModalVideo(primaryVideo);
+                  } else {
+                    setInfoModalVisible(true);
+                  }
                 }}
               >
                 <Text style={styles.netflixInfoIcon}>ⓘ</Text>
@@ -568,7 +613,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                         variant="poster"
                         isContinueWatching={true}
                         watchProgress={getProgress(film)}
-                        onPress={onSelectVideo}
+                        onPress={handleCardPress}
                       />
                     ))}
                   </ScrollView>
@@ -606,7 +651,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
                                   const progress = getProgress(film);
                                   const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;
-                                  onSelectVideo(film, resumeTime);
+                                  handleCardPress(film, resumeTime);
                                 }}
                                 style={styles.rankNumberPressable}
                               >
@@ -618,7 +663,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                                   badge={getBadgeForFilm(film, index, shelf.type)}
                                   variant="poster"
                                   watchProgress={getProgress(film)}
-                                  onPress={onSelectVideo}
+                                  onPress={handleCardPress}
                                 />
                               </View>
                             </View>
@@ -632,7 +677,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                             badge={getBadgeForFilm(film, index, shelf.type)}
                             variant="poster"
                             watchProgress={getProgress(film)}
-                            onPress={onSelectVideo}
+                            onPress={handleCardPress}
                           />
                         );
                       })}
@@ -719,6 +764,76 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                 Format: <Text style={styles.modalCreditVal}>4K Cinema Master • Color Graded</Text>
               </Text>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 6. Coming Soon Premiere Teaser Modal */}
+      <Modal
+        visible={Boolean(comingSoonModalVideo)}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setComingSoonModalVideo(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={styles.modalDismissArea}
+            onPress={() => setComingSoonModalVideo(null)}
+          />
+          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom + 16, 28) }]}>
+            {/* Top Drag Handle */}
+            <View style={styles.modalDragHandle} />
+
+            {/* Close Button Top Right */}
+            <Pressable
+              onPress={() => setComingSoonModalVideo(null)}
+              hitSlop={16}
+              style={styles.modalCloseBtn}
+            >
+              <Text style={styles.modalCloseText}>✕</Text>
+            </Pressable>
+
+            {/* Champagne Gold Coming Soon Badge */}
+            <View style={styles.comingSoonHeaderBadge}>
+              <Text style={styles.comingSoonHeaderBadgeText}>✨ PREMIERE COMING SOON</Text>
+            </View>
+
+            {/* Subtitle & Title */}
+            <Text style={styles.modalCoupleSubtitle}>
+              {comingSoonModalVideo?.subtitle || coupleSubtitle || 'CHAPTER I'}
+            </Text>
+            <Text style={styles.modalFilmTitle}>
+              {formatDisplayTitle(comingSoonModalVideo)}
+            </Text>
+
+            {/* In-Production Teaser Banner Card */}
+            <View style={styles.comingSoonNoticeCard}>
+              <View style={styles.comingSoonNoticeHeader}>
+                <Text style={styles.comingSoonNoticeIcon}>🎬</Text>
+                <Text style={styles.comingSoonNoticeTitle}>Film in Production</Text>
+              </View>
+              <Text style={styles.comingSoonNoticeBody}>
+                Our studio is currently crafting this film in the editing room. Check back soon for the exclusive premiere!
+              </Text>
+            </View>
+
+            {/* Story Synopsis */}
+            <Text style={styles.modalSynopsis}>
+              {comingSoonModalVideo?.description ||
+                comingSoonModalVideo?.exif?.description ||
+                'From the quiet morning butterflies to the golden glow of their first steps as husband and wife, every second tells a story of genuine love.'}
+            </Text>
+
+            {/* Dismiss Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalDismissBtn,
+                pressed && styles.btnPressed,
+              ]}
+              onPress={() => setComingSoonModalVideo(null)}
+            >
+              <Text style={styles.modalDismissBtnText}>Close</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -1185,6 +1300,88 @@ const styles = StyleSheet.create({
   modalCreditVal: {
     fontFamily: FONT_MONTSERRAT_MEDIUM,
     color: 'rgba(255, 255, 255, 0.85)',
+  },
+  netflixComingSoonBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1C1C22',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.65)',
+    paddingVertical: 10,
+    borderRadius: 6,
+    gap: 7,
+  },
+  netflixComingSoonIcon: {
+    fontSize: 13,
+  },
+  netflixComingSoonText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 14,
+    color: '#E5C483',
+    letterSpacing: 0.3,
+  },
+  comingSoonHeaderBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(229, 196, 131, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  comingSoonHeaderBadgeText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 9.5,
+    color: '#E5C483',
+    letterSpacing: 0.8,
+  },
+  comingSoonNoticeCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 10,
+  },
+  comingSoonNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  comingSoonNoticeIcon: {
+    fontSize: 14,
+  },
+  comingSoonNoticeTitle: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 12,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  comingSoonNoticeBody: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#A1A1AA',
+  },
+  modalDismissBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    borderRadius: 6,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  modalDismissBtnText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 13,
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
   },
 });
 

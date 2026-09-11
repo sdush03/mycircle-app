@@ -88,6 +88,7 @@ interface Photo {
 export function isVideoMedia(p: any): boolean {
   if (!p) return false;
   if (p.isVideo) return true;
+  if (p.isComingSoon || p.comingSoon || p.exif?.isComingSoon || p.exif?.comingSoon || p.meta?.isComingSoon) return true;
   if (p.tabName && p.tabName.trim().toUpperCase() === 'CINEMA') return true;
   const url = (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '').toLowerCase();
   return url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.m4v') || url.includes('/videos/');

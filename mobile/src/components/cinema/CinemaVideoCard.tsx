@@ -53,6 +53,8 @@ export interface CinemaVideoItem {
   isNewForYou?: boolean;
   newForYou?: boolean;
   isOlderThan10Days?: boolean;
+  isComingSoon?: boolean;
+  comingSoon?: boolean;
   [key: string]: any;
 }
 
@@ -250,8 +252,18 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
     video.newForYou === true ||
     (daysOld !== null && daysOld > 10);
 
-  const shouldShowPlayButton = showPlayButton ?? isContinueWatching;
-  const shouldShowProgressBar = showProgressBar ?? isContinueWatching;
+  const isComingSoon = Boolean(
+    video.isComingSoon ||
+    video.comingSoon ||
+    video.exif?.isComingSoon ||
+    video.exif?.comingSoon ||
+    video.meta?.isComingSoon ||
+    video.raw?.isComingSoon ||
+    video.raw?.exif?.isComingSoon
+  );
+
+  const shouldShowPlayButton = isComingSoon ? false : (showPlayButton ?? isContinueWatching);
+  const shouldShowProgressBar = isComingSoon ? false : (showProgressBar ?? isContinueWatching);
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -266,7 +278,7 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
 
   // Top Badge: In Continue Watching, badges stick on top
   let topBadge: string | null = null;
-  if (isContinueWatching) {
+  if (isContinueWatching && !isComingSoon) {
     if (isRecentlyAdded) {
       topBadge = 'Recently added';
     } else if (displayBadge) {
@@ -277,7 +289,9 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   // Bottom Badge: In other shelves (catalog shelves), badges stick on bottom
   let bottomBadge: string | null = null;
   if (!isContinueWatching) {
-    if (isViewing) {
+    if (isComingSoon) {
+      bottomBadge = 'Coming soon';
+    } else if (isViewing) {
       // In continue watching progress, but on a catalog card below
       bottomBadge = 'Currently viewing';
     } else if (isRecentlyAdded) {
@@ -366,11 +380,23 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
           </View>
         )}
 
-        {/* Bottom Badge: Currently viewing, Recently added, or New for you in segment shelves */}
+        {/* Bottom Badge: Currently viewing, Recently added, Coming soon, or New for you in segment shelves */}
         {bottomBadge ? (
           <View style={styles.bottomBadgeRow} pointerEvents="none">
-            <View style={styles.bottomBadgeContainer}>
-              <Text style={styles.badgeText}>{bottomBadge}</Text>
+            <View
+              style={[
+                styles.bottomBadgeContainer,
+                bottomBadge === 'Coming soon' && styles.comingSoonBadgeContainer,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.badgeText,
+                  bottomBadge === 'Coming soon' && styles.comingSoonBadgeText,
+                ]}
+              >
+                {bottomBadge}
+              </Text>
             </View>
           </View>
         ) : null}
@@ -470,6 +496,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 2.5,
     elevation: 3,
+  },
+  comingSoonBadgeContainer: {
+    backgroundColor: 'rgba(18, 18, 22, 0.95)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.85)',
+    borderBottomWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+  },
+  comingSoonBadgeText: {
+    color: '#E5C483',
+    letterSpacing: 0.1,
   },
 
   badgeText: {
