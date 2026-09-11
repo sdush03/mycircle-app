@@ -175,6 +175,10 @@ export function getValidImageThumbnail(video: CinemaVideoItem): string | undefin
     video.cover_url,
     video.thumbUri,
     video.uri,
+    video.photoUrl,
+    video.fullUri,
+    video.r2Url,
+    video.file_url,
     video.raw?.thumbnailUrl,
     video.raw?.posterUrl,
     video.raw?.poster_url,
@@ -182,6 +186,10 @@ export function getValidImageThumbnail(video: CinemaVideoItem): string | undefin
     video.raw?.cover_url,
     video.raw?.preview_url,
     video.raw?.thumbUri,
+    video.raw?.photoUrl,
+    video.raw?.fullUri,
+    video.raw?.r2Url,
+    video.raw?.file_url,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.startsWith('http')) {
@@ -192,6 +200,49 @@ export function getValidImageThumbnail(video: CinemaVideoItem): string | undefin
     }
   }
   return undefined;
+}
+
+export function hasActualVideoFile(video?: any): boolean {
+  if (!video) return false;
+  const isVideoStr = (val?: any) => {
+    if (!val || typeof val !== 'string') return false;
+    const clean = val.split('?')[0].toLowerCase().trim();
+    return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.includes('/videos/');
+  };
+
+  return Boolean(
+    isVideoStr(video.videoUrl) ||
+    isVideoStr(video.r2Url) ||
+    isVideoStr(video.file_url) ||
+    isVideoStr(video.fullUri) ||
+    isVideoStr(video.photoUrl) ||
+    isVideoStr(video.uri) ||
+    isVideoStr(video.filename) ||
+    isVideoStr(video.name) ||
+    isVideoStr(video.raw?.videoUrl) ||
+    isVideoStr(video.raw?.r2Url) ||
+    isVideoStr(video.raw?.file_url) ||
+    isVideoStr(video.raw?.fullUri) ||
+    isVideoStr(video.raw?.filename) ||
+    isVideoStr(video.raw?.name)
+  );
+}
+
+export function isVideoComingSoon(video?: any): boolean {
+  if (!video) return false;
+  if (
+    video.isComingSoon === true ||
+    video.comingSoon === true ||
+    video.exif?.isComingSoon === true ||
+    video.exif?.comingSoon === true ||
+    video.meta?.isComingSoon === true ||
+    video.raw?.isComingSoon === true ||
+    video.raw?.exif?.isComingSoon === true
+  ) {
+    return true;
+  }
+  // AUTOMATIC: If only photo is there, NO video file -> automatically Coming Soon!
+  return !hasActualVideoFile(video);
 }
 
 function formatDuration(sec?: number): string {
@@ -252,15 +303,7 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
     video.newForYou === true ||
     (daysOld !== null && daysOld > 10);
 
-  const isComingSoon = Boolean(
-    video.isComingSoon ||
-    video.comingSoon ||
-    video.exif?.isComingSoon ||
-    video.exif?.comingSoon ||
-    video.meta?.isComingSoon ||
-    video.raw?.isComingSoon ||
-    video.raw?.exif?.isComingSoon
-  );
+  const isComingSoon = isVideoComingSoon(video);
 
   const shouldShowPlayButton = isComingSoon ? false : (showPlayButton ?? isContinueWatching);
   const shouldShowProgressBar = isComingSoon ? false : (showProgressBar ?? isContinueWatching);

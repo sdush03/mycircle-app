@@ -60,6 +60,7 @@ import { MasonryCard } from '../home/lightbox/components/MasonryCard';
 import { EditorialLightbox, LightboxBounds } from '../home/lightbox/EditorialLightbox';
 import { CinemaVideoModal } from '../common/CinemaVideoModal';
 import { CinemaLibraryView } from '../cinema/CinemaLibraryView';
+import { hasActualVideoFile, isVideoComingSoon } from '../cinema/CinemaVideoCard';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import {
@@ -80,6 +81,8 @@ interface Photo {
   isLiked?: boolean;
   likeCount?: number;
   isVideo?: boolean;
+  isComingSoon?: boolean;
+  subtitle?: string;
   videoUrl?: string;
   thumbnailUrl?: string;
   [key: string]: any;
@@ -87,16 +90,22 @@ interface Photo {
 
 export function isVideoMedia(p: any): boolean {
   if (!p) return false;
+  if (p.tabName && p.tabName.trim().toUpperCase() === 'CINEMA') return true;
   if (p.isVideo) return true;
   if (p.isComingSoon || p.comingSoon || p.exif?.isComingSoon || p.exif?.comingSoon || p.meta?.isComingSoon) return true;
-  if (p.tabName && p.tabName.trim().toUpperCase() === 'CINEMA') return true;
-  const url = (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '').toLowerCase();
+  const url = (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || p.filename || '').toLowerCase();
   return url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.m4v') || url.includes('/videos/');
 }
 
 function mapPhotoItem(p: any): Photo {
   const isVideo = isVideoMedia(p);
-  const fullUri = isVideo ? (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '') : getFullPhotoUrl(p);
+  const isPhotoFile = !hasActualVideoFile(p);
+  const isComingSoon = isVideoComingSoon(p);
+
+  const fullUri = (isVideo && !isPhotoFile)
+    ? (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '')
+    : getFullPhotoUrl(p);
+
   let rawThumb = p.thumbnailUrl || p.thumbUri || p.preview_url || p.coverUrl || p.cover_url || p.posterUrl || p.poster_url || p.coverPhotoUrl || p.cover_photo_url;
   if (typeof rawThumb === 'string' && rawThumb.startsWith('/')) {
     rawThumb = `https://mycircle.mistyvisuals.com${rawThumb}`;
@@ -107,20 +116,22 @@ function mapPhotoItem(p: any): Photo {
   };
   const isImageThumb = typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoUrl(rawThumb);
   const validThumb = isImageThumb ? rawThumb : undefined;
-  const thumbUri = validThumb || (isVideo ? undefined : getThumbnailUrl(p, 400));
+  const thumbUri = validThumb || (isVideo && !isPhotoFile ? undefined : getThumbnailUrl(p, 400));
   const w = Number(p.width) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || (isVideo ? 16 : 0);
   const h = Number(p.height) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || (isVideo ? 9 : 0);
   const cachedAspect = getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri);
   const aspectRatio = cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || (isVideo ? 16 / 9 : null)));
   return {
     id: p.id,
-    r2Url: isVideo ? fullUri : thumbUri,
-    uri: thumbUri,
+    r2Url: isVideo ? (isPhotoFile ? fullUri : (p.r2Url || p.file_url || fullUri)) : thumbUri,
+    uri: thumbUri || fullUri,
     fullUri: fullUri,
     photoUrl: fullUri,
-    videoUrl: isVideo ? fullUri : undefined,
+    videoUrl: isVideo && !isPhotoFile ? fullUri : undefined,
     isVideo,
-    thumbnailUrl: validThumb,
+    isComingSoon,
+    subtitle: p.subtitle || p.exif?.subtitle || (isComingSoon ? 'COMING SOON • TEASER POSTER' : undefined),
+    thumbnailUrl: validThumb || thumbUri || fullUri,
     width: w || undefined,
     height: h || undefined,
     aspectRatio,

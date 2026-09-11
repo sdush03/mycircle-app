@@ -28,6 +28,8 @@ import {
   POSTER_CARD_WIDTH,
   POSTER_CARD_HEIGHT,
   getValidImageThumbnail,
+  isVideoComingSoon,
+  hasActualVideoFile,
 } from './CinemaVideoCard';
 import {
   videoWatchProgressManager,
@@ -56,19 +58,6 @@ function isVerticalVideo(video: CinemaVideoItem): boolean {
   const cat = (video.category || '').toLowerCase();
   if (title.includes('reel') || cat.includes('reel') || title.includes('vertical') || title.includes('short')) return true;
   return false;
-}
-
-function isVideoComingSoon(video?: CinemaVideoItem | null): boolean {
-  if (!video) return false;
-  return Boolean(
-    video.isComingSoon ||
-    video.comingSoon ||
-    video.exif?.isComingSoon ||
-    video.exif?.comingSoon ||
-    video.meta?.isComingSoon ||
-    video.raw?.isComingSoon ||
-    video.raw?.exif?.isComingSoon
-  );
 }
 
 function isExplicitlyPrimary(video: CinemaVideoItem): boolean {
