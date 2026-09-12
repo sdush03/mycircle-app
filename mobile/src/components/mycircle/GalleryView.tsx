@@ -2298,7 +2298,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 setActiveImageIndex(null);
                 setSelectedBounds(null);
               }}
-              onPlayVideo={(item) => setActiveVideoItem(item)}
+              onPlayVideo={(item) => {
+                // Close lightbox first so CinemaVideoModal isn't rendered behind it
+                setActiveImageIndex(null);
+                setSelectedBounds(null);
+                setTimeout(() => setActiveVideoItem(item), 100);
+              }}
               title={cleanTitle}
               subtitle={activeTab.toUpperCase()}
             />

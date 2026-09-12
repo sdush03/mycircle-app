@@ -82,25 +82,29 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
     ],
   }));
 
-  const getMediaUri = (i: any): string | null => {
-    if (!i) return null;
-    if (typeof i === 'string') return i;
-    return (
-      i.fullUri ||
-      i.r2Url ||
-      i.r2_url ||
-      i.file_url ||
-      i.file_url_mobile ||
-      i.url ||
-      i.imageUrl ||
-      i.photoUrl ||
-      i.thumbnailUrl ||
-      i.uri ||
-      null
-    );
+  const isVideoFileUrl = (u: string | null | undefined): boolean => {
+    if (!u || typeof u !== 'string') return false;
+    const clean = u.split('?')[0].toLowerCase();
+    return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.endsWith('.webm');
   };
 
-  const thumbnailUri = typeof item === 'object' ? (item.r2Url || item.thumbnailUrl || item.uri || getMediaUri(item)) : item;
+  const getImageOnlyUri = (i: any): string | null => {
+    if (!i || typeof i !== 'object') return null;
+    // Return the first candidate that is an image URL (not a video file)
+    const candidates = [
+      i.thumbnailUrl, i.thumbUri, i.coverUrl, i.cover_url,
+      i.posterUrl, i.poster_url, i.coverPhotoUrl, i.cover_photo_url,
+      i.preview_url, i.uri, i.r2Url, i.fullUri, i.photoUrl, i.url,
+    ];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.startsWith('http') && !isVideoFileUrl(c)) return c;
+    }
+    return null;
+  };
+
+  const thumbnailUri = typeof item === 'object'
+    ? (isVideoFileUrl(item.r2Url) ? (getImageOnlyUri(item) || item.r2Url) : (item.r2Url || item.thumbnailUrl || item.uri || getImageOnlyUri(item)))
+    : item;
   const fullUri = typeof item === 'object' ? (item.fullUri || item.r2_url || item.file_url || item.url || thumbnailUri) : item;
 
   const isVideo =
@@ -108,7 +112,10 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
     (typeof item?.tabName === 'string' && item.tabName.trim().toUpperCase() === 'CINEMA') ||
     (typeof fullUri === 'string' && (fullUri.endsWith('.mp4') || fullUri.endsWith('.mov') || fullUri.includes('/videos/')));
 
-  const displayUri = isVideo ? (thumbnailUri || getMediaUri(item)) : (fullUri || thumbnailUri);
+  // For videos, always show an image thumbnail (never a .mp4 URL); fall back to any image-only URI
+  const displayUri = isVideo
+    ? (isVideoFileUrl(thumbnailUri) ? getImageOnlyUri(item) : thumbnailUri) || getImageOnlyUri(item)
+    : (fullUri || thumbnailUri);
 
   const [currentUri, setCurrentUri] = useState<string | null>(displayUri);
 
