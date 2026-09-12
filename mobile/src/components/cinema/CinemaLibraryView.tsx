@@ -40,6 +40,115 @@ import {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+interface ComingSoonTeaser {
+  icon: string;
+  title: string;
+  body: string;
+}
+
+const COMING_SOON_TEASERS: readonly ComingSoonTeaser[] = [
+  {
+    icon: '🍿',
+    title: 'Popcorn on standby',
+    body: 'Great stories can’t be microwaved. This blockbuster is simmering on low flame until every emotion is seasoned to perfection.',
+  },
+  {
+    icon: '🤌',
+    title: 'Chef’s Secret Recipe',
+    body: 'Real cinema takes patience. We don’t rush the good stuff—keep your high-fives and happy tissues handy for premiere day.',
+  },
+  {
+    icon: '🤫',
+    title: 'No spoilers, strictly vibes',
+    body: 'The romance was simply too iconic to rush out. Savor the anticipation; the best chapters always make a grand entrance.',
+  },
+  {
+    icon: '🎟️',
+    title: 'Curtain call in the queue',
+    body: 'Legendary love stories deserve red-carpet treatment. Front-row tickets reserved, just waiting for the lights to dim.',
+  },
+  {
+    icon: '🍲',
+    title: 'Slow-cooked magic',
+    body: 'Fast food is quick, but royal feasts take their sweet time. Your love story is getting the full five-star banquet treatment.',
+  },
+  {
+    icon: '🎬',
+    title: 'Houseful feelings incoming',
+    body: 'Warning: Excessive smiling, happy tears, and continuous rewinds expected upon premiere. Worth every single second of the wait.',
+  },
+  {
+    icon: '🍷',
+    title: 'Vintage cut in reserve',
+    body: 'Like fine wine and classic vinyl records, true masterpieces only get richer while they rest. Savor the suspense!',
+  },
+  {
+    icon: '🌶️',
+    title: 'Tadka lagna abhi baaki hai',
+    body: 'The ingredients are all top-tier, and the flavors are settling in. When this film drops, it’s going to hit just right.',
+  },
+  {
+    icon: '☕',
+    title: 'Blockbuster brewing',
+    body: 'Some love stories are so big they deserve their own theater marquee. We’re keeping the reel safe until showtime.',
+  },
+  {
+    icon: '🎭',
+    title: 'Zero preservatives, 100% drama',
+    body: 'Instant noodles take 2 minutes, but timeless memories take care. Pure, unfiltered emotions coming your way.',
+  },
+  {
+    icon: '🛋️',
+    title: 'Binge-watch worthy',
+    body: 'Prepare your cozy blanket and favorite snacks. When the premiere unlocks, you won’t be able to press pause.',
+  },
+  {
+    icon: '🎞️',
+    title: 'The reel is resting',
+    body: 'Even rockstars take a moment before walking on stage. The stage is set, and the applause will be deafening.',
+  },
+  {
+    icon: '✨',
+    title: 'Main character energy',
+    body: 'You brought the charisma, the dance moves, and the chemistry. The big screen is officially waiting on you.',
+  },
+  {
+    icon: '🦸',
+    title: 'Patience is a superpower',
+    body: 'Good things come to those who wait—especially when the film stars two legends. Grab a seat, the show will begin in style.',
+  },
+  {
+    icon: '📽️',
+    title: 'Grand premiere in the vault',
+    body: 'All the smiles, the rituals, and the crazy late-night dancing are safely locked in the vault. Big screen magic awaits!',
+  },
+  {
+    icon: '💃🕺',
+    title: 'Bollywood level romance',
+    body: 'If Bollywood saw this chemistry, they’d take notes. Keeping the magic under wraps until the red carpet rolls out.',
+  },
+  {
+    icon: '🍰',
+    title: 'Sweet surprises take time',
+    body: 'You wouldn’t rush a multi-tier wedding cake, would you? Let the sweetness bake. It’s going to be iconic.',
+  },
+  {
+    icon: '🙈',
+    title: 'Timeline blushing hard',
+    body: 'Too much love in one single film. We had to pause just to let the room cool down. Trust us, it’s worth the wait.',
+  },
+  {
+    icon: '🎫',
+    title: 'Front row seats saved',
+    body: 'No queue jumping allowed. When the projector flickers on, you’ll have the best seat in the entire universe.',
+  },
+  {
+    icon: '🪩',
+    title: 'Afterparty in the archives',
+    body: 'The dance floor was wild, the memories are legendary, and this film is marinating into pure nostalgia gold.',
+  },
+];
+
 interface CinemaLibraryViewProps {
   videos: CinemaVideoItem[];
   coverUrl?: string;
@@ -235,6 +344,12 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const [progressTick, setProgressTick] = useState(0);
   const [infoModalVisible, setInfoModalVisible] = useState<boolean>(false);
   const [comingSoonModalVideo, setComingSoonModalVideo] = useState<CinemaVideoItem | null>(null);
+
+  const activeTeaser = useMemo(() => {
+    if (!comingSoonModalVideo) return COMING_SOON_TEASERS[0];
+    const randomIndex = Math.floor(Math.random() * COMING_SOON_TEASERS.length);
+    return COMING_SOON_TEASERS[randomIndex];
+  }, [comingSoonModalVideo]);
 
   useEffect(() => {
     const unsubscribe = videoWatchProgressManager.subscribe(() => {
@@ -811,11 +926,11 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
             {/* In-Production Teaser Banner Card */}
             <View style={styles.comingSoonNoticeCard}>
               <View style={styles.comingSoonNoticeHeader}>
-                <Text style={styles.comingSoonNoticeIcon}>🎬</Text>
-                <Text style={styles.comingSoonNoticeTitle}>Film in Production</Text>
+                <Text style={styles.comingSoonNoticeIcon}>{activeTeaser.icon}</Text>
+                <Text style={styles.comingSoonNoticeTitle}>{activeTeaser.title}</Text>
               </View>
               <Text style={styles.comingSoonNoticeBody}>
-                Our studio is currently crafting this film in the editing room. Check back soon for the exclusive premiere!
+                {activeTeaser.body}
               </Text>
             </View>
 
@@ -1381,19 +1496,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   comingSoonNoticeIcon: {
-    fontSize: 14,
+    fontSize: 15,
   },
   comingSoonNoticeTitle: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 12,
+    fontSize: 12.5,
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
   comingSoonNoticeBody: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#A1A1AA',
+    fontSize: 11.5,
+    lineHeight: 16.5,
+    color: '#D4D4D8',
   },
   modalDismissBtn: {
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
