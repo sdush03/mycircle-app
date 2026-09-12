@@ -1796,8 +1796,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       });
     };
 
-    // Optimistic update
-    applyLikeState(nextLiked);
+    // Optimistic update (adjust likeCount instantly: +1 on like, -1 on unlike)
+    const currentCount = typeof freshItem.likeCount === 'number' ? freshItem.likeCount : 0;
+    applyLikeState(nextLiked, Math.max(0, currentCount + (nextLiked ? 1 : -1)));
 
     try {
       const headers = eventHeadersRef.current;
@@ -1814,7 +1815,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     } catch (err) {
       console.warn('Failed to toggle photo like:', err);
       // Revert to original state on failure (updates all 3 state arrays)
-      applyLikeState(currentlyLiked);
+      applyLikeState(currentlyLiked, currentCount);
     }
   };
 
