@@ -230,8 +230,26 @@ export function hasActualVideoFile(video?: any): boolean {
   );
 }
 
+export function isCinemaVideoItem(item?: any): boolean {
+  if (!item) return false;
+  const tab = (item.tabName || item.raw?.tabName || item.tab || '').trim().toUpperCase();
+  return (
+    tab === 'CINEMA' ||
+    item.isVideo === true ||
+    item.raw?.isVideo === true ||
+    item.isComingSoon === true ||
+    item.comingSoon === true ||
+    item.exif?.isComingSoon === true ||
+    item.raw?.exif?.isComingSoon === true ||
+    hasActualVideoFile(item)
+  );
+}
+
 export function isVideoComingSoon(video?: any): boolean {
   if (!video) return false;
+  // If it's a regular photo (not in Cinema and not a video), it is NEVER a coming soon video!
+  if (!isCinemaVideoItem(video)) return false;
+
   if (
     video.isComingSoon === true ||
     video.comingSoon === true ||
@@ -243,7 +261,7 @@ export function isVideoComingSoon(video?: any): boolean {
   ) {
     return true;
   }
-  // AUTOMATIC: If only photo is there, NO video file -> automatically Coming Soon!
+  // AUTOMATIC: If it's a Cinema item and has NO video file attached -> automatically Coming Soon!
   return !hasActualVideoFile(video);
 }
 
