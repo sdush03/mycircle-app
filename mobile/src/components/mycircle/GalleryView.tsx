@@ -202,12 +202,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const [eventDetails, setEventDetailsData] = useState<any>(null);
   const [eventGuest, setEventGuest] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<string>(() => {
-    if (!eventSlug) return 'ALL';
+    if (!eventSlug) return 'HIGHLIGHTS';
     const cached = useAuthStore.getState().getGalleryCache(eventSlug);
-    if (cached && cached.hasFullAccess === false) {
-      return 'HIGHLIGHTS';
+    if (cached) {
+      if (cached.hasFullAccess === false) {
+        return 'HIGHLIGHTS';
+      }
+      const hlCount = cached.details?.tabCounts?.['HIGHLIGHTS'] ?? 0;
+      if (hlCount > 0) return 'HIGHLIGHTS';
     }
-    return 'ALL';
+    return 'HIGHLIGHTS';
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -1354,20 +1358,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
   // Exact Landing Tab Rules:
-  // - Full Access (including Bride & Groom): Lands on ALL
-  // - Partial Access: If highlights.count > 0 -> HIGHLIGHTS, else -> MY PHOTOS
+  // - If highlights are present -> land on HIGHLIGHTS (for both Full Access & Partial Access)
+  // - If highlights are not present:
+  //     - Full Access -> ALL
+  //     - Partial Access -> MY PHOTOS
   useEffect(() => {
     if (!isLoading && !hasSetLandingTabRef.current) {
       hasSetLandingTabRef.current = true;
-      if (hasFullAccess) {
+      const hasHighlights =
+        highlightsCount > 0 ||
+        (tabCache['HIGHLIGHTS'] && tabCache['HIGHLIGHTS'].length > 0) ||
+        allPhotos.some((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS');
+
+      if (hasHighlights) {
+        setActiveTab('HIGHLIGHTS');
+      } else if (hasFullAccess) {
         setActiveTab('ALL');
       } else {
-        const hasHighlights = highlightsCount > 0 || availableTabs.includes('HIGHLIGHTS');
-        const targetTab = hasHighlights ? 'HIGHLIGHTS' : 'MY PHOTOS';
+        const targetTab = availableTabs.includes('MY PHOTOS') ? 'MY PHOTOS' : (availableTabs[0] || 'HIGHLIGHTS');
         setActiveTab(targetTab);
       }
     }
-  }, [isLoading, hasFullAccess, highlightsCount, availableTabs]);
+  }, [isLoading, hasFullAccess, highlightsCount, availableTabs, tabCache, allPhotos]);
 
   // Sanitize activeTab: Ensure partial access users never stay on 'ALL' if it's not in availableTabs
   useEffect(() => {
