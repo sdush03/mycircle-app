@@ -1469,13 +1469,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         sourceList = combined;
       }
     } else if (currentUpper === 'ALL') {
-      sourceList = allPhotos;
+      sourceList = allPhotos.filter((p: any) => !isVideoComingSoon(p));
     } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
-      sourceList = tabCache[currentUpper];
+      sourceList = tabCache[currentUpper].filter((p: any) => !isVideoComingSoon(p));
     } else {
       sourceList = allPhotos.filter((p: any) => {
         if (!p.tabName) return false;
-        return p.tabName.trim().toUpperCase() === currentUpper;
+        return p.tabName.trim().toUpperCase() === currentUpper && !isVideoComingSoon(p);
       });
     }
 
@@ -1851,7 +1851,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     } else if (currentPhotoTab === 'MY FAVOURITES') {
       activeTabCount = favoritesCount;
     } else if (currentPhotoTab === 'ALL') {
-      activeTabCount = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+      const comingSoonCount = allPhotos.filter((p: any) => isVideoComingSoon(p)).length;
+      activeTabCount = Math.max(0, (eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length)) - comingSoonCount);
     } else {
       const normKey = currentPhotoTab.trim().toUpperCase();
       activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
