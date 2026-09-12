@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Misty Visuals — 16 Minimalist Dance Ranking Concepts</title>
+
+  <!-- High-end Editorial Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;0,6..96,700;1,6..96,400&family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@200;300;400;500;600;700&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-base: #0B0C10;
+      --bg-surface: #121318;
+      --bg-card: #16171E;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-crisp: rgba(255, 255, 255, 0.16);
+      --border-strong: rgba(255, 255, 255, 0.28);
+      --text-pure: #FFFFFF;
+      --text-bone: #E8E8EC;
+      --text-ivory: #F2EDE4;
+      --text-muted: #848794;
+      --text-faint: #4E515F;
+      --card-w: 160px;
+      --card-h: 213px; /* 3:4 aspect ratio */
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-pure);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 40px 24px 100px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    /* Minimalist Header */
+    .header {
+      margin-bottom: 32px;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 24px;
+    }
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .brand-mark {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-mark::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: #FFFFFF;
+    }
+    .badge-aesthetic {
+      font-size: 10px;
+      font-family: 'Space Mono', monospace;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border: 1px solid var(--border-crisp);
+      border-radius: 2px;
+      color: var(--text-bone);
+    }
+    .header h1 {
+      font-family: 'Bodoni Moda', serif;
+      font-size: 36px;
+      font-weight: 400;
+      letter-spacing: -0.5px;
+      color: #FFFFFF;
+      margin-bottom: 10px;
+    }
+    .header p {
+      font-size: 14px;
+      color: var(--text-muted);
+      max-width: 780px;
+      line-height: 1.6;
+    }
+    .rules-strip {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 14px;
+      font-size: 11px;
+      font-family: 'Space Mono', monospace;
+    }
+    .rules-strip span {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: #FFFFFF;
+    }
+    .rules-strip span::before {
+      content: "✓";
+      color: #48BB78;
+      font-weight: bold;
+    }
+
+    /* Category Filter Tabs */
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .filter-pill {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-family: 'Space Mono', monospace;
+      font-size: 10.5px;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .filter-pill:hover {
+      border-color: var(--border-crisp);
+      color: var(--text-pure);
+    }
+    .filter-pill.active {
+      background: #FFFFFF;
+      color: #000000;
+      border-color: #FFFFFF;
+      font-weight: 700;
+    }
+
+    /* Grid of 16 Concept Cards */
+    .selector-container {
+      margin-bottom: 32px;
+    }
+    .tab-group {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    @media (max-width: 1024px) {
+      .tab-group {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    @media (max-width: 580px) {
+      .tab-group {
+        grid-template-columns: 1fr;
+      }
+    }
+    .tab-btn {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 10px 12px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+    .tab-btn:hover {
+      border-color: rgba(255, 255, 255, 0.25);
+      background: #171821;
+    }
+    .tab-btn.active {
+      border-color: #FFFFFF;
+      background: #1A1C25;
+    }
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 12px;
+      right: 12px;
+      height: 2px;
+      background: #FFFFFF;
+    }
+    .tab-num {
+      font-family: 'Space Mono', monospace;
+      font-size: 9.5px;
+      color: var(--text-faint);
+      margin-bottom: 2px;
+      display: block;
+    }
+    .tab-btn.active .tab-num {
+      color: #FFFFFF;
+    }
+    .tab-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-bone);
+      display: block;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tab-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+      display: block;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Live Shelf Preview Section */
+    .preview-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 28px 24px;
+      margin-bottom: 36px;
+    }
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 24px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .shelf-category-tag {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .shelf-main-title {
+      font-size: 19px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      color: #FFFFFF;
+    }
+    .shelf-meta-indicator {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--text-faint);
+    }
+
+    /* The Horizontal Shelf */
+    .shelf-scroll-area {
+      overflow-x: auto;
+      padding: 10px 4px 20px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    }
+    .shelf-scroll-area::-webkit-scrollbar {
+      height: 4px;
+    }
+    .shelf-scroll-area::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
+
+    .shelf-row {
+      display: flex;
+      align-items: flex-start;
+      min-width: max-content;
+    }
+
+    /* Individual Film Item */
+    .film-item {
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Card Wrapper (Standard 3:4 portrait) */
+    .poster-card {
+      width: var(--card-w);
+      height: var(--card-h);
+      background-color: var(--bg-card);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+      flex-shrink: 0;
+    }
+    .poster-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .poster-card .card-scrim {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.65) 100%);
+      pointer-events: none;
+    }
+    .poster-card .card-footer-info {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      right: 8px;
+      z-index: 2;
+    }
+    .card-footer-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #FFFFFF;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .card-footer-sub {
+      font-size: 9.5px;
+      color: rgba(255, 255, 255, 0.7);
+      margin-top: 1px;
+      font-family: 'Space Mono', monospace;
+    }
+
+    /* Below Card Metadata */
+    .film-below-meta {
+      width: var(--card-w);
+      margin-top: 8px;
+    }
+    .meta-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-pure);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meta-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* =========================================================================
+       THE 16 MINIMALIST RANKING STYLES (STRICTLY NO GLOW, NO GRADIENT)
+       ========================================================================= */
+
+    /* STYLE 1: Hairline Didone Serif (Vogue Editorial) */
+    .style-1 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 28px;
+    }
+    .style-1 .rank-num-box {
+      width: 68px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      position: relative;
+      user-select: none;
+    }
+    .style-1 .num-1 {
+      font-family: 'Bodoni Moda', serif;
+      font-size: 130px;
+      line-height: 0.85;
+      font-weight: 400;
+      font-style: italic;
+      color: #000000;
+      -webkit-text-stroke: 1.2px #E5E5EA;
+      letter-spacing: -6px;
+      transform: translateY(4px);
+    }
+    .style-1 .poster-card { margin-left: -22px; z-index: 2; }
+
+    /* STYLE 2: Swiss Archival Monolith (Akzidenz 01, 02) */
+    .style-2 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 32px;
+    }
+    .style-2 .rank-num-box {
+      width: 76px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      user-select: none;
+    }
+    .style-2 .num-2 {
+      font-family: 'Inter', sans-serif;
+      font-size: 110px;
+      line-height: 0.82;
+      font-weight: 300;
+      color: #000000;
+      -webkit-text-stroke: 1px #F0F0F2;
+      letter-spacing: -8px;
+    }
+    .style-2 .poster-card { margin-left: -24px; z-index: 2; }
+
+    /* STYLE 3: Whisper Silhouette (Matte Charcoal Tone-on-Tone) */
+    .style-3 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 30px;
+    }
+    .style-3 .rank-num-box {
+      width: 72px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      user-select: none;
+    }
+    .style-3 .num-3 {
+      font-family: 'Bodoni Moda', serif;
+      font-size: 135px;
+      line-height: 0.82;
+      font-weight: 700;
+      color: #20222C;
+      letter-spacing: -5px;
+    }
+    .style-3 .poster-card { margin-left: -24px; z-index: 2; }
+
+    /* STYLE 4: Hairline Roman Numerals (Cartier Classical Folio) */
+    .style-4 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 32px;
+    }
+    .style-4 .rank-num-box {
+      min-width: 60px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      user-select: none;
+      padding-right: 4px;
+    }
+    .style-4 .num-4 {
+      font-family: 'Cinzel', serif;
+      font-size: 96px;
+      line-height: 0.88;
+      font-weight: 400;
+      color: #000000;
+      -webkit-text-stroke: 1px #E8E2D5;
+      letter-spacing: -3px;
+    }
+    .style-4 .poster-card { margin-left: -18px; z-index: 2; }
+
+    /* STYLE 5: Editorial Micro-Index (In-Card Capsule) */
+    .style-5 .shelf-row .film-item { margin-right: 18px; }
+    .style-5 .poster-card { z-index: 1; }
+    .style-5 .micro-index-tag {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(11, 12, 16, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 2px;
+      padding: 3px 7px;
+      font-family: 'Space Mono', monospace;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #FFFFFF;
+      text-transform: uppercase;
+      z-index: 3;
+    }
+
+    /* STYLE 6: Under-Card Plinth Index (Museum Catalog Folio) */
+    .style-6 .shelf-row .film-item { margin-right: 20px; }
+    .style-6 .plinth-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      width: var(--card-w);
+    }
+    .style-6 .plinth-num {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: #FFFFFF;
+      letter-spacing: 1px;
+    }
+    .style-6 .plinth-divider {
+      flex: 1;
+      height: 1px;
+      background: var(--border-crisp);
+    }
+    .style-6 .plinth-act {
+      font-size: 9px;
+      font-family: 'Space Mono', monospace;
+      color: var(--text-muted);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    /* STYLE 7: Vertical Hairline Edge Rail (Monocle Architectural Strip) */
+    .style-7 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-start;
+      margin-right: 22px;
+    }
+    .style-7 .edge-rail {
+      width: 22px;
+      height: var(--card-h);
+      background: #111218;
+      border: 1px solid var(--border-subtle);
+      border-right: none;
+      border-radius: 6px 0 0 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .style-7 .edge-rail-text {
+      transform: rotate(-90deg);
+      white-space: nowrap;
+      font-family: 'Space Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 3px;
+      color: var(--text-bone);
+      text-transform: uppercase;
+    }
+    .style-7 .poster-card {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+    }
+
+    /* STYLE 8: Typographic Bracket Index (Cormorant Folio [ 01 ]) */
+    .style-8 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 26px;
+    }
+    .style-8 .bracket-box {
+      width: 50px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 8px;
+    }
+    .style-8 .bracket-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--text-bone);
+      display: flex;
+      align-items: baseline;
+      gap: 2px;
+    }
+    .style-8 .bracket-mark {
+      font-family: 'Inter', sans-serif;
+      font-weight: 200;
+      font-size: 22px;
+      color: var(--text-faint);
+    }
+    .style-8 .poster-card { margin-left: 0; z-index: 2; }
+
+    /* STYLE 9: Double Hairline / Art Deco Parallel Trace */
+    .style-9 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 30px;
+    }
+    .style-9 .rank-num-box {
+      width: 68px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      position: relative;
+    }
+    .style-9 .num-9-outer {
+      font-family: 'Playfair Display', serif;
+      font-size: 124px;
+      line-height: 0.85;
+      font-weight: 600;
+      color: #000;
+      -webkit-text-stroke: 2.2px #FFFFFF;
+      position: relative;
+    }
+    .style-9 .num-9-inner {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      font-family: 'Playfair Display', serif;
+      font-size: 124px;
+      line-height: 0.85;
+      font-weight: 600;
+      color: #000;
+      -webkit-text-stroke: 1px #0B0C10;
+    }
+    .style-9 .poster-card { margin-left: -20px; z-index: 2; }
+
+    /* STYLE 10: Dotted Perforation Craft (Japanese Stationery) */
+    .style-10 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 28px;
+    }
+    .style-10 .rank-num-box {
+      width: 70px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+    }
+    .style-10 .num-10-dot {
+      font-family: 'Inter', sans-serif;
+      font-size: 110px;
+      line-height: 0.85;
+      font-weight: 200;
+      color: rgba(255, 255, 255, 0.45);
+      letter-spacing: -6px;
+      text-decoration: underline dotted 1.5px rgba(255, 255, 255, 0.4);
+      text-underline-offset: 4px;
+    }
+    .style-10 .poster-card { margin-left: -22px; z-index: 2; }
+
+    /* STYLE 11: Minimalist Seal / Hallmark Bezel */
+    .style-11 .shelf-row .film-item {
+      margin-right: 18px;
+    }
+    .style-11 .seal-circle {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(11, 12, 16, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 3;
+    }
+    .style-11 .seal-num {
+      font-family: 'Bodoni Moda', serif;
+      font-size: 13px;
+      font-style: italic;
+      color: #FFFFFF;
+    }
+
+    /* STYLE 12: Negative Cutout Pill (Solid White Inverse Badge) */
+    .style-12 .shelf-row .film-item {
+      margin-right: 18px;
+    }
+    .style-12 .cutout-pill {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: #FFFFFF;
+      color: #000000;
+      font-family: 'Inter', sans-serif;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      z-index: 3;
+    }
+
+    /* STYLE 13: Diagonal Slash Fraction (Sotheby's Art Folio) */
+    .style-13 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 28px;
+    }
+    .style-13 .slash-box {
+      width: 60px;
+      height: var(--card-h);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding-bottom: 12px;
+      padding-right: 6px;
+    }
+    .style-13 .slash-top {
+      font-family: 'Bodoni Moda', serif;
+      font-size: 32px;
+      font-weight: 600;
+      color: #FFFFFF;
+      line-height: 1;
+    }
+    .style-13 .slash-line {
+      width: 24px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.35);
+      margin: 3px 0;
+    }
+    .style-13 .slash-bottom {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .style-13 .poster-card { margin-left: 0; z-index: 2; }
+
+    /* STYLE 14: Cinematography Slate Timecode (Panavision Screen Readout) */
+    .style-14 .shelf-row .film-item {
+      margin-right: 18px;
+    }
+    .style-14 .slate-tag {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 2px 6px;
+      border-radius: 2px;
+      z-index: 3;
+    }
+    .style-14 .slate-tag::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      background: #FFFFFF;
+      border-radius: 50%;
+    }
+    .style-14 .slate-text {
+      font-family: 'Space Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: #FFFFFF;
+    }
+
+    /* STYLE 15: Asymmetric High Watermark (MOMA Gallery) */
+    .style-15 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-start;
+      margin-right: 28px;
+    }
+    .style-15 .watermark-box {
+      width: 65px;
+      height: var(--card-h);
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      padding-top: 8px;
+    }
+    .style-15 .num-15 {
+      font-family: 'Playfair Display', serif;
+      font-size: 90px;
+      line-height: 0.8;
+      font-weight: 400;
+      color: rgba(255, 255, 255, 0.14); /* Super subtle watermark */
+      letter-spacing: -4px;
+    }
+    .style-15 .poster-card { margin-left: -20px; z-index: 2; }
+
+    /* STYLE 16: Choreography Rhythm Index (Beat Tally) */
+    .style-16 .shelf-row .film-item {
+      flex-direction: row;
+      align-items: flex-end;
+      margin-right: 28px;
+    }
+    .style-16 .rhythm-box {
+      width: 56px;
+      height: var(--card-h);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding-bottom: 12px;
+      padding-right: 6px;
+      gap: 6px;
+    }
+    .style-16 .rhythm-num {
+      font-family: 'Inter', sans-serif;
+      font-size: 24px;
+      font-weight: 300;
+      color: #FFFFFF;
+      letter-spacing: -1px;
+    }
+    .style-16 .rhythm-dots {
+      display: flex;
+      gap: 3px;
+    }
+    .style-16 .rhythm-dot {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+    }
+    .style-16 .rhythm-dot.active {
+      background: #FFFFFF;
+    }
+    .style-16 .poster-card { margin-left: 0; z-index: 2; }
+
+    /* Concept Details & Code Section */
+    .concept-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .concept-badge {
+      display: inline-block;
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .concept-title {
+      font-size: 19px;
+      font-weight: 600;
+      color: #FFFFFF;
+      margin-bottom: 8px;
+    }
+    .concept-desc {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 16px;
+      max-width: 820px;
+    }
+    .trait-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .trait-pill {
+      font-size: 11px;
+      padding: 4px 10px;
+      background: #191A23;
+      border: 1px solid var(--border-subtle);
+      border-radius: 3px;
+      color: var(--text-bone);
+    }
+
+    /* Comparison Grid */
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 24px;
+    }
+    @media (max-width: 1024px) {
+      .comparison-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    @media (max-width: 580px) {
+      .comparison-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .comp-cell {
+      background: #14151C;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .comp-cell:hover {
+      border-color: #FFFFFF;
+      background: #181A24;
+    }
+    .comp-num-preview {
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 12px;
+      background: #0B0C10;
+      border-radius: 4px;
+      position: relative;
+    }
+    .comp-title {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #FFFFFF;
+      margin-bottom: 2px;
+      text-align: center;
+    }
+    .comp-sub {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* Code Block */
+    pre {
+      background: #0B0C10;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 14px;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: #D6D8E1;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-top">
+        <div class="brand-mark">Misty Visuals Cinema OS</div>
+        <div class="badge-aesthetic">16 Minimalist Concepts · Quiet Luxury</div>
+      </div>
+      <h1>Minimalist Dance Performance Numbering</h1>
+      <p>
+        Strictly zero glow, zero radiant gradients, and zero neon lighting. Explores 16 distinct minimalist concepts spanning overlapping editorial hairlines, Swiss archival precision, in-card luxury hallmarks, and architectural folio rails.
+      </p>
+      <div class="rules-strip">
+        <span>Zero Glow / Zero Halos</span>
+        <span>Zero Gradients / Zero Multi-Colors</span>
+        <span>Razor-Sharp Hairlines</span>
+        <span>Quiet Luxury Typography</span>
+        <span>100% Focused on Wedding Dance Acts</span>
+      </div>
+    </header>
+
+    <!-- Filter Pills -->
+    <div class="filter-bar">
+      <button class="filter-pill active" onclick="filterCategory('all')">ALL CONCEPTS (16)</button>
+      <button class="filter-pill" onclick="filterCategory('overlapping')">OVERLAPPING HAIRLINES (7)</button>
+      <button class="filter-pill" onclick="filterCategory('incard')">IN-CARD &amp; HALLMARKS (4)</button>
+      <button class="filter-pill" onclick="filterCategory('architectural')">ARCHITECTURAL RAILS &amp; FOLIOS (5)</button>
+    </div>
+
+    <!-- 16 Tab Selectors -->
+    <div class="selector-container">
+      <div class="tab-group" id="tabGroup">
+        <!-- Dynamically rendered -->
+      </div>
+    </div>
+
+    <!-- Live Shelf Simulator -->
+    <div class="preview-box">
+      <div class="preview-header">
+        <div>
+          <div class="shelf-category-tag">Live Shelf Simulator · Stage &amp; Spotlight</div>
+          <div class="shelf-main-title" id="previewTitle">Loading...</div>
+        </div>
+        <div class="shelf-meta-indicator">5 Performances · Horizontal Scrollable</div>
+      </div>
+
+      <div class="shelf-scroll-area">
+        <div class="shelf-row" id="shelfRowContainer">
+          <!-- Dynamically populated via JavaScript -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Detailed Concept Breakdown & RN Code -->
+    <div id="conceptDetailsContainer">
+      <!-- Dynamically populated via JavaScript -->
+    </div>
+
+    <!-- Side-by-Side Comparison Grid -->
+    <div style="margin-top: 48px; border-top: 1px solid var(--border-subtle); padding-top: 36px;">
+      <div style="margin-bottom: 20px;">
+        <span class="shelf-category-tag">Direct Typographic Matrix</span>
+        <h2 style="font-size: 22px; font-weight: 600; color: #FFFFFF;">Compare All 16 Minimalist Styles</h2>
+      </div>
+      <div class="comparison-grid" id="comparisonGrid">
+        <!-- Dynamically populated via JavaScript -->
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // 5 Real Wedding Dance Performances
+    const DANCE_FILMS = [
+      {
+        title: "Bride's Solo — Radha",
+        sub: "Aarav & Meera",
+        duration: "3:42",
+        img: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=600&q=80"
+      },
+      {
+        title: "Couple Sangeet Duo",
+        sub: "Aarav & Meera",
+        duration: "4:15",
+        img: "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=600&q=80"
+      },
+      {
+        title: "Groom Squad Flashmob",
+        sub: "Aarav & Meera",
+        duration: "5:10",
+        img: "https://images.unsplash.com/photo-1520854221256-17451cc331bf?auto=format&fit=crop&w=600&q=80"
+      },
+      {
+        title: "Bridal Party Medley",
+        sub: "Aarav & Meera",
+        duration: "4:48",
+        img: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=600&q=80"
+      },
+      {
+        title: "Grand Family Finale",
+        sub: "Aarav & Meera",
+        duration: "6:20",
+        img: "https://images.unsplash.com/photo-1583939003579-730e3918a45a?auto=format&fit=crop&w=600&q=80"
+      }
+    ];
+
+    const ROMAN_NUMERALS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+
+    // 16 Minimalist Concepts
+    const CONCEPTS = {
+      1: {
+        category: "overlapping",
+        name: "Hairline Didone Serif",
+        subtitle: "Vogue / Met Gala fine-line",
+        description: "Netflix-style shelf overlap reimagined with high-fashion Didone serif typography (Bodoni Moda). An ultra-crisp 1.2px white hairline outline with pure matte black fill. Zero glow, feather-light, couture.",
+        traits: ["1.2px Hairline Stroke", "Zero Glow / Zero Halo", "Overlapped Left Shelf Margin", "Bodoni Moda Italic"],
+        overlap: "22px negative margin behind card",
+        fontRN: "Bodoni Moda / Georgia / Playfair Display",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-1">${idx + 1}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      2: {
+        category: "overlapping",
+        name: "Swiss Archival Monolith",
+        subtitle: "Akzidenz / Bauhaus geometric line",
+        description: "Clean geometric sans with leading zero (01, 02, 03). Razor-thin 1px off-white hairline outline with black center. Perfect modern discipline and architectural clarity.",
+        traits: ["Leading Zero (01, 02)", "1px Clean Hairline", "No Gradients", "Swiss Grotesque Precision"],
+        overlap: "24px negative margin behind card",
+        fontRN: "Inter / Helvetica Neue / System",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-2">${String(idx + 1).padStart(2, '0')}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      3: {
+        category: "overlapping",
+        name: "Whisper Silhouette",
+        subtitle: "Tone-on-tone matte charcoal",
+        description: "Massive serif numeral in a subtle matte charcoal tone (#20222C) sitting quietly behind the card. No borders, no outlines, no glow — pure negative-space architecture.",
+        traits: ["Tone-on-Tone Matte (#20222C)", "No Borders / Outlines", "Zero Bright Highlights", "Architectural Scale"],
+        overlap: "24px negative margin behind card",
+        fontRN: "Bodoni Moda / Georgia",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-3">${idx + 1}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      4: {
+        category: "overlapping",
+        name: "Hairline Roman Numerals",
+        subtitle: "Cartier / Classical Broadway folio",
+        description: "Classical Roman numerals (I, II, III, IV, V) in fine-line ivory stroke (#E8E2D5). Symmetrical, timeless, and noble. Evokes Broadway theatre acts and classical symphonic movements.",
+        traits: ["Classical Roman (I, II, III)", "1px Bone-Ivory Hairline", "Cinzel Classical Serif", "Theatrical Act Folio"],
+        overlap: "18px negative margin behind card",
+        fontRN: "Cinzel / Castoro Titling / Times",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-4">${ROMAN_NUMERALS[idx]}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      5: {
+        category: "incard",
+        name: "Editorial Micro-Index",
+        subtitle: "Kinfolk in-card corner capsule",
+        description: "Preserves 100% of the poster artwork without overlap. A tiny micro-typography capsule (01 · ACT) floats at the top-left with a 1px subtle boundary. Clean and unobtrusive.",
+        traits: ["0% Poster Occlusion", "Micro-Typography Tag", "Top-Left In-Card Placement", "Monospaced Precision"],
+        overlap: "None (Floating Inside Card)",
+        fontRN: "Space Mono / Courier / Inter",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="poster-card">
+              <div class="micro-index-tag">${String(idx + 1).padStart(2, '0')} · ACT</div>
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+            </div>
+            <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      6: {
+        category: "architectural",
+        name: "Under-Card Plinth Index",
+        subtitle: "Museum catalog plinth with rule line",
+        description: "Poster is 100% untouched. The sequence index is integrated cleanly into the caption below the card: '01 ─── Sangeet Solo'. Creates an orderly museum gallery catalog progression.",
+        traits: ["100% Untouched Card", "Integrated Caption Row", "Fine Rule Line Divider", "Exhibition Flow"],
+        overlap: "None (Positioned Below Poster)",
+        fontRN: "Space Mono + Inter",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="poster-card">
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration}</div></div>
+            </div>
+            <div class="plinth-meta-row">
+              <span class="plinth-num">${String(idx + 1).padStart(2, '0')}</span>
+              <div class="plinth-divider"></div>
+              <span class="plinth-act">ACT ${idx + 1}</span>
+            </div>
+            <div class="film-below-meta" style="margin-top: 4px;"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      7: {
+        category: "architectural",
+        name: "Vertical Hairline Edge Rail",
+        subtitle: "Monocle architectural side strip",
+        description: "A slender 22px matte rail attached flush to the left edge of the poster card with rotated uppercase text: '01 // STAGE'. Gives the dance performance an architectural catalog spine feel.",
+        traits: ["Integrated Vertical Spine", "Rotated Micro-Typography", "Architectural Alignment", "1px Hairline Border"],
+        overlap: "Attached flush to left edge",
+        fontRN: "Space Mono / Inter",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="edge-rail"><span class="edge-rail-text">${String(idx + 1).padStart(2, '0')} // STAGE</span></div>
+            <div class="poster-card">
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+            </div>
+            <div class="film-below-meta" style="margin-left: 22px;"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      8: {
+        category: "architectural",
+        name: "Typographic Bracket Index",
+        subtitle: "Cormorant folio brackets [ 01 ]",
+        description: "The sequence number is framed by delicate typographic brackets: '[ 01 ]' sitting beside the card. Uses high-contrast serif numerals paired with whisper-thin bracket glyphs. Literary and understated.",
+        traits: ["Bespoke Brackets [ 01 ]", "Cormorant Luxury Serif", "Beside Card Placement", "Literary Journal Vibe"],
+        overlap: "No overlap (flush beside card)",
+        fontRN: "Cormorant Garamond / Bodoni",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="bracket-box">
+              <div class="bracket-text"><span class="bracket-mark">[</span><span>${String(idx + 1).padStart(2, '0')}</span><span class="bracket-mark">]</span></div>
+            </div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      9: {
+        category: "overlapping",
+        name: "Double Hairline Parallel",
+        subtitle: "Art Deco fine-line twin trace",
+        description: "Two razor-thin parallel lines (0.8px each) separated by a 1.5px air gap tracing the numeral outline. Pure white on matte black, zero glow. Architectural art deco delicacy.",
+        traits: ["Twin Hairline Trace", "Art Deco Modernist", "Overlapped Left Margin", "High Contrast Precision"],
+        overlap: "20px negative margin behind card",
+        fontRN: "Playfair Display / Bodoni",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-9-outer">${idx + 1}</span><span class="num-9-inner">${idx + 1}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      10: {
+        category: "overlapping",
+        name: "Dotted Perforation Craft",
+        subtitle: "Japanese stationery / embossed paper",
+        description: "Whispers tactile bespoke stationery craftsmanship, like an invitation card perforation or luxury embossed paper mark. Delicate dotted underline and ultra-lightweight numerals.",
+        traits: ["Tactile Stationery Vibe", "Dotted Hairline Accents", "Ultra-Light Weight", "Subtle Craft Feel"],
+        overlap: "22px negative margin behind card",
+        fontRN: "Inter Light / Helvetica Neue",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="rank-num-box"><span class="num-10-dot">${String(idx + 1).padStart(2, '0')}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      11: {
+        category: "incard",
+        name: "Minimalist Seal / Hallmark",
+        subtitle: "Luxury watch bezel / wax hallmark",
+        description: "A pristine 32px circular hallmark with a 1px solid hairline border containing a centered italic serif numeral (1, 2, 3). Floating cleanly inside the top-left of the poster.",
+        traits: ["32px Circular Hallmark", "Italic Serif Numeral", "Top-Left In-Card Floating", "Patek Philippe Vibe"],
+        overlap: "None (Corner Hallmark)",
+        fontRN: "Bodoni Moda / Playfair",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="poster-card">
+              <div class="seal-circle"><span class="seal-num">${idx + 1}</span></div>
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+            </div>
+            <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      12: {
+        category: "incard",
+        name: "Negative Cutout Pill",
+        subtitle: "Solid white inverse badge (Scandinavian)",
+        description: "A small, solid bone-white pill (#FFFFFF) with the sequence number punched out in inverse black (#000000). Crisp, high contrast, pure Swiss product design.",
+        traits: ["Inverse Contrast (#FFF on #000)", "Crisp Micro-Pill", "Zero Poster Obscuration", "High Legibility"],
+        overlap: "None (Top-Left Pill)",
+        fontRN: "Inter Bold / System Heavy",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="poster-card">
+              <div class="cutout-pill">0${idx + 1}</div>
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+            </div>
+            <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      13: {
+        category: "architectural",
+        name: "Diagonal Slash Fraction",
+        subtitle: "Sotheby's auction / art folio (01 / 05)",
+        description: "Minimalist fraction index beside the card: '01' on top with a fine hairline divider and total count '05' below. Communicates curated sequence within the wedding dance roster.",
+        traits: ["Fraction Index (01 / 05)", "Hairline Divider", "Fine Art Folio", "Sits Flush Left"],
+        overlap: "None (Beside Card)",
+        fontRN: "Bodoni Moda + Space Mono",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="slash-box">
+              <div class="slash-top">${String(idx + 1).padStart(2, '0')}</div>
+              <div class="slash-line"></div>
+              <div class="slash-bottom">05</div>
+            </div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      14: {
+        category: "incard",
+        name: "Cinematography Slate Readout",
+        subtitle: "Panavision / Arri monitor timecode",
+        description: "An ultra-minimalist horizontal readout: '● SEQ 01' with a tiny circular white indicator and 9px monospaced typography. Exactly like high-end director viewfinder metadata.",
+        traits: ["Director Viewfinder Slate", "Micro 9px Typography", "Top-Left Placement", "Arri / Panavision Style"],
+        overlap: "None (Top-Left Micro Slate)",
+        fontRN: "Space Mono / Courier",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="poster-card">
+              <div class="slate-tag"><span class="slate-text">SEQ 0${idx + 1}</span></div>
+              <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+              <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+            </div>
+            <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+          </div>
+        `
+      },
+      15: {
+        category: "overlapping",
+        name: "Asymmetric High Watermark",
+        subtitle: "MOMA gallery ghost numeral",
+        description: "The number sits behind the card at the upper quadrant in an ultra-subtle 14% opacity white watermark. Very faint, highly artistic, avoiding any heavy outlines.",
+        traits: ["14% Faint Ghost Watermark", "Top-Left Offset", "Playfair Classic Serif", "Modernist Gallery Feel"],
+        overlap: "20px negative margin",
+        fontRN: "Playfair Display / Bodoni",
+        renderItem: (film, idx) => `
+          <div class="film-item">
+            <div class="watermark-box"><span class="num-15">${idx + 1}</span></div>
+            <div>
+              <div class="poster-card">
+                <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+              </div>
+              <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+            </div>
+          </div>
+        `
+      },
+      16: {
+        category: "architectural",
+        name: "Choreography Rhythm Index",
+        subtitle: "Tempo beat tally indicator",
+        description: "Minimalist sequence number paired with subtle rhythm dots (● ○ ○ ○ ○) indicating performance beat and progression through the sangeet roster.",
+        traits: ["Rhythm Dot Tally", "Beside Card Flush Alignment", "Musical Score Reference", "Inter Ultra-Light"],
+        overlap: "None (Beside Card)",
+        fontRN: "Inter Light",
+        renderItem: (film, idx) => {
+          const dots = Array.from({length: 5}, (_, i) => `<div class="rhythm-dot ${i <= idx ? 'active' : ''}"></div>`).join('');
+          return `
+            <div class="film-item">
+              <div class="rhythm-box">
+                <div class="rhythm-num">${String(idx + 1).padStart(2, '0')}</div>
+                <div class="rhythm-dots">${dots}</div>
+              </div>
+              <div>
+                <div class="poster-card">
+                  <img src="${film.img}" alt="${film.title}"><div class="card-scrim"></div>
+                  <div class="card-footer-info"><div class="card-footer-title">${film.title}</div><div class="card-footer-sub">${film.duration} · SANGEET</div></div>
+                </div>
+                <div class="film-below-meta"><div class="meta-title">${film.title}</div><div class="meta-sub">${film.sub}</div></div>
+              </div>
+            </div>
+          `;
+        }
+      }
+    };
+
+    let currentStyle = 1;
+    let currentFilter = 'all';
+
+    function filterCategory(cat) {
+      currentFilter = cat;
+      document.querySelectorAll('.filter-pill').forEach(btn => {
+        if (btn.getAttribute('onclick').includes(cat)) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+      renderTabs();
+    }
+
+    function renderTabs() {
+      const tabGroup = document.getElementById('tabGroup');
+      let html = '';
+      for (let i = 1; i <= 16; i++) {
+        const c = CONCEPTS[i];
+        if (currentFilter !== 'all' && c.category !== currentFilter) continue;
+        const isActive = i === currentStyle ? 'active' : '';
+        html += `
+          <button class="tab-btn ${isActive}" onclick="selectStyle(${i})">
+            <span class="tab-num">OPTION ${String(i).padStart(2, '0')}</span>
+            <span class="tab-name">${c.name}</span>
+            <span class="tab-sub">${c.subtitle}</span>
+          </button>
+        `;
+      }
+      tabGroup.innerHTML = html;
+    }
+
+    function selectStyle(styleId) {
+      currentStyle = styleId;
+      renderTabs();
+
+      const concept = CONCEPTS[styleId];
+
+      // Update Preview Container Class
+      const previewBox = document.querySelector('.preview-box');
+      previewBox.className = `preview-box style-${styleId}`;
+
+      // Update Title
+      document.getElementById('previewTitle').textContent = `Option ${styleId}: ${concept.name} (${concept.subtitle})`;
+
+      // Render Shelf Items
+      const shelfRow = document.getElementById('shelfRowContainer');
+      shelfRow.innerHTML = DANCE_FILMS.map((film, idx) => concept.renderItem(film, idx)).join('');
+
+      // Update Concept Details
+      renderConceptDetails(styleId);
+    }
+
+    function renderConceptDetails(styleId) {
+      const c = CONCEPTS[styleId];
+      const container = document.getElementById('conceptDetailsContainer');
+      container.innerHTML = `
+        <div class="concept-card">
+          <div class="concept-badge">CONCEPT SPECIFICATION · OPTION ${styleId}</div>
+          <div class="concept-title">${c.name} — ${c.subtitle}</div>
+          <p class="concept-desc">${c.description}</p>
+          <div class="trait-pills">
+            ${c.traits.map(t => `<span class="trait-pill">✓ ${t}</span>`).join('')}
+            <span class="trait-pill">Artwork Overlap: ${c.overlap}</span>
+            <span class="trait-pill">Font Family: ${c.fontRN}</span>
+          </div>
+
+          <div style="margin-top: 16px;">
+            <div style="font-family: 'Space Mono', monospace; font-size: 10.5px; color: var(--text-faint); margin-bottom: 6px;">REACT NATIVE SPECIFICATION:</div>
+            <pre><code>// CinemaLibraryView.tsx implementation for Option ${styleId}:
+const styles = StyleSheet.create({
+  rankNumberContainer: {
+    height: POSTER_CARD_HEIGHT,
+    justifyContent: '${c.category === 'overlapping' ? 'flex-end' : 'center'}',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  rankNumberText: {
+    fontFamily: '${c.fontRN.split(' / ')[0]}',
+    fontSize: ${c.category === 'overlapping' ? (styleId === 4 ? 96 : styleId === 2 ? 110 : 124) : 24},
+    color: '#000000',
+    // Clean 1px solid hairline outline, zero glow
+  },
+  rankedCardOverlap: {
+    marginLeft: ${styleId === 1 ? -22 : styleId === 2 ? -24 : styleId === 4 ? -18 : styleId === 9 ? -20 : 0},
+  },
+});</code></pre>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderComparisonGrid() {
+      const grid = document.getElementById('comparisonGrid');
+      let html = '';
+      for (let i = 1; i <= 16; i++) {
+        const c = CONCEPTS[i];
+        let previewVisual = '';
+
+        if (i === 1) {
+          previewVisual = `<span style="font-family: 'Bodoni Moda', serif; font-size: 64px; font-style: italic; color: #000; -webkit-text-stroke: 1.2px #FFFFFF;">1</span>`;
+        } else if (i === 2) {
+          previewVisual = `<span style="font-family: 'Inter', sans-serif; font-size: 56px; font-weight: 300; color: #000; -webkit-text-stroke: 1px #F0F0F2; letter-spacing: -3px;">01</span>`;
+        } else if (i === 3) {
+          previewVisual = `<span style="font-family: 'Bodoni Moda', serif; font-size: 68px; font-weight: 700; color: #20222C;">1</span>`;
+        } else if (i === 4) {
+          previewVisual = `<span style="font-family: 'Cinzel', serif; font-size: 52px; font-weight: 400; color: #000; -webkit-text-stroke: 1px #E8E2D5;">I</span>`;
+        } else if (i === 5) {
+          previewVisual = `<span style="font-family: 'Space Mono', monospace; font-size: 10px; padding: 3px 8px; border: 1px solid rgba(255,255,255,0.2); background: #121319; color: #FFF; letter-spacing: 2px;">01 · ACT</span>`;
+        } else if (i === 6) {
+          previewVisual = `<div style="font-family: 'Space Mono', monospace; font-size: 11px; color: #FFF; display: flex; align-items: center; gap: 6px;">01 <span style="width: 24px; height: 1px; background: rgba(255,255,255,0.3);"></span> ACT 1</div>`;
+        } else if (i === 7) {
+          previewVisual = `<div style="height: 80px; width: 18px; background: #16171E; border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center;"><span style="transform: rotate(-90deg); font-family: 'Space Mono', monospace; font-size: 7.5px; letter-spacing: 2px; color: #FFF;">01 // STAGE</span></div>`;
+        } else if (i === 8) {
+          previewVisual = `<div style="font-family: 'Cormorant Garamond', serif; font-size: 26px; font-weight: 600; color: #E8E8EC;"><span style="font-weight: 200; font-family: sans-serif; color: #666;">[</span> 01 <span style="font-weight: 200; font-family: sans-serif; color: #666;">]</span></div>`;
+        } else if (i === 9) {
+          previewVisual = `<div style="position: relative; font-family: 'Playfair Display', serif; font-size: 60px; font-weight: 600; color: #000; -webkit-text-stroke: 1.8px #FFF;">1<span style="position: absolute; inset: 0; color: #000; -webkit-text-stroke: 0.8px #0B0C10;">1</span></div>`;
+        } else if (i === 10) {
+          previewVisual = `<span style="font-family: 'Inter', sans-serif; font-size: 56px; font-weight: 200; color: rgba(255,255,255,0.45); text-decoration: underline dotted 1px rgba(255,255,255,0.5);">01</span>`;
+        } else if (i === 11) {
+          previewVisual = `<div style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.4); display: flex; align-items: center; justify-content: center; font-family: 'Bodoni Moda', serif; font-style: italic; font-size: 14px; color: #FFF;">1</div>`;
+        } else if (i === 12) {
+          previewVisual = `<div style="background: #FFF; color: #000; font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 2px;">01</div>`;
+        } else if (i === 13) {
+          previewVisual = `<div style="display: flex; flex-direction: column; align-items: center; font-family: 'Bodoni Moda', serif; font-size: 20px; color: #FFF;">01<span style="width: 18px; height: 1px; background: rgba(255,255,255,0.3); margin: 2px 0;"></span><span style="font-family: monospace; font-size: 9px; color: #888;">05</span></div>`;
+        } else if (i === 14) {
+          previewVisual = `<div style="display: flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid rgba(255,255,255,0.15); background: #000; font-family: monospace; font-size: 9px; color: #FFF;"><span style="width: 3px; height: 3px; background: #FFF; border-radius: 50%;"></span>SEQ 01</div>`;
+        } else if (i === 15) {
+          previewVisual = `<span style="font-family: 'Playfair Display', serif; font-size: 60px; font-weight: 400; color: rgba(255,255,255,0.15);">1</span>`;
+        } else if (i === 16) {
+          previewVisual = `<div style="display: flex; flex-direction: column; align-items: center; gap: 4px;"><span style="font-family: 'Inter', sans-serif; font-size: 18px; color: #FFF;">01</span><div style="display: flex; gap: 2px;"><span style="width: 3px; height: 3px; background: #FFF; border-radius: 50%;"></span><span style="width: 3px; height: 3px; background: #444; border-radius: 50%;"></span><span style="width: 3px; height: 3px; background: #444; border-radius: 50%;"></span></div></div>`;
+        }
+
+        html += `
+          <div class="comp-cell" onclick="selectStyle(${i})">
+            <div class="comp-num-preview">
+              ${previewVisual}
+            </div>
+            <div class="comp-title">${c.name}</div>
+            <div class="comp-sub">${c.subtitle}</div>
+          </div>
+        `;
+      }
+      grid.innerHTML = html;
+    }
+
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', () => {
+      renderTabs();
+      selectStyle(1);
+      renderComparisonGrid();
+    });
+  </script>
+</body>
+</html>

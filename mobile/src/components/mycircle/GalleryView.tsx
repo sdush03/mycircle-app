@@ -1751,7 +1751,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const handleToggleLike = async (item: any) => {
     if (!item || !eventSlug) return;
     const photoId = item.id;
-    const currentlyLiked = !!item.isLiked;
+
+    // Read the FRESH liked state from current allPhotos/photos state to avoid
+    // stale closures from lightbox or grid passing an outdated snapshot.
+    const freshItem = allPhotos.find((p) => p.id === photoId) || photos.find((p) => p.id === photoId) || item;
+    const currentlyLiked = !!freshItem.isLiked;
     const nextLiked = !currentlyLiked;
 
     try {
@@ -1762,32 +1766,38 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     } catch {}
 
-    // Optimistically update allPhotos, photos, and tabCache state in GalleryView
-    setAllPhotos((prev) =>
-      prev.map((p) => (p.id === photoId ? { ...p, isLiked: nextLiked } : p))
-    );
-    setPhotos((prev) =>
-      prev.map((p) => (p.id === photoId ? { ...p, isLiked: nextLiked } : p))
-    );
-    setTabCache((prev) => {
-      const updatedCache: typeof prev = {};
-      for (const key of Object.keys(prev)) {
-        updatedCache[key] = prev[key].map((p) =>
-          p.id === photoId ? { ...p, isLiked: nextLiked } : p
-        );
-      }
-      // Update 'MY FAVOURITES' tab list specifically
-      const currentFavs = updatedCache['MY FAVOURITES'] || [];
-      if (nextLiked) {
-        if (!currentFavs.some((p) => p.id === photoId)) {
-          const newItem = { ...item, isLiked: true };
-          updatedCache['MY FAVOURITES'] = [newItem, ...currentFavs];
+    // Helper: update isLiked (and optionally likeCount) for photoId across ALL state arrays consistently
+    const applyLikeState = (liked: boolean, newLikeCount?: number) => {
+      const mapper = (p: any) => {
+        if (p.id !== photoId) return p;
+        const updated: any = { ...p, isLiked: liked };
+        if (typeof newLikeCount === 'number') updated.likeCount = newLikeCount;
+        return updated;
+      };
+      setAllPhotos((prev) => prev.map(mapper));
+      setPhotos((prev) => prev.map(mapper));
+      setTabCache((prev) => {
+        const updatedCache: typeof prev = {};
+        for (const key of Object.keys(prev)) {
+          updatedCache[key] = prev[key].map(mapper);
         }
-      } else {
-        updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => p.id !== photoId);
-      }
-      return updatedCache;
-    });
+        // Update 'MY FAVOURITES' tab list specifically
+        const currentFavs = updatedCache['MY FAVOURITES'] || [];
+        if (liked) {
+          if (!currentFavs.some((p) => p.id === photoId)) {
+            const newItem = { ...freshItem, isLiked: true };
+            if (typeof newLikeCount === 'number') (newItem as any).likeCount = newLikeCount;
+            updatedCache['MY FAVOURITES'] = [newItem, ...currentFavs];
+          }
+        } else {
+          updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => p.id !== photoId);
+        }
+        return updatedCache;
+      });
+    };
+
+    // Optimistic update
+    applyLikeState(nextLiked);
 
     try {
       const headers = eventHeadersRef.current;
@@ -1797,23 +1807,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         { headers }
       );
       if (res.data && typeof res.data.liked === 'boolean') {
-        const serverLiked = res.data.liked;
-        setAllPhotos((prev) =>
-          prev.map((p) => (p.id === photoId ? { ...p, isLiked: serverLiked } : p))
-        );
-        setPhotos((prev) =>
-          prev.map((p) => (p.id === photoId ? { ...p, isLiked: serverLiked } : p))
-        );
+        // Reconcile with server truth (updates all 3 state arrays including likeCount)
+        applyLikeState(res.data.liked, typeof res.data.likeCount === 'number' ? res.data.likeCount : undefined);
         tabEvents.emit(EVENT_SAVES_UPDATED);
       }
     } catch (err) {
       console.warn('Failed to toggle photo like:', err);
-      setAllPhotos((prev) =>
-        prev.map((p) => (p.id === photoId ? { ...p, isLiked: currentlyLiked } : p))
-      );
-      setPhotos((prev) =>
-        prev.map((p) => (p.id === photoId ? { ...p, isLiked: currentlyLiked } : p))
-      );
+      // Revert to original state on failure (updates all 3 state arrays)
+      applyLikeState(currentlyLiked);
     }
   };
 
