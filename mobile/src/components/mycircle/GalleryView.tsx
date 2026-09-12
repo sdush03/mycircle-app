@@ -60,7 +60,7 @@ import { MasonryCard } from '../home/lightbox/components/MasonryCard';
 import { EditorialLightbox, LightboxBounds } from '../home/lightbox/EditorialLightbox';
 import { CinemaVideoModal } from '../common/CinemaVideoModal';
 import { CinemaLibraryView } from '../cinema/CinemaLibraryView';
-import { hasActualVideoFile, isVideoComingSoon } from '../cinema/CinemaVideoCard';
+import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsEligibleCinemaVideo } from '../cinema/CinemaVideoCard';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import {
@@ -642,7 +642,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             console.warn('[MYCIRCLE DEBUG ⚠️] Favorites fetch error:', e?.response?.status);
             return { data: [], status: e?.response?.status };
           }),
-          guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=20&offset=0`, { headers: eventHeaders }).catch((e) => {
+          guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=60&offset=0`, { headers: eventHeaders }).catch((e) => {
             console.warn('[MYCIRCLE DEBUG ⚠️] Cinema photos fetch error:', e?.response?.status);
             return { data: [], status: e?.response?.status };
           }),
@@ -1056,7 +1056,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [eventSlug, tabCache]);
 
   useEffect(() => {
-    if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES' && activeTab.trim().toUpperCase() !== 'CINEMA') {
+    if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES') {
       fetchTabPhotos(activeTab);
     }
   }, [activeTab, fetchTabPhotos]);
@@ -1179,9 +1179,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     // 3. Switch tab
     setActiveTab(newTab);
-    if (newNorm !== 'CINEMA') {
-      fetchTabPhotos(newTab);
-    }
+    fetchTabPhotos(newTab);
 
     // 4. Shared index update
     const newIdx = availableTabs.findIndex((t) => t.toUpperCase() === newNorm);
@@ -1422,8 +1420,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const activeCinemaVideos = useMemo(() => {
     const cached = tabCache['CINEMA'];
-    if (cached && cached.length > 0) return cached;
-    return allPhotos.filter((p: any) => isVideoMedia(p));
+    const list = (cached && cached.length > 0)
+      ? cached
+      : allPhotos.filter((p: any) => isCinemaVideoItem(p) || isVideoMedia(p));
+    return list.filter((p: any) => isCinemaVideoItem(p) || hasActualVideoFile(p) || isVideoMedia(p));
   }, [tabCache, allPhotos]);
 
   const activeList = React.useMemo(() => {
@@ -1469,7 +1469,68 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         sourceList = combined;
       }
     } else if (currentUpper === 'ALL') {
-      sourceList = allPhotos.filter((p: any) => !isVideoComingSoon(p));
+      // In ALL (Full Access only):
+      // 1. All photos + published videos
+      // 2. Any published cinema videos from activeCinemaVideos
+      // 3. ZERO coming soon video posters anywhere outside of Cinema!
+      // 4. Strict deduplication by ID so nothing is ever shown double
+      const combined: Photo[] = [];
+      const seenIds = new Set<number | string>();
+
+      allPhotos.forEach((p: any) => {
+        if (isVideoComingSoon(p)) return;
+        const idKey = p.id ?? p.r2Url;
+        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
+          seenIds.add(idKey);
+          combined.push(p);
+        }
+      });
+
+      (activeCinemaVideos || []).forEach((v: any) => {
+        if (isVideoComingSoon(v) || !hasActualVideoFile(v)) return;
+        const idKey = v.id ?? v.r2Url;
+        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
+          seenIds.add(idKey);
+          combined.push(v);
+        }
+      });
+
+      sourceList = combined;
+    } else if (currentUpper === 'HIGHLIGHTS') {
+      // In HIGHLIGHTS:
+      // 1. Base highlight photos
+      // 2. Published videos of Director's Cut, Reels, and Performances (not Full Film)
+      // 3. ZERO coming soon video posters outside of Cinema!
+      // 4. Strict deduplication by ID
+      const baseHighlights = (tabCache['HIGHLIGHTS'] && tabCache['HIGHLIGHTS'].length > 0)
+        ? tabCache['HIGHLIGHTS']
+        : allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS');
+
+      const eligiblePublishedVideos = (activeCinemaVideos || []).filter(isHighlightsEligibleCinemaVideo);
+
+      const combined: Photo[] = [];
+      const seenIds = new Set<number | string>();
+
+      // Feature eligible published cinema videos (Director's Cut, Reels, Performances)
+      eligiblePublishedVideos.forEach((v: any) => {
+        const idKey = v.id ?? v.r2Url;
+        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
+          seenIds.add(idKey);
+          combined.push(v);
+        }
+      });
+
+      // Add highlight photos (strictly excluding coming soon posters or videos)
+      baseHighlights.forEach((p: any) => {
+        if (isVideoComingSoon(p)) return;
+        const idKey = p.id ?? p.r2Url;
+        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
+          seenIds.add(idKey);
+          combined.push(p);
+        }
+      });
+
+      sourceList = combined;
     } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
       sourceList = tabCache[currentUpper].filter((p: any) => !isVideoComingSoon(p));
     } else {
@@ -1479,8 +1540,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       });
     }
 
-    return sourceList.filter((p) => !isPhotoLocked(p));
-  }, [currentPhotoTab, photos, allPhotos, tabCache, lockedPhotoIds]);
+    return sourceList.filter((p) => !isPhotoLocked(p) && !isVideoComingSoon(p));
+  }, [currentPhotoTab, photos, allPhotos, tabCache, lockedPhotoIds, activeCinemaVideos]);
 
   activeListRef.current = activeList;
 

@@ -265,6 +265,29 @@ export function isVideoComingSoon(video?: any): boolean {
   return !hasActualVideoFile(video);
 }
 
+export function isFullFilmCategory(video?: any): boolean {
+  if (!video) return false;
+  const explicit = (video.cinemaCategory || video.exif?.cinemaCategory || video.category || video.meta?.category || '').trim().toUpperCase().replace(/['']/g, '’');
+  if (explicit.includes('EXTENDED') || explicit.includes('CUTS') || explicit.includes('CHAPTER') || explicit.includes('CEREMONY') || explicit.includes('FULL FILM')) {
+    return true;
+  }
+  const clean = ((video.title || video.name || video.filename || '') + ' ' + (video.caption || '')).toLowerCase();
+  if (clean.includes('full film') || clean.includes('extended cut') || clean.includes('full video')) {
+    return true;
+  }
+  return false;
+}
+
+export function isHighlightsEligibleCinemaVideo(video?: any): boolean {
+  if (!video) return false;
+  // Rule: Any kind of posters of coming soon videos should not be seen outside of Cinema
+  if (isVideoComingSoon(video)) return false;
+  if (!hasActualVideoFile(video)) return false;
+  // Full film is not in Highlights
+  if (isFullFilmCategory(video)) return false;
+  return true;
+}
+
 export function getVideoDaysSinceReplacement(video?: any): number | null {
   if (!video) return null;
   const raw = video.raw || {};
