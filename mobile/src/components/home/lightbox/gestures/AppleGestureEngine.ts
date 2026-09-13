@@ -265,10 +265,12 @@ export function useApplePhotosGesture({
         return;
       }
 
-      const isDownwardDrag = e.translationY > 110 && e.translationY > Math.abs(e.translationX) * 1.5;
-      const isDownwardFlick = e.translationY > 40 && e.velocityY > 800 && e.velocityY > Math.abs(e.velocityX) * 1.5;
+      // Strictly require continuous downward motion — if user stops and removes finger (low velocity), it snaps back!
+      const hasContinuousDownwardMotion = e.velocityY > 250 && e.velocityY > Math.abs(e.velocityX) * 1.2;
+      const isContinuousDownwardFlick = e.translationY > 50 && e.velocityY > 650 && e.velocityY > Math.abs(e.velocityX) * 1.3;
+      const isContinuousDownwardDrag = e.translationY > 160 && hasContinuousDownwardMotion;
 
-      if (isDownwardDrag || isDownwardFlick) {
+      if (isContinuousDownwardFlick || isContinuousDownwardDrag) {
         const closingDuration = 360;
         translateX.value = withTiming(0, { duration: closingDuration, easing: Easing.bezier(0.25, 1, 0.5, 1) });
         translateY.value = withTiming(0, { duration: closingDuration, easing: Easing.bezier(0.25, 1, 0.5, 1) });

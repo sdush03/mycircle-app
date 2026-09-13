@@ -35,6 +35,7 @@ import {
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
 import { CinemaScrubber } from './CinemaScrubber';
+import { ScreenCastButton } from './ScreenCastButton';
 
 interface HorizontalCinemaPlayerProps {
   player: VideoPlayer;
@@ -359,18 +360,26 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
                 ) : null}
               </View>
 
-              <TouchableOpacity
-                style={styles.fsMinimizeButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  setIsFullscreen(false);
-                  resetControlsTimer();
-                }}
-                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                activeOpacity={0.7}
-              >
-                <Feather name="minimize" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
+              <View style={styles.fsRightButtonsRow}>
+                <ScreenCastButton
+                  size={20}
+                  color="#FFFFFF"
+                  activeColor="#E5C483"
+                  videoTitle={title}
+                />
+                <TouchableOpacity
+                  style={styles.fsMinimizeButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    setIsFullscreen(false);
+                    resetControlsTimer();
+                  }}
+                  hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                  activeOpacity={0.7}
+                >
+                  <Feather name="minimize" size={18} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
             </LinearGradient>
 
             {/* Fullscreen Bottom Scrubber & Controls */}
@@ -503,19 +512,28 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
                 <Text style={styles.backButtonText}>CINEMA</Text>
               </TouchableOpacity>
 
-              {/* Resumed Pill Toast */}
-              {resumedToastSec !== null ? (
-                <View style={styles.resumedToast}>
-                  <Text style={styles.resumedToastText}>
-                    Resumed from {Math.floor(resumedToastSec / 60)}:
-                    {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
-                    {Math.floor(resumedToastSec % 60)}
-                  </Text>
-                  <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                    <Text style={styles.restartLink}>Restart</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
+              <View style={styles.portraitTopRightRow}>
+                {/* Resumed Pill Toast */}
+                {resumedToastSec !== null ? (
+                  <View style={styles.resumedToast}>
+                    <Text style={styles.resumedToastText}>
+                      Resumed from {Math.floor(resumedToastSec / 60)}:
+                      {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
+                      {Math.floor(resumedToastSec % 60)}
+                    </Text>
+                    <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                      <Text style={styles.restartLink}>Restart</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                <ScreenCastButton
+                  size={20}
+                  color="#FFFFFF"
+                  activeColor="#E5C483"
+                  videoTitle={title}
+                />
+              </View>
             </Animated.View>
 
             {/* ── 2. 16:9 Video Canvas ── */}
@@ -710,6 +728,11 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     color: '#FFFFFF',
   },
+  portraitTopRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   resumedToast: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -748,7 +771,6 @@ const styles = StyleSheet.create({
   videoPressable: {
     width: '100%',
     height: '100%',
-    position: 'relative',
   },
 
   // ─── Fullscreen Rotated HUD Overlay ──────────────────────────────────────
@@ -762,18 +784,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingTop: 16,
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
   fsBackButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(25, 25, 28, 0.75)',
-    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   fsBackButtonText: {
     fontFamily: FONT_JOST_MEDIUM,
@@ -800,6 +817,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginTop: 2,
     textAlign: 'center',
+  },
+  fsRightButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   fsMinimizeButton: {
     width: 38,

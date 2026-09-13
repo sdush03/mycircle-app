@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -32,11 +32,14 @@ import {
   isVideoComingSoon,
   isVideoNewVersion,
   hasActualVideoFile,
+  LightboxBounds,
 } from './CinemaVideoCard';
 import {
   videoWatchProgressManager,
   WatchProgress,
 } from '../../services/videoWatchProgressManager';
+import { CinemaVideoDetailModal } from './CinemaVideoDetailModal';
+import { ScreenCastButton } from './ScreenCastButton';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -342,14 +345,9 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [progressTick, setProgressTick] = useState(0);
-  const [infoModalVisible, setInfoModalVisible] = useState<boolean>(false);
-  const [comingSoonModalVideo, setComingSoonModalVideo] = useState<CinemaVideoItem | null>(null);
-
-  const activeTeaser = useMemo(() => {
-    if (!comingSoonModalVideo) return COMING_SOON_TEASERS[0];
-    const randomIndex = Math.floor(Math.random() * COMING_SOON_TEASERS.length);
-    return COMING_SOON_TEASERS[randomIndex];
-  }, [comingSoonModalVideo]);
+  const [detailModalVideo, setDetailModalVideo] = useState<CinemaVideoItem | null>(null);
+  const [detailBounds, setDetailBounds] = useState<LightboxBounds | null>(null);
+  const heroCoverRef = useRef<View>(null);
 
   useEffect(() => {
     const unsubscribe = videoWatchProgressManager.subscribe(() => {
@@ -484,14 +482,11 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     return undefined;
   }, []);
 
-  const handleCardPress = useCallback((film: CinemaVideoItem, resumeTime?: number) => {
-    if (isVideoComingSoon(film)) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      setComingSoonModalVideo(film);
-      return;
-    }
-    onSelectVideo(film, resumeTime);
-  }, [onSelectVideo]);
+  const handleCardPress = useCallback((film: CinemaVideoItem, resumeTime?: number, bounds?: LightboxBounds | null) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setDetailBounds(bounds || null);
+    setDetailModalVideo(film);
+  }, []);
 
   const isPrimaryComingSoon = isVideoComingSoon(primaryVideo);
   const isPrimaryNewVersion = isVideoNewVersion(primaryVideo);
@@ -500,7 +495,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     if (!primaryVideo) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (isVideoComingSoon(primaryVideo)) {
-      setComingSoonModalVideo(primaryVideo);
+      setDetailModalVideo(primaryVideo);
       return;
     }
     const progress = getProgress(primaryVideo);
@@ -562,6 +557,16 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         >
           <Text style={styles.editorialBackText}>← PHOTOS</Text>
         </Pressable>
+
+        {/* Right: Screen Cast Button (Netflix / Prime Video Style) */}
+        <View style={[styles.headerCastButtonContainer, { top: Math.max(insets.top + 4, 36) }]}>
+          <ScreenCastButton
+            size={22}
+            color="#FFFFFF"
+            activeColor="#E5C483"
+            videoTitle={primaryVideo?.title || eventTitle}
+          />
+        </View>
       </View>
 
       <Animated.ScrollView
@@ -574,7 +579,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         refreshControl={refreshControl}
       >
         {/* 2. Option B: Full-Bleed 70vh Circle Gallery Cover with Wedflix Red Theme */}
-        <View style={[styles.heroCoverContainer, { height: heroCoverHeight }]}>
+        <View ref={heroCoverRef} collapsable={false} style={[styles.heroCoverContainer, { height: heroCoverHeight }]}>
           {heroImageUri ? (
             <Image
               source={{ uri: heroImageUri }}
@@ -668,10 +673,16 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                 ]}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  if (isPrimaryComingSoon) {
-                    setComingSoonModalVideo(primaryVideo);
-                  } else {
-                    setInfoModalVisible(true);
+                  if (primaryVideo) {
+                    if (heroCoverRef.current) {
+                      heroCoverRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
+                        setDetailBounds({ x, y, width, height });
+                        setDetailModalVideo(primaryVideo);
+                      });
+                    } else {
+                      setDetailBounds(null);
+                      setDetailModalVideo(primaryVideo);
+                    }
                   }
                 }}
               >
@@ -812,148 +823,24 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         </View>
       </Animated.ScrollView>
 
-      {/* 5. Netflix-Style "More Info" Bottom Sheet Modal */}
-      <Modal
-        visible={infoModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setInfoModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={styles.modalDismissArea}
-            onPress={() => setInfoModalVisible(false)}
-          />
-          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom + 16, 28) }]}>
-            {/* Top Drag Handle */}
-            <View style={styles.modalDragHandle} />
-
-            {/* Close Button Top Right */}
-            <Pressable
-              onPress={() => setInfoModalVisible(false)}
-              hitSlop={16}
-              style={styles.modalCloseBtn}
-            >
-              <Text style={styles.modalCloseText}>✕</Text>
-            </Pressable>
-
-            {/* Franchise Brand: On top in champagne gold */}
-            <Text style={styles.modalOriginalPrefixText}>A MISTY VISUALS FILM</Text>
-
-            {/* Couple Subtitle & Main Title */}
-            <Text style={styles.modalCoupleSubtitle}>{coupleSubtitle}</Text>
-            <Text style={styles.modalFilmTitle}>{heroFilmTitle}</Text>
-
-            {/* Duration */}
-            {primaryDuration ? (
-              <View style={styles.modalMetaRow}>
-                <Text style={styles.modalDurationText}>{primaryDuration}</Text>
-              </View>
-            ) : null}
-
-            {/* Synopsis */}
-            <Text style={styles.modalSynopsis}>
-              {heroSynopsis}
-            </Text>
-
-            {/* Big Play / Resume Button */}
-            <Pressable
-              style={({ pressed }) => [
-                styles.modalPlayBtn,
-                pressed && styles.btnPressed,
-              ]}
-              onPress={() => {
-                setInfoModalVisible(false);
-                handleWatchPrimary();
-              }}
-            >
-              <Text style={styles.modalPlayBtnText}>
-                {primaryProgress && primaryProgress.currentTime > 0 ? '▶  Resume Film' : '▶  Play Feature Film'}
-              </Text>
-            </Pressable>
-
-            {/* Studio Credits */}
-            <View style={styles.modalCreditsBlock}>
-              <Text style={styles.modalCreditLabel}>
-                Production: <Text style={styles.modalCreditVal}>Misty Visuals Cinema</Text>
-              </Text>
-              <Text style={styles.modalCreditLabel}>
-                Format: <Text style={styles.modalCreditVal}>4K Cinema Master • Color Graded</Text>
-              </Text>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 6. Coming Soon Premiere Teaser Modal */}
-      <Modal
-        visible={Boolean(comingSoonModalVideo)}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setComingSoonModalVideo(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={styles.modalDismissArea}
-            onPress={() => setComingSoonModalVideo(null)}
-          />
-          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom + 16, 28) }]}>
-            {/* Top Drag Handle */}
-            <View style={styles.modalDragHandle} />
-
-            {/* Close Button Top Right */}
-            <Pressable
-              onPress={() => setComingSoonModalVideo(null)}
-              hitSlop={16}
-              style={styles.modalCloseBtn}
-            >
-              <Text style={styles.modalCloseText}>✕</Text>
-            </Pressable>
-
-            {/* Champagne Gold Coming Soon Badge */}
-            <View style={styles.comingSoonHeaderBadge}>
-              <Text style={styles.comingSoonHeaderBadgeText}>✨ PREMIERE COMING SOON</Text>
-            </View>
-
-            {/* Subtitle & Title */}
-            <Text style={styles.modalCoupleSubtitle}>
-              {comingSoonModalVideo?.subtitle || coupleSubtitle || 'CHAPTER I'}
-            </Text>
-            <Text style={styles.modalFilmTitle}>
-              {formatDisplayTitle(comingSoonModalVideo)}
-            </Text>
-
-            {/* In-Production Teaser Banner Card */}
-            <View style={styles.comingSoonNoticeCard}>
-              <View style={styles.comingSoonNoticeHeader}>
-                <Text style={styles.comingSoonNoticeIcon}>{activeTeaser.icon}</Text>
-                <Text style={styles.comingSoonNoticeTitle}>{activeTeaser.title}</Text>
-              </View>
-              <Text style={styles.comingSoonNoticeBody}>
-                {activeTeaser.body}
-              </Text>
-            </View>
-
-            {/* Story Synopsis */}
-            <Text style={styles.modalSynopsis}>
-              {comingSoonModalVideo?.description ||
-                comingSoonModalVideo?.exif?.description ||
-                'From the quiet morning butterflies to the golden glow of their first steps as husband and wife, every second tells a story of genuine love.'}
-            </Text>
-
-            {/* Dismiss Button */}
-            <Pressable
-              style={({ pressed }) => [
-                styles.modalDismissBtn,
-                pressed && styles.btnPressed,
-              ]}
-              onPress={() => setComingSoonModalVideo(null)}
-            >
-              <Text style={styles.modalDismissBtnText}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      {/* 5. Netflix & Prime-Style Video Detail & Preview Modal */}
+      <CinemaVideoDetailModal
+        visible={Boolean(detailModalVideo)}
+        video={detailModalVideo}
+        initialBounds={detailBounds}
+        coverUrl={coverUrl}
+        allVideos={videos}
+        eventTitle={eventTitle}
+        onClose={() => {
+          setDetailModalVideo(null);
+          setDetailBounds(null);
+        }}
+        onPlayVideo={(video, resumeTimeSec) => {
+          setDetailModalVideo(null);
+          setDetailBounds(null);
+          onSelectVideo(video, resumeTimeSec);
+        }}
+      />
     </View>
   );
 };
@@ -999,6 +886,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 4,
+  },
+  headerCastButtonContainer: {
+    position: 'absolute',
+    right: 20,
+    zIndex: 100,
   },
   editorialBackText: {
     fontFamily: FONT_JOST_REGULAR,
@@ -1324,125 +1216,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 3,
     color: '#444444',
-  },
-
-  // ─── More Info Bottom Sheet Modal ─────────────────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'flex-end',
-  },
-  modalDismissArea: {
-    flex: 1,
-  },
-  modalSheet: {
-    backgroundColor: '#161618',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  modalDragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalCloseBtn: {
-    position: 'absolute',
-    top: 14,
-    right: 18,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  modalCloseText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: 'bold',
-  },
-  modalOriginalPrefixText: {
-    fontFamily: FONT_FUTURA,
-    fontSize: 10,
-    letterSpacing: 2.5,
-    color: '#E5C483',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  modalCoupleSubtitle: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 17,
-    lineHeight: 22,
-    letterSpacing: 1.2,
-    color: 'rgba(255, 255, 255, 0.92)',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  modalFilmTitle: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 22,
-    lineHeight: 26,
-    letterSpacing: 0.5,
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    marginBottom: 10,
-  },
-  modalMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14,
-  },
-  modalDurationText: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 11,
-    color: '#E5C483',
-    marginLeft: 2,
-  },
-  modalSynopsis: {
-    fontFamily: FONT_MONTSERRAT_REGULAR,
-    fontSize: 13,
-    lineHeight: 18,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 20,
-  },
-  modalPlayBtn: {
-    backgroundColor: '#FFFFFF',
-    height: 44,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  modalPlayBtnText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 15,
-    color: '#000000',
-    letterSpacing: 0.3,
-  },
-  modalCreditsBlock: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
-    paddingTop: 12,
-    gap: 4,
-  },
-  modalCreditLabel: {
-    fontFamily: FONT_MONTSERRAT_REGULAR,
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.45)',
-  },
-  modalCreditVal: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    color: 'rgba(255, 255, 255, 0.85)',
   },
   netflixComingSoonBtn: {
     flex: 1,

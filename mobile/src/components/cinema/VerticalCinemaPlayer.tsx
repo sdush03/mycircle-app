@@ -31,6 +31,7 @@ import {
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
 import { CinemaScrubber } from './CinemaScrubber';
+import { ScreenCastButton } from './ScreenCastButton';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -269,19 +270,28 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
             <Text style={styles.backButtonText}>CINEMA</Text>
           </TouchableOpacity>
 
-          {/* Resumed Toast */}
-          {resumedToastSec !== null ? (
-            <View style={styles.resumedToast}>
-              <Text style={styles.resumedToastText}>
-                Resumed from {Math.floor(resumedToastSec / 60)}:
-                {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
-                {Math.floor(resumedToastSec % 60)}
-              </Text>
-              <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                <Text style={styles.restartLink}>Restart</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
+          <View style={styles.topRightRow}>
+            {/* Resumed Toast */}
+            {resumedToastSec !== null ? (
+              <View style={styles.resumedToast}>
+                <Text style={styles.resumedToastText}>
+                  Resumed from {Math.floor(resumedToastSec / 60)}:
+                  {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
+                  {Math.floor(resumedToastSec % 60)}
+                </Text>
+                <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                  <Text style={styles.restartLink}>Restart</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <ScreenCastButton
+              size={20}
+              color="#FFFFFF"
+              activeColor="#E5C483"
+              videoTitle={title}
+            />
+          </View>
         </Animated.View>
 
         {/* ── Center Play / Pause / Replay Glyph ── */}
@@ -383,6 +393,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
+  },
+  topRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   backButton: {
     flexDirection: 'row',

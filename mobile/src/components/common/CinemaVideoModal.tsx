@@ -473,6 +473,7 @@ function VideoPlayerContentWithNewPlayer(props: CommonPlayerProps) {
   const player = useVideoPlayer(effectiveUrl, (p) => {
     p.loop = false;
     p.audioMixingMode = 'doNotMix';
+    p.allowsExternalPlayback = true;
     p.bufferOptions = {
       waitsToMinimizeStalling: true,
       preferredForwardBufferDuration: 15,
@@ -488,6 +489,7 @@ function VideoPlayerContentWithPreloaded(props: CommonPlayerProps & { player: Vi
   useEffect(() => {
     props.player.loop = false;
     props.player.audioMixingMode = 'doNotMix';
+    props.player.allowsExternalPlayback = true;
     props.player.bufferOptions = {
       waitsToMinimizeStalling: true,
       preferredForwardBufferDuration: 15,

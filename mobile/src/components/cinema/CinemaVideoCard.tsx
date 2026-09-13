@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Dimensions, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -155,13 +155,20 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
   return null;
 }
 
+export interface LightboxBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface CinemaVideoCardProps {
   video: CinemaVideoItem;
   variant?: 'poster' | 'shelf-film' | 'shelf-reel' | 'primary' | 'horizontal' | 'vertical';
   isFeatured?: boolean;
   badge?: string;
   watchProgress?: WatchProgress | null;
-  onPress: (video: CinemaVideoItem, resumeTimeSec?: number) => void;
+  onPress: (video: CinemaVideoItem, resumeTimeSec?: number, bounds?: LightboxBounds | null) => void;
   isContinueWatching?: boolean;
   showPlayButton?: boolean;
   showProgressBar?: boolean;
@@ -194,10 +201,16 @@ export function getValidImageThumbnail(video: CinemaVideoItem): string | undefin
     video.raw?.file_url,
   ];
   for (const c of candidates) {
-    if (typeof c === 'string' && c.startsWith('http')) {
-      const clean = c.split('?')[0].toLowerCase();
-      if (!clean.endsWith('.mp4') && !clean.endsWith('.mov') && !clean.endsWith('.m4v') && !clean.endsWith('.webm')) {
-        return c;
+    if (typeof c === 'string' && c.trim()) {
+      let resolved = c.trim();
+      if (resolved.startsWith('/')) {
+        resolved = `https://mycircle.mistyvisuals.com${resolved}`;
+      }
+      if (resolved.startsWith('http')) {
+        const clean = resolved.split('?')[0].toLowerCase();
+        if (!clean.endsWith('.mp4') && !clean.endsWith('.mov') && !clean.endsWith('.m4v') && !clean.endsWith('.webm')) {
+          return resolved;
+        }
       }
     }
   }
@@ -390,13 +403,21 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   const shouldShowPlayButton = isComingSoon ? false : (showPlayButton ?? isContinueWatching);
   const shouldShowProgressBar = isComingSoon ? false : (showProgressBar ?? isContinueWatching);
 
+  const cardRef = useRef<View>(null);
+
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const resumeTime =
       progress && !progress.isCompleted && progress.currentTime > 0
         ? progress.currentTime
         : undefined;
-    onPress(video, resumeTime);
+    if (cardRef.current) {
+      cardRef.current.measureInWindow((x, y, width, height) => {
+        onPress(video, resumeTime, { x, y, width, height });
+      });
+    } else {
+      onPress(video, resumeTime, null);
+    }
   };
 
   const displayBadge = (badge && badge.toUpperCase() !== 'FEATURE' && badge.toUpperCase() !== 'FEATURED') ? badge : undefined;
@@ -452,7 +473,7 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
         pressed && styles.cardPressed,
       ]}
     >
-      <View style={styles.mediaFrame}>
+      <View ref={cardRef} collapsable={false} style={styles.mediaFrame}>
         {thumbUri ? (
           <Image
             source={{ uri: thumbUri }}
