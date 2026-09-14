@@ -1,12 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+/**
+ * VerticalCinemaPlayer — Netflix-style full-screen portrait reel player
+ *
+ * Fixes applied vs. previous version:
+ *  #2  — Backdrop fades as user drags; dismiss animates translateY + opacity
+ *  #3  — Controls auto-hide suppressed while scrubbing or buffering/error
+ *  #7  — Vertical scrubber now has a thumb dot (handled in CinemaScrubber)
+ *  #8  — Time bubble no longer clipped (CinemaScrubber renders it outside container)
+ *  #9  — RNGH Gesture.Tap replaces manual setTimeout double-tap (no dead zone)
+ *  #11 — Resume toast uses formatTime() — single clean string
+ */
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Pressable,
-  Dimensions,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { VideoView, VideoPlayer } from 'expo-video';
@@ -24,6 +34,7 @@ import Animated, {
   withTiming,
   withSpring,
   runOnJS,
+  Easing,
 } from 'react-native-reanimated';
 import {
   FONT_JOST_REGULAR,
@@ -35,6 +46,15 @@ import { ScreenCastButton } from './ScreenCastButton';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatTime(sec: number): string {
+  if (isNaN(sec) || sec < 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 interface VerticalCinemaPlayerProps {
   player: VideoPlayer;
   videoViewRef: React.RefObject<any>;
@@ -61,6 +81,9 @@ interface VerticalCinemaPlayerProps {
   onRestartFromBeginning: () => void;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Main Component
+// ═════════════════════════════════════════════════════════════════════════════
 export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
   player,
   videoViewRef,
@@ -87,26 +110,29 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
   onRestartFromBeginning,
 }) => {
   const insets = useSafeAreaInsets();
-  const [areControlsVisible, setAreControlsVisible] = useState<boolean>(true);
+  const [areControlsVisible, setAreControlsVisible] = useState(true);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrubbing = useRef(false);
 
-  // HUD opacity and interactive swipe-to-dismiss
+  // ── Reanimated shared values ───────────────────────────────────────────────
   const controlsOpacity = useSharedValue(1);
   const dismissTranslateY = useSharedValue(0);
+  const backdropOpacity = useSharedValue(1);
 
-  // 2.5s Auto-hide timer
+  // ── Controls auto-hide ─────────────────────────────────────────────────────
   const resetControlsTimer = useCallback(() => {
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     controlsOpacity.value = withTiming(1, { duration: 180 });
     setAreControlsVisible(true);
 
-    if (isPlaying && !isCompleted) {
+    if (isPlaying && !isCompleted && !isBuffering && !isError) {
       controlsTimeoutRef.current = setTimeout(() => {
+        if (isScrubbing.current) return;
         controlsOpacity.value = withTiming(0, { duration: 300 });
         setAreControlsVisible(false);
-      }, 2500);
+      }, 3000);
     }
-  }, [isPlaying, isCompleted, controlsOpacity]);
+  }, [isPlaying, isCompleted, isBuffering, isError, controlsOpacity]);
 
   useEffect(() => {
     resetControlsTimer();
@@ -114,6 +140,15 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
   }, [resetControlsTimer]);
+
+  // Keep controls visible whenever buffering or error
+  useEffect(() => {
+    if (isBuffering || isError) {
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      controlsOpacity.value = withTiming(1, { duration: 180 });
+      setAreControlsVisible(true);
+    }
+  }, [isBuffering, isError, controlsOpacity]);
 
   const toggleControls = useCallback(() => {
     if (areControlsVisible) {
@@ -125,257 +160,303 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     }
   }, [areControlsVisible, resetControlsTimer, controlsOpacity]);
 
-  // Tap & Double-Tap discrimination
-  const lastTapRef = useRef<number>(0);
-  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Scrubber callbacks ─────────────────────────────────────────────────────
+  const handleScrubStart = useCallback(() => {
+    isScrubbing.current = true;
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsOpacity.value = withTiming(1, { duration: 180 });
+    setAreControlsVisible(true);
+    onSeekStart();
+  }, [onSeekStart, controlsOpacity]);
 
-  const handleVideoTouch = (e: any) => {
-    const now = Date.now();
-    const x = e.nativeEvent.locationX;
-    const isLeftHalf = x < SCREEN_WIDTH / 2;
-
-    if (now - lastTapRef.current < 300) {
-      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      onDoubleTapSeek(isLeftHalf ? 'back' : 'forward');
-      resetControlsTimer();
-      lastTapRef.current = 0;
-    } else {
-      lastTapRef.current = now;
-      singleTapTimerRef.current = setTimeout(() => {
-        toggleControls();
-      }, 300);
+  const handleScrubEnd = useCallback(() => {
+    isScrubbing.current = false;
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (isPlaying && !isCompleted && !isBuffering && !isError) {
+      controlsTimeoutRef.current = setTimeout(() => {
+        controlsOpacity.value = withTiming(0, { duration: 300 });
+        setAreControlsVisible(false);
+      }, 1500);
     }
-  };
+  }, [isPlaying, isCompleted, isBuffering, isError, controlsOpacity]);
 
-  // Interactive Swipe-down-to-dismiss
+  // ── Swipe-to-dismiss gesture ───────────────────────────────────────────────
+  const dismissGestureRef = useRef<any>(null);
   const panGesture = Gesture.Pan()
+    .withRef(dismissGestureRef)
+    .activeOffsetY([8, Infinity])
+    .failOffsetY([-8, Infinity])
     .onUpdate((e) => {
       'worklet';
       if (e.translationY > 0) {
         dismissTranslateY.value = e.translationY;
+        const progress = Math.min(1, Math.max(0, (e.translationY - 20) / 200));
+        backdropOpacity.value = 1 - progress * 0.65;
       }
     })
     .onEnd((e) => {
       'worklet';
-      if (e.translationY > 120 || e.velocityY > 600) {
-        dismissTranslateY.value = withTiming(SCREEN_HEIGHT, { duration: 220 }, (fin) => {
-          if (fin) runOnJS(onClose)();
-        });
+      if (e.translationY > 100 || e.velocityY > 500) {
+        backdropOpacity.value = withTiming(0, { duration: 270 });
+        dismissTranslateY.value = withTiming(
+          SCREEN_HEIGHT,
+          { duration: 310, easing: Easing.bezier(0.25, 1, 0.5, 1) },
+          (fin) => {
+            if (fin) runOnJS(onClose)();
+          },
+        );
       } else {
-        dismissTranslateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+        dismissTranslateY.value = withSpring(0, { damping: 20, stiffness: 220 });
+        backdropOpacity.value = withTiming(1, { duration: 200 });
       }
     });
 
+  // ── RNGH Tap gestures ─────────────────────────────────────────────────────
+  const handleSingleTap = useCallback(() => {
+    toggleControls();
+  }, [toggleControls]);
+
+  const handleDoubleTap = useCallback(
+    (x: number) => {
+      const isLeft = x < SCREEN_WIDTH / 2;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      onDoubleTapSeek(isLeft ? 'back' : 'forward');
+      resetControlsTimer();
+    },
+    [onDoubleTapSeek, resetControlsTimer],
+  );
+
+  const tapGestures = useMemo(() => {
+    const doubleTap = Gesture.Tap()
+      .numberOfTaps(2)
+      .maxDuration(300)
+      .onEnd((e) => {
+        'worklet';
+        runOnJS(handleDoubleTap)(e.x);
+      });
+
+    const singleTap = Gesture.Tap()
+      .numberOfTaps(1)
+      .requireExternalGestureToFail(doubleTap)
+      .onEnd(() => {
+        'worklet';
+        runOnJS(handleSingleTap)();
+      });
+
+    return Gesture.Exclusive(doubleTap, singleTap);
+  }, [handleDoubleTap, handleSingleTap]);
+
+  // ── Animated styles ────────────────────────────────────────────────────────
   const animatedContainerStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: dismissTranslateY.value }],
+  }));
+
+  const animatedBackdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
   }));
 
   const animatedHudStyle = useAnimatedStyle(() => ({
     opacity: controlsOpacity.value,
   }));
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[styles.root, animatedContainerStyle]}>
-        {/* Full-Height 9:16 Video Touch Area */}
-        <Pressable onPress={handleVideoTouch} style={StyleSheet.absoluteFillObject}>
-          {/* Background Poster (0ms on Frame 1) */}
-          {cleanThumbnailUrl ? (
-            <ExpoImage
-              source={{ uri: cleanThumbnailUrl }}
-              style={StyleSheet.absoluteFillObject}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              priority="high"
-            />
-          ) : null}
+    <Animated.View style={[styles.backdrop, animatedBackdropStyle]}>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[styles.root, animatedContainerStyle]}>
 
-          {/* Native VideoView Edge-to-Edge */}
-          <VideoView
-            ref={videoViewRef}
-            player={player}
-            style={StyleSheet.absoluteFillObject}
-            contentFit="cover"
-            nativeControls={false}
-            fullscreenOptions={{ enable: false }}
-            showsTimecodes={false}
-          />
-
-          {/* ±10s Double Tap Ripple Feedback */}
-          {seekRipple ? (
-            <View
-              style={[
-                styles.seekRippleContainer,
-                seekRipple.direction === 'back' ? styles.seekRippleLeft : styles.seekRippleRight,
-              ]}
-              pointerEvents="none"
-            >
-              <View style={styles.seekRippleBubble}>
-                <Ionicons
-                  name={seekRipple.direction === 'back' ? 'play-back' : 'play-forward'}
-                  size={20}
-                  color="#FFFFFF"
+          {/* ── Full-height video touch area ── */}
+          <GestureDetector gesture={tapGestures}>
+            <View style={StyleSheet.absoluteFillObject}>
+              {/* Background poster */}
+              {cleanThumbnailUrl ? (
+                <ExpoImage
+                  source={{ uri: cleanThumbnailUrl }}
+                  style={StyleSheet.absoluteFillObject}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  priority="high"
                 />
-                <Text style={styles.seekRippleText}>
-                  {seekRipple.direction === 'back' ? '-10s' : '+10s'}
-                </Text>
-              </View>
+              ) : null}
+
+              {/* Native VideoView */}
+              <VideoView
+                ref={videoViewRef}
+                player={player}
+                style={StyleSheet.absoluteFillObject}
+                contentFit="cover"
+                nativeControls={false}
+                fullscreenOptions={{ enable: false }}
+                showsTimecodes={false}
+              />
+
+              {/* Seek zone flash indicators */}
+              {seekRipple ? (
+                <View
+                  style={[
+                    styles.seekZoneFlash,
+                    seekRipple.direction === 'back' ? styles.seekZoneLeft : styles.seekZoneRight,
+                  ]}
+                  pointerEvents="none"
+                >
+                  <View style={styles.seekZoneBubble}>
+                    <Ionicons
+                      name={seekRipple.direction === 'back' ? 'play-back' : 'play-forward'}
+                      size={22}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.seekZoneText}>
+                      {seekRipple.direction === 'back' ? '−10s' : '+10s'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Buffering */}
+              {isBuffering && !isCompleted ? (
+                <View style={styles.bufferingOverlay} pointerEvents="none">
+                  <ActivityIndicator size="large" color="#E5C483" />
+                </View>
+              ) : null}
+
+              {/* Error */}
+              {isError ? (
+                <View style={styles.errorOverlay}>
+                  <Ionicons name="alert-circle-outline" size={36} color="#E5C483" />
+                  <Text style={styles.errorTitle}>Stream Interrupted</Text>
+                  <Text style={styles.errorSubtitle}>
+                    {errorMessage || 'Please check your connection.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={() => { try { player.play(); } catch {} }}
+                  >
+                    <Text style={styles.retryButtonText}>RETRY</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
             </View>
-          ) : null}
+          </GestureDetector>
 
-          {/* Buffering Indicator */}
-          {isBuffering && !isCompleted ? (
-            <View style={styles.bufferingOverlay} pointerEvents="none">
-              <View style={styles.bufferingPill}>
-                <ActivityIndicator size="small" color="#E5C483" />
-                <Text style={styles.bufferingText}>Buffering reel...</Text>
-              </View>
-            </View>
-          ) : null}
-
-          {/* Network Error Overlay */}
-          {isError ? (
-            <View style={styles.errorOverlay}>
-              <Ionicons name="alert-circle-outline" size={32} color="#E5C483" />
-              <Text style={styles.errorTitle}>Stream Interrupted</Text>
-              <Text style={styles.errorSubtitle}>{errorMessage || 'Please check your connection.'}</Text>
-              <TouchableOpacity
-                style={styles.retryButton}
-                onPress={() => {
-                  try { player.play(); } catch {}
-                }}
-              >
-                <Text style={styles.retryButtonText}>RETRY</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </Pressable>
-
-        {/* ── Top Bar ── */}
-        <Animated.View
-          style={[styles.topBar, { paddingTop: Math.max(insets.top + 6, 36) }, animatedHudStyle]}
-          pointerEvents={areControlsVisible ? 'auto' : 'none'}
-        >
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              onClose();
-            }}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
-            <Text style={styles.backButtonText}>CINEMA</Text>
-          </TouchableOpacity>
-
-          <View style={styles.topRightRow}>
-            {/* Resumed Toast */}
-            {resumedToastSec !== null ? (
-              <View style={styles.resumedToast}>
-                <Text style={styles.resumedToastText}>
-                  Resumed from {Math.floor(resumedToastSec / 60)}:
-                  {Math.floor(resumedToastSec % 60) < 10 ? '0' : ''}
-                  {Math.floor(resumedToastSec % 60)}
-                </Text>
-                <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                  <Text style={styles.restartLink}>Restart</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-
-            <ScreenCastButton
-              size={20}
-              color="#FFFFFF"
-              activeColor="#E5C483"
-              videoTitle={title}
-            />
-          </View>
-        </Animated.View>
-
-        {/* ── Center Play / Pause / Replay Glyph ── */}
-        <Animated.View
-          style={[styles.centerControlsOverlay, animatedHudStyle]}
-          pointerEvents={areControlsVisible ? 'auto' : 'none'}
-        >
-          <TouchableOpacity
-            style={styles.centerPlayButton}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              resetControlsTimer();
-              if (isCompleted) {
-                onReplay();
-              } else {
-                onPlayPauseToggle();
-              }
-            }}
-            hitSlop={20}
-            activeOpacity={0.8}
-          >
-            {isCompleted ? (
-              <Ionicons name="reload" size={26} color="#E5C483" />
-            ) : isPlaying ? (
-              <Ionicons name="pause" size={26} color="#FFFFFF" />
-            ) : (
-              <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* ── Bottom Section: Quiet Title & Flush Progress Bar ── */}
-        <View style={styles.bottomContainer} pointerEvents="box-none">
-          {/* Subtle gradient to protect title text */}
-          <LinearGradient
-            colors={['transparent', 'rgba(11,11,12,0.6)', 'rgba(11,11,12,0.95)']}
-            locations={[0, 0.5, 1]}
-            style={styles.bottomGradient}
-            pointerEvents="none"
-          />
-
+          {/* ── Top Bar ── */}
           <Animated.View
-            style={[styles.bottomInfoRow, { paddingBottom: Math.max(insets.bottom + 12, 24) }, animatedHudStyle]}
+            style={[
+              styles.topBar,
+              { paddingTop: Math.max(insets.top + 6, 36) },
+              animatedHudStyle,
+            ]}
             pointerEvents={areControlsVisible ? 'auto' : 'none'}
           >
-            <View style={styles.titleWrapper}>
-              <Text style={styles.reelTitleText} numberOfLines={1}>
-                {title}
-              </Text>
-              {subtitle ? (
-                <Text style={styles.reelSubtitleText} numberOfLines={1}>
-                  {subtitle}
-                </Text>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                onClose();
+              }}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-down" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <View style={styles.topRightRow}>
+              {resumedToastSec !== null ? (
+                <View style={styles.resumedToast}>
+                  <Text style={styles.resumedToastText}>
+                    Resumed from {formatTime(resumedToastSec)}
+                  </Text>
+                  <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                    <Text style={styles.restartLink}>Restart</Text>
+                  </TouchableOpacity>
+                </View>
               ) : null}
+              <ScreenCastButton
+                size={20}
+                color="#FFFFFF"
+                activeColor="#E5C483"
+                videoTitle={title}
+              />
             </View>
           </Animated.View>
 
-          {/* Flush 2px Scrubber along the very bottom */}
-          <CinemaScrubber
-            currentTimeSec={currentTimeSec}
-            durationSec={durationSec}
-            bufferedSec={bufferedSec}
-            onSeekStart={() => {
-              resetControlsTimer();
-              onSeekStart();
-            }}
-            onSeek={(t) => {
-              resetControlsTimer();
-              onSeek(t);
-            }}
-            onSeekEnd={(t) => {
-              resetControlsTimer();
-              onSeekEnd(t);
-            }}
-            isControlsVisible={areControlsVisible}
-            variant="vertical"
-          />
-        </View>
-      </Animated.View>
-    </GestureDetector>
+          {/* ── Center Play / Pause / Replay ── */}
+          <Animated.View
+            style={[styles.centerControlsOverlay, animatedHudStyle]}
+            pointerEvents={areControlsVisible ? 'auto' : 'none'}
+          >
+            <TouchableOpacity
+              style={styles.centerPlayButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                resetControlsTimer();
+                if (isCompleted) onReplay(); else onPlayPauseToggle();
+              }}
+              hitSlop={20}
+              activeOpacity={0.85}
+            >
+              {isCompleted ? (
+                <Ionicons name="reload" size={28} color="#E5C483" />
+              ) : isPlaying ? (
+                <Ionicons name="pause" size={28} color="#FFFFFF" />
+              ) : (
+                <Ionicons name="play" size={28} color="#FFFFFF" style={{ marginLeft: 3 }} />
+              )}
+            </TouchableOpacity>
+          </Animated.View>
+
+          {/* ── Bottom Section: title + scrubber ── */}
+          <View style={styles.bottomContainer} pointerEvents="box-none">
+            <LinearGradient
+              colors={['transparent', 'rgba(11,11,12,0.65)', 'rgba(11,11,12,0.96)']}
+              locations={[0, 0.4, 1]}
+              style={StyleSheet.absoluteFillObject}
+              pointerEvents="none"
+            />
+
+            <Animated.View
+              style={[
+                styles.bottomInfoRow,
+                { paddingBottom: Math.max(insets.bottom + 8, 16) },
+                animatedHudStyle,
+              ]}
+              pointerEvents={areControlsVisible ? 'auto' : 'none'}
+            >
+              <View style={styles.titleWrapper}>
+                <Text style={styles.reelTitleText} numberOfLines={1}>{title}</Text>
+                {subtitle ? (
+                  <Text style={styles.reelSubtitleText} numberOfLines={1}>{subtitle}</Text>
+                ) : null}
+              </View>
+            </Animated.View>
+
+            {/* Flush scrubber at the very bottom — thumb + time bubble now visible */}
+            <CinemaScrubber
+              currentTimeSec={currentTimeSec}
+              durationSec={durationSec}
+              bufferedSec={bufferedSec}
+              onSeekStart={handleScrubStart}
+              onSeek={onSeek}
+              onSeekEnd={(t) => { onSeekEnd(t); handleScrubEnd(); }}
+              onScrubStart={handleScrubStart}
+              onScrubEnd={handleScrubEnd}
+              isControlsVisible={areControlsVisible}
+              variant="vertical"
+              dismissGestureRef={dismissGestureRef}
+            />
+          </View>
+
+        </Animated.View>
+      </GestureDetector>
+    </Animated.View>
   );
 };
 
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
   root: {
     flex: 1,
     backgroundColor: '#0B0B0C',
@@ -393,6 +474,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
+    paddingBottom: 16,
   },
   topRightRow: {
     flexDirection: 'row',
@@ -405,27 +487,21 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 8,
   },
-  backButtonText: {
-    fontFamily: FONT_JOST_MEDIUM,
-    fontSize: 12,
-    letterSpacing: 2,
-    color: '#FFFFFF',
-  },
   resumedToast: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(25, 25, 28, 0.85)',
+    backgroundColor: 'rgba(25,25,28,0.88)',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   resumedToastText: {
     fontFamily: FONT_JOST_REGULAR,
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: 'rgba(255,255,255,0.85)',
   },
   restartLink: {
     fontFamily: FONT_JOST_SEMIBOLD,
@@ -434,7 +510,7 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 
-  // ─── Center Controls Overlay ──────────────────────────────────────────────
+  // ─── Center Controls ──────────────────────────────────────────────────────
   centerControlsOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -442,12 +518,12 @@ const styles = StyleSheet.create({
     zIndex: 40,
   },
   centerPlayButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(25, 25, 28, 0.85)',
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: 'rgba(20,20,24,0.88)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -459,9 +535,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 45,
-  },
-  bottomGradient: {
-    ...StyleSheet.absoluteFillObject,
+    // Taller than needed so time bubble from scrubber can float upward
+    paddingTop: 80,
+    overflow: 'visible',
   },
   bottomInfoRow: {
     paddingHorizontal: 20,
@@ -479,68 +555,52 @@ const styles = StyleSheet.create({
     fontFamily: FONT_JOST_REGULAR,
     fontSize: 12,
     color: '#C5A880',
-    marginTop: 2,
+    marginTop: 3,
     letterSpacing: 0.3,
   },
 
-  // ─── Double Tap Ripple ────────────────────────────────────────────────────
-  seekRippleContainer: {
+  // ─── Seek Zone Flash ──────────────────────────────────────────────────────
+  seekZoneFlash: {
     position: 'absolute',
     top: 0,
     bottom: 0,
     width: '40%',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 35,
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  seekRippleLeft: {
+  seekZoneLeft: {
     left: 0,
   },
-  seekRippleRight: {
+  seekZoneRight: {
     right: 0,
   },
-  seekRippleBubble: {
-    backgroundColor: 'rgba(11, 11, 12, 0.75)',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  seekZoneBubble: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
-  seekRippleText: {
-    fontFamily: FONT_JOST_MEDIUM,
-    fontSize: 12,
+  seekZoneText: {
+    fontFamily: FONT_JOST_SEMIBOLD,
+    fontSize: 13,
     color: '#FFFFFF',
   },
 
-  // ─── Buffering & Error States ─────────────────────────────────────────────
+  // ─── Buffering / Error ────────────────────────────────────────────────────
   bufferingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    backgroundColor: 'rgba(0,0,0,0.28)',
     zIndex: 30,
-  },
-  bufferingPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(11, 11, 12, 0.85)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  bufferingText: {
-    fontFamily: FONT_JOST_REGULAR,
-    fontSize: 12,
-    color: '#E5C483',
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11, 11, 12, 0.92)',
+    backgroundColor: 'rgba(11,11,12,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
@@ -550,21 +610,21 @@ const styles = StyleSheet.create({
     fontFamily: FONT_JOST_SEMIBOLD,
     fontSize: 15,
     color: '#FFFFFF',
-    marginTop: 10,
-    marginBottom: 4,
+    marginTop: 12,
+    marginBottom: 6,
   },
   errorSubtitle: {
     fontFamily: FONT_JOST_REGULAR,
     fontSize: 12,
-    color: '#8E8E93',
+    color: 'rgba(255,255,255,0.6)',
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
   },
   retryButton: {
     backgroundColor: '#E5C483',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderRadius: 8,
   },
   retryButtonText: {
     fontFamily: FONT_JOST_SEMIBOLD,

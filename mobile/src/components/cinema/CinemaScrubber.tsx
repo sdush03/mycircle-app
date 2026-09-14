@@ -1,13 +1,29 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+/**
+ * CinemaScrubber — RNGH-based scrubber (portrait & vertical variants)
+ *
+ * Fixes:
+ *  #1  — Uses RNGH Gesture.Pan instead of PanResponder, participates in the
+ *         same gesture tree as the parent swipe-to-dismiss. Pass dismissGestureRef
+ *         so RNGH can arbitrate: horizontal-first motion → scrubber wins,
+ *         vertical-first motion → dismiss wins.
+ *  #6  — Uses gesture.x (relative to the GestureDetector view) instead of
+ *         nativeEvent.locationX which is inaccurate on Android during move.
+ *  #7  — Vertical scrubber now has a visible thumb dot that grows on drag.
+ *  #8  — Vertical time bubble renders above the component, not inside a
+ *         clipped container.
+ */
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  PanResponder,
-  GestureResponderEvent,
-  PanResponderGestureState,
   LayoutChangeEvent,
 } from 'react-native';
+import {
+  Gesture,
+  GestureDetector,
+} from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { FONT_JOST_MEDIUM } from '../../constants/fonts';
 
 interface CinemaScrubberProps {
@@ -17,8 +33,19 @@ interface CinemaScrubberProps {
   onSeekStart?: () => void;
   onSeek: (targetTimeSec: number) => void;
   onSeekEnd: (targetTimeSec: number) => void;
+  /** Called when drag starts — parent suppresses HUD auto-hide */
+  onScrubStart?: () => void;
+  /** Called when drag ends — parent restarts HUD auto-hide */
+  onScrubEnd?: () => void;
   isControlsVisible: boolean;
   variant?: 'horizontal' | 'vertical';
+  /**
+   * Ref to the parent swipe-to-dismiss gesture. Passed to
+   * simultaneousWithExternalGesture() so the two gestures can be active
+   * concurrently — RNGH will hand off based on direction heuristics set
+   * on each gesture (activeOffsetX / activeOffsetY).
+   */
+  dismissGestureRef?: React.RefObject<any>;
 }
 
 function formatTime(sec: number): string {
@@ -35,14 +62,17 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
   onSeekStart,
   onSeek,
   onSeekEnd,
+  onScrubStart,
+  onScrubEnd,
   isControlsVisible,
   variant = 'horizontal',
+  dismissGestureRef,
 }) => {
   const [trackWidth, setTrackWidth] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragTimeSec, setDragTimeSec] = useState<number>(0);
 
-  const isDraggingRef = useRef<boolean>(false);
+  // Mutable refs safe to read from worklet via runOnJS callbacks
   const trackWidthRef = useRef<number>(0);
   const durationRef = useRef<number>(durationSec);
   durationRef.current = durationSec;
@@ -53,139 +83,196 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
     trackWidthRef.current = w;
   };
 
-  const getTimeFromX = useCallback((pageX: number, locationX: number): number => {
-    const w = trackWidthRef.current;
-    const dur = durationRef.current;
-    if (w <= 0 || dur <= 0) return 0;
-    const clampedX = Math.max(0, Math.min(w, locationX));
-    return (clampedX / w) * dur;
-  }, []);
+  // JS-thread callbacks — called via runOnJS from the worklet
+  const jsOnBegin = useCallback(
+    (localX: number) => {
+      const w = trackWidthRef.current;
+      const dur = durationRef.current;
+      const t = w > 0 && dur > 0 ? (Math.max(0, Math.min(w, localX)) / w) * dur : 0;
+      setIsDragging(true);
+      setDragTimeSec(t);
+      onSeekStart?.();
+      onScrubStart?.();
+      onSeek(t);
+    },
+    [onSeekStart, onScrubStart, onSeek],
+  );
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt: GestureResponderEvent) => {
-        isDraggingRef.current = true;
-        setIsDragging(true);
-        onSeekStart?.();
-        const t = getTimeFromX(evt.nativeEvent.pageX, evt.nativeEvent.locationX);
-        setDragTimeSec(t);
-        onSeek(t);
-      },
-      onPanResponderMove: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
-        if (!isDraggingRef.current) return;
-        const w = trackWidthRef.current;
-        const dur = durationRef.current;
-        if (w <= 0 || dur <= 0) return;
-        const currentPos = evt.nativeEvent.locationX;
-        const clampedX = Math.max(0, Math.min(w, currentPos));
-        const t = (clampedX / w) * dur;
-        setDragTimeSec(t);
-        onSeek(t);
-      },
-      onPanResponderRelease: (evt: GestureResponderEvent) => {
-        isDraggingRef.current = false;
-        setIsDragging(false);
-        const t = getTimeFromX(evt.nativeEvent.pageX, evt.nativeEvent.locationX);
-        onSeekEnd(t);
-      },
-      onPanResponderTerminate: () => {
-        isDraggingRef.current = false;
-        setIsDragging(false);
-      },
-    })
-  ).current;
+  const jsOnMove = useCallback(
+    (localX: number) => {
+      const w = trackWidthRef.current;
+      const dur = durationRef.current;
+      if (w <= 0 || dur <= 0) return;
+      const t = (Math.max(0, Math.min(w, localX)) / w) * dur;
+      setDragTimeSec(t);
+      onSeek(t);
+    },
+    [onSeek],
+  );
+
+  const jsOnEnd = useCallback(
+    (localX: number) => {
+      const w = trackWidthRef.current;
+      const dur = durationRef.current;
+      const t = w > 0 && dur > 0 ? (Math.max(0, Math.min(w, localX)) / w) * dur : 0;
+      setIsDragging(false);
+      onSeekEnd(t);
+      onScrubEnd?.();
+    },
+    [onSeekEnd, onScrubEnd],
+  );
+
+  const jsOnFinalize = useCallback(() => {
+    setIsDragging(false);
+    onScrubEnd?.();
+  }, [onScrubEnd]);
+
+  // ── Build RNGH Pan gesture ─────────────────────────────────────────────────
+  // NOTE: gesture is rebuilt each render so closures always capture fresh callbacks.
+  // This is intentional and harmless — RNGH handles it fine.
+  const buildGesture = () => {
+    let g = Gesture.Pan()
+      // Activate immediately on any horizontal movement; vertical-first motion
+      // is deferred to the parent dismiss gesture.
+      .activeOffsetX([-4, 4])
+      .onBegin((e) => {
+        'worklet';
+        runOnJS(jsOnBegin)(e.x);
+      })
+      .onUpdate((e) => {
+        'worklet';
+        runOnJS(jsOnMove)(e.x);
+      })
+      .onEnd((e) => {
+        'worklet';
+        runOnJS(jsOnEnd)(e.x);
+      })
+      .onFinalize(() => {
+        'worklet';
+        runOnJS(jsOnFinalize)();
+      });
+
+    if (dismissGestureRef) {
+      // Allow both to be active simultaneously — direction heuristics on each
+      // gesture determine which one actually wins the touch.
+      g = (g as any).simultaneousWithExternalGesture(dismissGestureRef) as typeof g;
+    }
+
+    return g;
+  };
+
+  const scrubGesture = buildGesture();
 
   const displayTime = isDragging ? dragTimeSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTime / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // VERTICAL REEL SCRUBBER: Ultra-thin 2px line at the very bottom
-  // ───────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // VERTICAL REEL SCRUBBER
+  // ─────────────────────────────────────────────────────────────────────────
   if (variant === 'vertical') {
+    const thumbLeft = trackWidth > 0
+      ? Math.max(0, Math.min(trackWidth - (isDragging ? 14 : 8), progressRatio * trackWidth - (isDragging ? 7 : 4)))
+      : 0;
+
     return (
-      <View
-        style={styles.verticalScrubberRoot}
-        onLayout={handleLayout}
-        {...panResponder.panHandlers}
-      >
-        <View style={styles.verticalTrackBackground}>
-          {/* Buffer Track */}
-          <View style={[styles.verticalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
-          {/* Played Progress Track */}
-          <View style={[styles.verticalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
-        </View>
-
-        {/* Time Bubble during dragging */}
-        {isDragging ? (
-          <View
-            style={[
-              styles.timeBubble,
-              { left: Math.max(10, Math.min(trackWidth - 60, progressRatio * trackWidth - 25)) },
-            ]}
-          >
-            <Text style={styles.timeBubbleText}>{formatTime(displayTime)}</Text>
-          </View>
-        ) : null}
-      </View>
-    );
-  }
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // HORIZONTAL CINEMA SCRUBBER: Elegant timeline with timecodes and knob
-  // ───────────────────────────────────────────────────────────────────────────
-  return (
-    <View style={styles.horizontalRoot}>
-      {/* Timecode Left */}
-      <Text style={styles.timecodeText}>{formatTime(displayTime)}</Text>
-
-      {/* Scrubber Touch Area */}
-      <View
-        style={styles.horizontalTouchArea}
-        onLayout={handleLayout}
-        {...panResponder.panHandlers}
-      >
-        <View style={styles.horizontalTrackBackground}>
-          {/* Buffer Track */}
-          <View style={[styles.horizontalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
-          {/* Played Progress Track */}
-          <View style={[styles.horizontalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
-        </View>
-
-        {/* Scrub Handle Dot */}
-        {trackWidth > 0 ? (
-          <View
-            style={[
-              styles.scrubHandle,
-              isDragging && styles.scrubHandleDragging,
-              { left: Math.max(0, Math.min(trackWidth - (isDragging ? 16 : 10), progressRatio * trackWidth - (isDragging ? 8 : 5))) },
-            ]}
-          />
-        ) : null}
-
-        {/* Floating Bubble during drag */}
+      // outer wrapper is overflow:visible so the time bubble can float above
+      // the bottomContainer clip boundary (fixes #8)
+      <View style={styles.verticalOuterWrapper} onLayout={handleLayout}>
+        {/* Time bubble — above the track, outside any clipping parent */}
         {isDragging && trackWidth > 0 ? (
           <View
             style={[
               styles.timeBubble,
-              { left: Math.max(0, Math.min(trackWidth - 50, progressRatio * trackWidth - 25)) },
+              styles.timeBubbleAboveVertical,
+              { left: Math.max(10, Math.min(trackWidth - 60, progressRatio * trackWidth - 25)) },
             ]}
+            pointerEvents="none"
           >
             <Text style={styles.timeBubbleText}>{formatTime(displayTime)}</Text>
           </View>
         ) : null}
-      </View>
 
-      {/* Timecode Right (Total Duration) */}
+        <GestureDetector gesture={scrubGesture}>
+          <View style={styles.verticalScrubberRoot}>
+            <View style={styles.verticalTrackBackground}>
+              <View style={[styles.verticalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
+              <View style={[styles.verticalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
+            </View>
+
+            {/* Thumb dot — discoverable affordance for the scrubber (fixes #7) */}
+            {trackWidth > 0 ? (
+              <View
+                style={[
+                  styles.verticalThumb,
+                  isDragging && styles.verticalThumbDragging,
+                  { left: thumbLeft },
+                ]}
+                pointerEvents="none"
+              />
+            ) : null}
+          </View>
+        </GestureDetector>
+      </View>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // HORIZONTAL CINEMA SCRUBBER
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <View style={styles.horizontalRoot}>
+      <Text style={styles.timecodeText}>{formatTime(displayTime)}</Text>
+
+      <GestureDetector gesture={scrubGesture}>
+        <View style={styles.horizontalTouchArea} onLayout={handleLayout}>
+          <View style={styles.horizontalTrackBackground}>
+            <View style={[styles.horizontalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
+            <View style={[styles.horizontalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
+          </View>
+
+          {/* Scrub handle dot */}
+          {trackWidth > 0 ? (
+            <View
+              style={[
+                styles.scrubHandle,
+                isDragging && styles.scrubHandleDragging,
+                {
+                  left: Math.max(
+                    0,
+                    Math.min(
+                      trackWidth - (isDragging ? 16 : 10),
+                      progressRatio * trackWidth - (isDragging ? 8 : 5),
+                    ),
+                  ),
+                },
+              ]}
+              pointerEvents="none"
+            />
+          ) : null}
+
+          {/* Floating time bubble during drag */}
+          {isDragging && trackWidth > 0 ? (
+            <View
+              style={[
+                styles.timeBubble,
+                { left: Math.max(0, Math.min(trackWidth - 54, progressRatio * trackWidth - 27)) },
+              ]}
+              pointerEvents="none"
+            >
+              <Text style={styles.timeBubbleText}>{formatTime(displayTime)}</Text>
+            </View>
+          ) : null}
+        </View>
+      </GestureDetector>
+
       <Text style={styles.timecodeText}>{formatTime(durationSec)}</Text>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  // ─── Horizontal Scrubber ──────────────────────────────────────────────────
+  // ─── Horizontal ──────────────────────────────────────────────────────────
   horizontalRoot: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -198,12 +285,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1,
     color: 'rgba(255, 255, 255, 0.85)',
-    minWidth: 38,
+    minWidth: 40,
     textAlign: 'center',
   },
   horizontalTouchArea: {
     flex: 1,
-    height: 36,
+    height: 44,
     justifyContent: 'center',
     position: 'relative',
   },
@@ -226,35 +313,45 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: '#E5C483', // Warm champagne
+    backgroundColor: '#E5C483',
   },
   scrubHandle: {
     position: 'absolute',
-    top: 13,
+    top: 17,
     width: 10,
     height: 10,
     borderRadius: 5,
     backgroundColor: '#E5C483',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.5,
     shadowRadius: 2,
     elevation: 3,
   },
   scrubHandleDragging: {
-    top: 10,
+    top: 14,
     width: 16,
     height: 16,
     borderRadius: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 2,
     borderColor: '#E5C483',
+    shadowOpacity: 0.7,
+    shadowRadius: 4,
+    elevation: 6,
   },
 
-  // ─── Vertical Reel Scrubber ───────────────────────────────────────────────
+  // ─── Vertical ─────────────────────────────────────────────────────────────
+  verticalOuterWrapper: {
+    width: '100%',
+    height: 44,
+    justifyContent: 'flex-end',
+    position: 'relative',
+    overflow: 'visible',
+  },
   verticalScrubberRoot: {
     width: '100%',
-    height: 24,
+    height: 44,
     justifyContent: 'flex-end',
     position: 'relative',
   },
@@ -277,19 +374,49 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: '#E5C483',
   },
+  verticalThumb: {
+    position: 'absolute',
+    bottom: -3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E5C483',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  verticalThumbDragging: {
+    bottom: -6,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E5C483',
+    shadowOpacity: 0.7,
+    shadowRadius: 4,
+    elevation: 6,
+  },
 
-  // ─── Floating Time Bubble ─────────────────────────────────────────────────
+  // ─── Time Bubble ──────────────────────────────────────────────────────────
   timeBubble: {
     position: 'absolute',
-    top: -28,
-    backgroundColor: 'rgba(11, 11, 12, 0.88)',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    top: -30,
+    backgroundColor: 'rgba(11, 11, 12, 0.92)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  timeBubbleAboveVertical: {
+    // Bubble floats above the outer wrapper, which is overflow:visible,
+    // so it escapes the parent bottomContainer clip (fixes #8)
+    top: -38,
   },
   timeBubbleText: {
     fontFamily: FONT_JOST_MEDIUM,
