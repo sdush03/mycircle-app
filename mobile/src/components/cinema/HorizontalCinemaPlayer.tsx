@@ -1,14 +1,10 @@
 /**
- * HorizontalCinemaPlayer — Netflix-style full-screen cinema player
+ * HorizontalCinemaPlayer — Netflix-style landscape-first cinema player
  *
- * Fixes applied vs. previous version:
- *  #2  — Backdrop fades as user drags; dismiss animates translateY + opacity together
- *  #3  — Controls auto-hide is suppressed while scrubbing or buffering/error
- *  #4  — Native fullscreen via RN Modal (presentationStyle="fullScreen") — no CSS rotation
- *  #9  — RNGH Gesture.Tap() replaces manual setTimeout double-tap discrimination
- *  #10 — LinearGradient scrim behind lower controls zone in portrait
- *  #11 — Resume toast uses formatTime() — single consistent string
- *  #12 — Top-right fullscreen button is now ✕ (close modal), not a duplicate minimize
+ * Always opens in fullscreen landscape via RN Modal (presentationStyle="fullScreen").
+ * UI matches Netflix: title top-left, cast+close top-right, large circular seek
+ * buttons + pause in center, thick red-style scrubber at very bottom with time remaining.
+ * No clip / speed / subtitle controls.
  */
 import React, {
   useState,
@@ -16,7 +12,6 @@ import React, {
   useRef,
   useCallback,
   useMemo,
-  createRef,
 } from 'react';
 import {
   View,
@@ -33,7 +28,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { VideoView, VideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
   GestureDetector,
@@ -44,9 +39,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
   runOnJS,
-  Easing,
 } from 'react-native-reanimated';
 import {
   FONT_JOST_REGULAR,
@@ -62,6 +55,12 @@ function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+/** Remaining time = duration − current, shown on the right of the scrubber */
+function formatRemaining(currentSec: number, durationSec: number): string {
+  const remaining = Math.max(0, durationSec - currentSec);
+  return `-${formatTime(remaining)}`;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -89,30 +88,6 @@ interface HorizontalCinemaPlayerProps {
   seekRipple: { direction: 'back' | 'forward'; id: number } | null;
   resumedToastSec: number | null;
   onRestartFromBeginning: () => void;
-}
-
-// ── Ripple flash overlay shown on double-tap seek zones ───────────────────────
-function SeekZoneFlash({ direction }: { direction: 'back' | 'forward' }) {
-  return (
-    <View
-      style={[
-        styles.seekZoneFlash,
-        direction === 'back' ? styles.seekZoneLeft : styles.seekZoneRight,
-      ]}
-      pointerEvents="none"
-    >
-      <View style={styles.seekZoneBubble}>
-        <Ionicons
-          name={direction === 'back' ? 'play-back' : 'play-forward'}
-          size={22}
-          color="#FFFFFF"
-        />
-        <Text style={styles.seekZoneText}>
-          {direction === 'back' ? '−10s' : '+10s'}
-        </Text>
-      </View>
-    </View>
-  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -144,52 +119,37 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   onRestartFromBeginning,
 }) => {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
-  // In portrait mode: narrow side = width, tall side = height
-  const screenWidth = Math.min(windowWidth, windowHeight);
-  const screenHeight = Math.max(windowWidth, windowHeight);
-  const videoHeight = Math.round((screenWidth * 9) / 16);
-
+  // ── State ──────────────────────────────────────────────────────────────────
   const [areControlsVisible, setAreControlsVisible] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Tracks whether the scrubber is actively being dragged — suppress HUD hide
   const isScrubbing = useRef(false);
 
-  // Restore status bar when component unmounts
+  // Restore status bar on unmount
   useEffect(() => {
+    StatusBar.setHidden(true, 'fade');
     return () => {
       StatusBar.setHidden(false, 'fade');
     };
   }, []);
 
-  // Android hardware back: exit fullscreen first
+  // Android hardware back → close
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (isFullscreen) {
-        setIsFullscreen(false);
-        return true;
-      }
-      return false;
+      onClose();
+      return true;
     });
     return () => backHandler.remove();
-  }, [isFullscreen]);
+  }, [onClose]);
 
-  // ── Reanimated shared values ───────────────────────────────────────────────
+  // ── Reanimated ─────────────────────────────────────────────────────────────
   const controlsOpacity = useSharedValue(1);
-  const dismissTranslateY = useSharedValue(0);
-  /** 1 = fully opaque backdrop, 0 = transparent (during & after dismiss) */
-  const backdropOpacity = useSharedValue(1);
+
+  const animatedHudStyle = useAnimatedStyle(() => ({
+    opacity: controlsOpacity.value,
+  }));
 
   // ── Controls auto-hide ─────────────────────────────────────────────────────
-  /**
-   * Start (or restart) the 3s timer that fades out the HUD.
-   * Never starts the timer if:
-   *  - video is paused / completed
-   *  - user is scrubbing
-   *  - player is buffering or in error state
-   */
   const resetControlsTimer = useCallback(() => {
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     controlsOpacity.value = withTiming(1, { duration: 180 });
@@ -197,10 +157,10 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
 
     if (isPlaying && !isCompleted && !isBuffering && !isError) {
       controlsTimeoutRef.current = setTimeout(() => {
-        if (isScrubbing.current) return; // scrub in progress — skip
-        controlsOpacity.value = withTiming(0, { duration: 300 });
+        if (isScrubbing.current) return;
+        controlsOpacity.value = withTiming(0, { duration: 350 });
         setAreControlsVisible(false);
-      }, 3000);
+      }, 3500);
     }
   }, [isPlaying, isCompleted, isBuffering, isError, controlsOpacity]);
 
@@ -211,7 +171,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     };
   }, [resetControlsTimer]);
 
-  // Keep controls visible whenever buffering or error
+  // Keep controls visible when buffering or error
   useEffect(() => {
     if (isBuffering || isError) {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -220,17 +180,21 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     }
   }, [isBuffering, isError, controlsOpacity]);
 
+  const showControls = useCallback(() => {
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
   const toggleControls = useCallback(() => {
     if (areControlsVisible) {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-      controlsOpacity.value = withTiming(0, { duration: 200 });
+      controlsOpacity.value = withTiming(0, { duration: 250 });
       setAreControlsVisible(false);
     } else {
       resetControlsTimer();
     }
   }, [areControlsVisible, resetControlsTimer, controlsOpacity]);
 
-  // ── Scrubber callbacks for HUD suppress ───────────────────────────────────
+  // ── Scrubber suppress callbacks ────────────────────────────────────────────
   const handleScrubStart = useCallback(() => {
     isScrubbing.current = true;
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -241,79 +205,41 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
 
   const handleScrubEnd = useCallback(() => {
     isScrubbing.current = false;
-    // 1.5s grace before auto-hide restarts
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     if (isPlaying && !isCompleted && !isBuffering && !isError) {
       controlsTimeoutRef.current = setTimeout(() => {
-        controlsOpacity.value = withTiming(0, { duration: 300 });
+        controlsOpacity.value = withTiming(0, { duration: 350 });
         setAreControlsVisible(false);
-      }, 1500);
+      }, 2000);
     }
   }, [isPlaying, isCompleted, isBuffering, isError, controlsOpacity]);
 
-  // ── Swipe-to-dismiss gesture (portrait only) ───────────────────────────────
-  const dismissGestureRef = useRef<any>(null);
-  const panGesture = Gesture.Pan()
-    .withRef(dismissGestureRef)
-    .enabled(!isFullscreen)
-    .activeOffsetY([8, Infinity]) // must move meaningfully downward to activate
-    .failOffsetY([-8, Infinity]) // horizontal-first motion fails this gesture (scrubber wins)
-    .onUpdate((e) => {
-      'worklet';
-      if (e.translationY > 0) {
-        dismissTranslateY.value = e.translationY;
-        // Fade backdrop as user drags — start fading after 20px drag
-        const progress = Math.min(1, Math.max(0, (e.translationY - 20) / 180));
-        backdropOpacity.value = 1 - progress * 0.6;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (e.translationY > 100 || e.velocityY > 500) {
-        // Commit dismiss: slide down + full backdrop fade
-        backdropOpacity.value = withTiming(0, { duration: 260 });
-        dismissTranslateY.value = withTiming(
-          screenHeight,
-          { duration: 300, easing: Easing.bezier(0.25, 1, 0.5, 1) },
-          (fin) => {
-            if (fin) runOnJS(onClose)();
-          },
-        );
-      } else {
-        // Spring back
-        dismissTranslateY.value = withSpring(0, { damping: 20, stiffness: 220 });
-        backdropOpacity.value = withTiming(1, { duration: 200 });
-      }
-    });
-
-  // ── RNGH Tap gestures ─────────────────────────────────────────────────────
+  // ── RNGH tap gestures ──────────────────────────────────────────────────────
   const handleSingleTap = useCallback(() => {
     toggleControls();
   }, [toggleControls]);
 
   const handleDoubleTap = useCallback(
-    (x: number, canvasWidth: number) => {
-      const isLeft = x < canvasWidth / 2;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    (x: number, canvasW: number) => {
+      const isLeft = x < canvasW / 2;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       onDoubleTapSeek(isLeft ? 'back' : 'forward');
       resetControlsTimer();
     },
     [onDoubleTapSeek, resetControlsTimer],
   );
 
-  /**
-   * Build tap gestures for the given canvas width.
-   * Double-tap is exclusive over single-tap — RNGH natively handles the
-   * discrimination without any setTimeout dead zone.
-   */
+  // dismissGestureRef is unused in fullscreen but passed to CinemaScrubber for API compat
+  const dismissGestureRef = useRef<any>(null);
+
   const buildTapGestures = useCallback(
-    (canvasWidth: number) => {
+    (canvasW: number) => {
       const doubleTap = Gesture.Tap()
         .numberOfTaps(2)
         .maxDuration(300)
         .onEnd((e) => {
           'worklet';
-          runOnJS(handleDoubleTap)(e.x, canvasWidth);
+          runOnJS(handleDoubleTap)(e.x, canvasW);
         });
 
       const singleTap = Gesture.Tap()
@@ -329,570 +255,410 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     [handleDoubleTap, handleSingleTap],
   );
 
-  const portraitTapGesture = useMemo(
-    () => buildTapGestures(screenWidth),
-    [buildTapGestures, screenWidth],
+  // We render inside a landscape Modal so windowWidth > windowHeight
+  const { width: wW, height: wH } = useWindowDimensions();
+  // In fullscreen landscape Modal, width is the long side
+  const fsW = Math.max(wW, wH);
+  const fsH = Math.min(wW, wH);
+
+  const fsTapGesture = useMemo(
+    () => buildTapGestures(fsW),
+    [buildTapGestures, fsW],
   );
-  const fullscreenTapGesture = useMemo(
-    () => buildTapGestures(screenHeight),
-    [buildTapGestures, screenHeight],
-  );
 
-  // ── Fullscreen ─────────────────────────────────────────────────────────────
-  const handleFullscreenPress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setIsFullscreen(true);
-    resetControlsTimer();
-  };
+  // ── Render fullscreen landscape content ────────────────────────────────────
+  const renderFullscreenContent = () => (
+    <GestureHandlerRootView style={styles.fsRoot}>
+      <StatusBar hidden />
 
-  const handleExitFullscreen = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    setIsFullscreen(false);
-    resetControlsTimer();
-  };
-
-  // Ensure playback continues after fullscreen toggle
-  useEffect(() => {
-    if (isPlaying) {
-      try { player.play(); } catch {}
-    }
-  }, [isFullscreen]);
-
-  // ── Animated styles ────────────────────────────────────────────────────────
-  const animatedContainerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dismissTranslateY.value }],
-  }));
-
-  const animatedBackdropStyle = useAnimatedStyle(() => ({
-    opacity: backdropOpacity.value,
-  }));
-
-  const animatedHudStyle = useAnimatedStyle(() => ({
-    opacity: controlsOpacity.value,
-  }));
-
-  // ── Fullscreen Modal Safe-Area ─────────────────────────────────────────────
-  // In fullscreen Modal, the window rotates so windowWidth > windowHeight.
-  // useWindowDimensions inside a Modal reflects the actual rotated dimensions on iOS.
-  // On Android we do the same since Modal with fullscreen forces landscape.
-  const fsInsets = insets;
-
-  // ── Shared video + HUD sub-render ─────────────────────────────────────────
-  const renderVideoAndHUD = (opts: {
-    isFs: boolean;
-    vidStyle: any;
-    hudTopLeftInset: number;
-    hudTopRightInset: number;
-    hudBottomLeftInset: number;
-    hudBottomRightInset: number;
-  }) => {
-    const {
-      isFs,
-      vidStyle,
-      hudTopLeftInset,
-      hudTopRightInset,
-      hudBottomLeftInset,
-      hudBottomRightInset,
-    } = opts;
-
-    const tapGesture = isFs ? fullscreenTapGesture : portraitTapGesture;
-
-    return (
-      <>
-        {/* ── Video Surface ── */}
-        <GestureDetector gesture={tapGesture}>
-          <View style={vidStyle}>
-            {cleanThumbnailUrl ? (
-              <ExpoImage
-                source={{ uri: cleanThumbnailUrl }}
-                style={StyleSheet.absoluteFillObject}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-                priority="high"
-              />
-            ) : null}
-
-            <VideoView
-              ref={videoViewRef}
-              player={player}
+      {/* ── Video Surface ── */}
+      <GestureDetector gesture={fsTapGesture}>
+        <View style={StyleSheet.absoluteFillObject}>
+          {cleanThumbnailUrl ? (
+            <ExpoImage
+              source={{ uri: cleanThumbnailUrl }}
               style={StyleSheet.absoluteFillObject}
               contentFit="contain"
-              nativeControls={false}
-              surfaceType="textureView"
-              fullscreenOptions={{ enable: false }}
-              showsTimecodes={false}
+              cachePolicy="memory-disk"
+              priority="high"
             />
+          ) : null}
 
-            {/* Seek zone flash overlays (always rendered, visible after double-tap) */}
-            {seekRipple ? <SeekZoneFlash direction={seekRipple.direction} /> : null}
+          <VideoView
+            ref={videoViewRef}
+            player={player}
+            style={StyleSheet.absoluteFillObject}
+            contentFit="contain"
+            nativeControls={false}
+            surfaceType="textureView"
+            fullscreenOptions={{ enable: false }}
+            showsTimecodes={false}
+          />
 
-            {/* Buffering */}
-            {isBuffering && !isCompleted ? (
-              <View style={styles.bufferingOverlay} pointerEvents="none">
-                <ActivityIndicator size="large" color="#E5C483" />
-              </View>
-            ) : null}
-
-            {/* Error */}
-            {isError ? (
-              <View style={styles.errorOverlay}>
-                <Ionicons name="alert-circle-outline" size={36} color="#E5C483" />
-                <Text style={styles.errorTitle}>Stream Interrupted</Text>
-                <Text style={styles.errorSubtitle}>
-                  {errorMessage || 'Please check your connection.'}
+          {/* Double-tap seek zone flash */}
+          {seekRipple ? (
+            <View
+              style={[
+                styles.seekZoneFlash,
+                seekRipple.direction === 'back' ? styles.seekZoneLeft : styles.seekZoneRight,
+              ]}
+              pointerEvents="none"
+            >
+              <View style={styles.seekZoneBubble}>
+                <Ionicons
+                  name={seekRipple.direction === 'back' ? 'play-back' : 'play-forward'}
+                  size={24}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.seekZoneText}>
+                  {seekRipple.direction === 'back' ? '−10s' : '+10s'}
                 </Text>
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={() => { try { player.play(); } catch {} }}
-                >
-                  <Text style={styles.retryButtonText}>RETRY</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Buffering spinner */}
+          {isBuffering && !isCompleted ? (
+            <View style={styles.bufferingOverlay} pointerEvents="none">
+              <ActivityIndicator size="large" color="#FFFFFF" />
+            </View>
+          ) : null}
+
+          {/* Error overlay */}
+          {isError ? (
+            <View style={styles.errorOverlay}>
+              <Ionicons name="alert-circle-outline" size={40} color="#E5C483" />
+              <Text style={styles.errorTitle}>Stream Interrupted</Text>
+              <Text style={styles.errorSubtitle}>
+                {errorMessage || 'Please check your connection.'}
+              </Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => { try { player.play(); } catch {} }}
+              >
+                <Text style={styles.retryButtonText}>RETRY</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+      </GestureDetector>
+
+      {/* ── HUD Overlay ── */}
+      <Animated.View
+        style={[StyleSheet.absoluteFillObject, animatedHudStyle]}
+        pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+      >
+        {/* Top gradient */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.80)', 'rgba(0,0,0,0.25)', 'transparent']}
+          style={[
+            styles.topBar,
+            {
+              paddingTop: Math.max(insets.top + 10, 20),
+              paddingLeft: Math.max(insets.left + 20, 32),
+              paddingRight: Math.max(insets.right + 20, 32),
+            },
+          ]}
+          pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+        >
+          {/* Left: Title */}
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.topTitle} numberOfLines={1}>{title}</Text>
+            {subtitle ? (
+              <Text style={styles.topSubtitle} numberOfLines={1}>{subtitle}</Text>
+            ) : null}
+            {resumedToastSec !== null ? (
+              <View style={styles.resumedRow}>
+                <Text style={styles.resumedText}>
+                  Resumed from {formatTime(resumedToastSec)}
+                </Text>
+                <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                  <Text style={styles.restartLink}>  Restart</Text>
                 </TouchableOpacity>
               </View>
             ) : null}
           </View>
-        </GestureDetector>
 
-        {/* ── HUD Overlay ── */}
-        <Animated.View
-          style={[StyleSheet.absoluteFillObject, styles.hudContainer, animatedHudStyle]}
-          pointerEvents={areControlsVisible ? 'box-none' : 'none'}
-        >
-          {/* Top bar gradient */}
-          <LinearGradient
-            colors={['rgba(0,0,0,0.82)', 'rgba(0,0,0,0.3)', 'transparent']}
-            style={[
-              styles.topBar,
-              {
-                paddingTop: Math.max(hudTopLeftInset + 10, 44),
-                paddingLeft: isFs ? Math.max(hudTopLeftInset, 32) : 20,
-                paddingRight: isFs ? Math.max(hudTopRightInset, 28) : 20,
-              },
-            ]}
-            pointerEvents={areControlsVisible ? 'box-none' : 'none'}
-          >
-            {/* Left: Back / Minimize */}
+          {/* Right: Cast + Close */}
+          <View style={styles.topRightRow}>
+            <ScreenCastButton
+              size={22}
+              color="#FFFFFF"
+              activeColor="#E5C483"
+              videoTitle={title}
+            />
             <TouchableOpacity
-              style={styles.backButton}
+              style={styles.closeButton}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                if (isFs) {
-                  handleExitFullscreen();
-                } else {
-                  onClose();
-                }
+                onClose();
               }}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               activeOpacity={0.7}
             >
-              <Ionicons name={isFs ? 'arrow-back' : 'chevron-down'} size={20} color="#FFFFFF" />
-              {isFs ? <Text style={styles.backButtonText}>CINEMA</Text> : null}
+              <Ionicons name="close" size={26} color="#FFFFFF" />
             </TouchableOpacity>
+          </View>
+        </LinearGradient>
 
-            {/* Center title (fullscreen only) */}
-            {isFs ? (
-              <View style={styles.fsTitleContainer}>
-                <Text style={styles.fsTitleText} numberOfLines={1}>{title}</Text>
-                {subtitle ? (
-                  <Text style={styles.fsSubtitleText} numberOfLines={1}>{subtitle}</Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {/* Right buttons */}
-            <View style={styles.topRightRow}>
-              {/* Resumed toast */}
-              {resumedToastSec !== null ? (
-                <View style={styles.resumedToast}>
-                  <Text style={styles.resumedToastText}>
-                    Resumed from {formatTime(resumedToastSec)}
-                  </Text>
-                  <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                    <Text style={styles.restartLink}>Restart</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-              <ScreenCastButton size={20} color="#FFFFFF" activeColor="#E5C483" videoTitle={title} />
-              {/* In fullscreen: right button closes the modal entirely (✕).
-                  In portrait: right button opens fullscreen. */}
-              {isFs ? (
-                <TouchableOpacity
-                  style={styles.iconButton}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                    setIsFullscreen(false);
-                    onClose();
-                  }}
-                  hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="close" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </LinearGradient>
-
-          {/* Center play/pause/replay — only when NOT fullscreen (fs has bottom controls) */}
-          {!isFs ? (
-            <View style={styles.centerControlsOverlay} pointerEvents={areControlsVisible ? 'auto' : 'none'}>
-              <TouchableOpacity
-                style={styles.centerPlayButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  resetControlsTimer();
-                  if (isCompleted) onReplay(); else onPlayPauseToggle();
-                }}
-                hitSlop={16}
-                activeOpacity={0.85}
-              >
-                {isCompleted ? (
-                  <Ionicons name="reload" size={26} color="#E5C483" />
-                ) : isPlaying ? (
-                  <Ionicons name="pause" size={26} color="#FFFFFF" />
-                ) : (
-                  <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {/* Bottom bar gradient */}
-          <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.92)']}
-            style={[
-              styles.bottomBar,
-              {
-                paddingBottom: Math.max(hudBottomLeftInset + 16, 32),
-                paddingLeft: isFs ? Math.max(hudBottomLeftInset, 32) : 0,
-                paddingRight: isFs ? Math.max(hudBottomRightInset, 28) : 0,
-              },
-            ]}
-            pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+        {/* ── Center Controls: ← 10 | Play/Pause/Replay | 10 → ── */}
+        <View
+          style={styles.centerControls}
+          pointerEvents={areControlsVisible ? 'auto' : 'none'}
+        >
+          {/* −10s */}
+          <TouchableOpacity
+            style={styles.seekCircleButton}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              resetControlsTimer();
+              onDoubleTapSeek('back');
+            }}
+            hitSlop={16}
+            activeOpacity={0.75}
           >
-            {/* Portrait title (shown above scrubber) */}
-            {!isFs ? (
-              <View style={styles.portraitTitleRow}>
-                <Text style={styles.portraitTitleText} numberOfLines={1}>{title}</Text>
-                {subtitle ? (
-                  <Text style={styles.portraitSubtitleText} numberOfLines={1}>{subtitle}</Text>
-                ) : null}
-              </View>
-            ) : null}
+            <View style={styles.seekCircle}>
+              <Ionicons name="refresh" size={28} color="#FFFFFF" style={styles.seekIconFlip} />
+              <Text style={styles.seekCircleLabel}>10</Text>
+            </View>
+          </TouchableOpacity>
 
-            {/* Scrubber */}
-            <View style={styles.scrubberWrapper}>
+          {/* Play / Pause / Replay — large center */}
+          <TouchableOpacity
+            style={styles.centerPlayButton}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              resetControlsTimer();
+              if (isCompleted) onReplay(); else onPlayPauseToggle();
+            }}
+            hitSlop={20}
+            activeOpacity={0.8}
+          >
+            {isCompleted ? (
+              <Ionicons name="reload" size={44} color="#FFFFFF" />
+            ) : isPlaying ? (
+              <Ionicons name="pause" size={44} color="#FFFFFF" />
+            ) : (
+              <Ionicons name="play" size={44} color="#FFFFFF" style={{ marginLeft: 5 }} />
+            )}
+          </TouchableOpacity>
+
+          {/* +10s */}
+          <TouchableOpacity
+            style={styles.seekCircleButton}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              resetControlsTimer();
+              onDoubleTapSeek('forward');
+            }}
+            hitSlop={16}
+            activeOpacity={0.75}
+          >
+            <View style={styles.seekCircle}>
+              <Ionicons name="refresh" size={28} color="#FFFFFF" />
+              <Text style={styles.seekCircleLabel}>10</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Bottom: scrubber + time ── */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.88)']}
+          style={[
+            styles.bottomBar,
+            {
+              paddingBottom: Math.max(insets.bottom + 14, 24),
+              paddingLeft: Math.max(insets.left + 12, 24),
+              paddingRight: Math.max(insets.right + 12, 24),
+            },
+          ]}
+          pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+        >
+          {/* Scrubber row: [current time] [scrubber] [remaining] */}
+          <View style={styles.scrubberRow}>
+            <Text style={styles.timecodeLeft}>{formatTime(currentTimeSec)}</Text>
+            <View style={styles.scrubberFlex}>
               <CinemaScrubber
                 currentTimeSec={currentTimeSec}
                 durationSec={durationSec}
                 bufferedSec={bufferedSec}
                 onSeekStart={handleScrubStart}
-                onSeek={(t) => { onSeek(t); }}
+                onSeek={(t) => onSeek(t)}
                 onSeekEnd={(t) => { onSeekEnd(t); handleScrubEnd(); }}
                 onScrubStart={handleScrubStart}
                 onScrubEnd={handleScrubEnd}
                 isControlsVisible={areControlsVisible}
                 variant="horizontal"
+                bare
                 dismissGestureRef={dismissGestureRef}
               />
             </View>
+            <Text style={styles.timecodeRight}>
+              {formatRemaining(currentTimeSec, durationSec)}
+            </Text>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+    </GestureHandlerRootView>
+  );
 
-            {/* Controls row */}
-            <View style={styles.controlsRow}>
-              {/* −10s */}
-              <TouchableOpacity
-                style={styles.seekButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  resetControlsTimer();
-                  onDoubleTapSeek('back');
-                }}
-                hitSlop={12}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="play-back" size={18} color="#FFFFFF" />
-                <Text style={styles.seekButtonText}>10s</Text>
-              </TouchableOpacity>
-
-              {/* Play / Pause / Replay — center */}
-              <TouchableOpacity
-                style={styles.centerPlayButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  resetControlsTimer();
-                  if (isCompleted) onReplay(); else onPlayPauseToggle();
-                }}
-                hitSlop={16}
-                activeOpacity={0.85}
-              >
-                {isCompleted ? (
-                  <Ionicons name="reload" size={26} color="#E5C483" />
-                ) : isPlaying ? (
-                  <Ionicons name="pause" size={26} color="#FFFFFF" />
-                ) : (
-                  <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
-                )}
-              </TouchableOpacity>
-
-              {/* +10s */}
-              <TouchableOpacity
-                style={styles.seekButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  resetControlsTimer();
-                  onDoubleTapSeek('forward');
-                }}
-                hitSlop={12}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.seekButtonText}>10s</Text>
-                <Ionicons name="play-forward" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
-
-              {/* Fullscreen toggle (portrait only — in fullscreen this space is empty) */}
-              {!isFs ? (
-                <TouchableOpacity
-                  style={[styles.iconButton, styles.fullscreenButtonAbs]}
-                  onPress={handleFullscreenPress}
-                  hitSlop={12}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="maximize" size={18} color="rgba(255,255,255,0.85)" />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </LinearGradient>
-        </Animated.View>
-      </>
-    );
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Always render inside landscape fullscreen Modal ────────────────────────
   return (
-    <Animated.View style={[styles.root, animatedBackdropStyle]}>
-      <StatusBar
-        hidden={isFullscreen}
-        barStyle="light-content"
-        translucent
-        backgroundColor="transparent"
-      />
-
-      {/* ── Portrait mode (swipe-to-dismiss wrapper) ── */}
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.portraitRoot, animatedContainerStyle]}>
-          {/* Video canvas */}
-          <View style={[styles.videoCanvas, { width: screenWidth, height: videoHeight }]}>
-            {renderVideoAndHUD({
-              isFs: false,
-              vidStyle: StyleSheet.absoluteFillObject,
-              hudTopLeftInset: insets.top,
-              hudTopRightInset: insets.top,
-              hudBottomLeftInset: 0,
-              hudBottomRightInset: 0,
-            })}
-          </View>
-
-          {/* ── Lower half: gradient scrim + controls overlay ── */}
-          {/* Fix #10: gradient scrim from video bottom into dark controls zone */}
-          <LinearGradient
-            colors={['#0B0B0C', '#0B0B0C']}
-            style={styles.lowerZone}
-            pointerEvents="none"
-          />
-        </Animated.View>
-      </GestureDetector>
-
-      {/* ── Native Fullscreen Modal ── */}
-      <Modal
-        visible={isFullscreen}
-        animationType="fade"
-        presentationStyle="fullScreen"
-        statusBarTranslucent
-        supportedOrientations={['landscape', 'landscape-left', 'landscape-right']}
-        onRequestClose={handleExitFullscreen}
-      >
-        <GestureHandlerRootView style={styles.fsRoot}>
-          <StatusBar hidden barStyle="light-content" />
-          <View style={styles.fsVideoContainer}>
-            {renderVideoAndHUD({
-              isFs: true,
-              vidStyle: StyleSheet.absoluteFillObject,
-              hudTopLeftInset: fsInsets.top,
-              hudTopRightInset: fsInsets.right,
-              hudBottomLeftInset: fsInsets.bottom,
-              hudBottomRightInset: fsInsets.right,
-            })}
-          </View>
-        </GestureHandlerRootView>
-      </Modal>
-    </Animated.View>
+    <Modal
+      visible
+      animationType="fade"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      supportedOrientations={['landscape', 'landscape-left', 'landscape-right']}
+      onRequestClose={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        onClose();
+      }}
+    >
+      {renderFullscreenContent()}
+    </Modal>
   );
 };
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: {
+  fsRoot: {
     flex: 1,
     backgroundColor: '#000000',
   },
-  portraitRoot: {
-    flex: 1,
-    backgroundColor: '#0B0B0C',
-  },
-  videoCanvas: {
-    backgroundColor: '#000000',
-    overflow: 'hidden',
-  },
 
-  // ─── Lower zone (portrait) ────────────────────────────────────────────────
-  lowerZone: {
-    flex: 1,
-  },
-
-  // ─── HUD container ────────────────────────────────────────────────────────
-  hudContainer: {
-    justifyContent: 'space-between',
-  },
+  // ─── Top bar ──────────────────────────────────────────────────────────────
   topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingBottom: 20,
+    paddingBottom: 40,
+    zIndex: 10,
   },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-  },
-  backButtonText: {
-    fontFamily: FONT_JOST_MEDIUM,
-    fontSize: 12,
-    letterSpacing: 2,
-    color: '#FFFFFF',
-  },
-  fsTitleContainer: {
+  topTitleBlock: {
     flex: 1,
-    alignItems: 'center',
-    marginHorizontal: 12,
+    marginRight: 16,
   },
-  fsTitleText: {
+  topTitle: {
     fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 15,
+    fontSize: 18,
     color: '#FFFFFF',
-    letterSpacing: 0.5,
-    textAlign: 'center',
+    letterSpacing: 0.3,
   },
-  fsSubtitleText: {
+  topSubtitle: {
     fontFamily: FONT_JOST_REGULAR,
-    fontSize: 11,
+    fontSize: 13,
     color: 'rgba(255,255,255,0.6)',
     marginTop: 2,
-    textAlign: 'center',
+  },
+  resumedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  resumedText: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.75)',
+  },
+  restartLink: {
+    fontFamily: FONT_JOST_SEMIBOLD,
+    fontSize: 12,
+    color: '#E5C483',
   },
   topRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 14,
   },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(25,25,28,0.75)',
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(30,30,34,0.70)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  centerControlsOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerPlayButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(20,20,24,0.88)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bottomBar: {
-    paddingTop: 20,
-  },
-  portraitTitleRow: {
-    paddingHorizontal: 20,
-    marginBottom: 8,
-  },
-  portraitTitleText: {
-    fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 16,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-  portraitSubtitleText: {
-    fontFamily: FONT_JOST_REGULAR,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.55)',
-    marginTop: 2,
-  },
-  scrubberWrapper: {
-    width: '100%',
-    marginBottom: 12,
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 32,
-    paddingHorizontal: 20,
-    position: 'relative',
-  },
-  seekButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(30,30,34,0.75)',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.15)',
-  },
-  seekButtonText: {
-    fontFamily: FONT_JOST_MEDIUM,
-    fontSize: 11,
-    color: '#FFFFFF',
-  },
-  fullscreenButtonAbs: {
-    position: 'absolute',
-    right: 20,
   },
 
-  // ─── Resume toast ─────────────────────────────────────────────────────────
-  resumedToast: {
+  // ─── Center controls ──────────────────────────────────────────────────────
+  centerControls: {
+    ...StyleSheet.absoluteFillObject,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(25,25,28,0.88)',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    gap: 56,
   },
-  resumedToastText: {
-    fontFamily: FONT_JOST_REGULAR,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.85)',
+  seekCircleButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  restartLink: {
+  seekCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  seekIconFlip: {
+    transform: [{ scaleX: -1 }],
+  },
+  seekCircleLabel: {
+    position: 'absolute',
     fontFamily: FONT_JOST_SEMIBOLD,
     fontSize: 11,
-    color: '#E5C483',
-    textDecorationLine: 'underline',
+    color: '#FFFFFF',
+    // Centered inside the circle below the icon
+    bottom: 10,
+  },
+  centerPlayButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ─── Bottom scrubber ──────────────────────────────────────────────────────
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 40,
+    zIndex: 10,
+  },
+  scrubberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  timecodeLeft: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.85)',
+    minWidth: 44,
+    textAlign: 'right',
+  },
+  scrubberFlex: {
+    flex: 1,
+  },
+  timecodeRight: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.6)',
+    minWidth: 54,
+    textAlign: 'left',
   },
 
   // ─── Seek zone flash ──────────────────────────────────────────────────────
@@ -900,34 +666,25 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     bottom: 0,
-    width: '40%',
+    width: '38%',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  seekZoneLeft: {
-    left: 0,
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-  },
-  seekZoneRight: {
-    right: 0,
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-  },
+  seekZoneLeft: { left: 0 },
+  seekZoneRight: { right: 0 },
   seekZoneBubble: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(11,11,12,0.72)',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   seekZoneText: {
     fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 13,
+    fontSize: 14,
     color: '#FFFFFF',
   },
 
@@ -936,50 +693,39 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11,11,12,0.94)',
+    backgroundColor: 'rgba(0,0,0,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
+    paddingHorizontal: 32,
   },
   errorTitle: {
     fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 16,
+    fontSize: 18,
     color: '#FFFFFF',
-    marginTop: 12,
-    marginBottom: 6,
+    marginTop: 14,
+    marginBottom: 8,
   },
   errorSubtitle: {
     fontFamily: FONT_JOST_REGULAR,
-    fontSize: 13,
+    fontSize: 14,
     color: 'rgba(255,255,255,0.6)',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 22,
   },
   retryButton: {
     backgroundColor: '#E5C483',
-    paddingHorizontal: 22,
-    paddingVertical: 10,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
     fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 12,
+    fontSize: 13,
     color: '#0B0B0C',
     letterSpacing: 1.5,
-  },
-
-  // ─── Native Fullscreen Modal ──────────────────────────────────────────────
-  fsRoot: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  fsVideoContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-    position: 'relative',
   },
 });

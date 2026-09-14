@@ -40,6 +40,12 @@ interface CinemaScrubberProps {
   isControlsVisible: boolean;
   variant?: 'horizontal' | 'vertical';
   /**
+   * When true, renders only the bare track + thumb with no outer horizontal
+   * padding and no timecode labels. Used by the Netflix fullscreen layout
+   * where the parent renders timecodes externally.
+   */
+  bare?: boolean;
+  /**
    * Ref to the parent swipe-to-dismiss gesture. Passed to
    * simultaneousWithExternalGesture() so the two gestures can be active
    * concurrently — RNGH will hand off based on direction heuristics set
@@ -66,6 +72,7 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
   onScrubEnd,
   isControlsVisible,
   variant = 'horizontal',
+  bare = false,
   dismissGestureRef,
 }) => {
   const [trackWidth, setTrackWidth] = useState<number>(0);
@@ -218,54 +225,60 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // HORIZONTAL CINEMA SCRUBBER
+  // HORIZONTAL CINEMA SCRUBBER — bare mode: track only, no timecode labels
   // ─────────────────────────────────────────────────────────────────────────
+  const trackJSX = (
+    <GestureDetector gesture={scrubGesture}>
+      <View style={[styles.horizontalTouchArea, bare && { paddingHorizontal: 0 }]} onLayout={handleLayout}>
+        <View style={styles.horizontalTrackBackground}>
+          <View style={[styles.horizontalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
+          <View style={[styles.horizontalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
+        </View>
+
+        {/* Scrub handle dot */}
+        {trackWidth > 0 ? (
+          <View
+            style={[
+              styles.scrubHandle,
+              isDragging && styles.scrubHandleDragging,
+              {
+                left: Math.max(
+                  0,
+                  Math.min(
+                    trackWidth - (isDragging ? 16 : 10),
+                    progressRatio * trackWidth - (isDragging ? 8 : 5),
+                  ),
+                ),
+              },
+            ]}
+            pointerEvents="none"
+          />
+        ) : null}
+
+        {/* Floating time bubble during drag */}
+        {isDragging && trackWidth > 0 ? (
+          <View
+            style={[
+              styles.timeBubble,
+              { left: Math.max(0, Math.min(trackWidth - 54, progressRatio * trackWidth - 27)) },
+            ]}
+            pointerEvents="none"
+          >
+            <Text style={styles.timeBubbleText}>{formatTime(displayTime)}</Text>
+          </View>
+        ) : null}
+      </View>
+    </GestureDetector>
+  );
+
+  if (bare) {
+    return trackJSX;
+  }
+
   return (
     <View style={styles.horizontalRoot}>
       <Text style={styles.timecodeText}>{formatTime(displayTime)}</Text>
-
-      <GestureDetector gesture={scrubGesture}>
-        <View style={styles.horizontalTouchArea} onLayout={handleLayout}>
-          <View style={styles.horizontalTrackBackground}>
-            <View style={[styles.horizontalTrackBuffer, { width: `${bufferedRatio * 100}%` }]} />
-            <View style={[styles.horizontalTrackPlayed, { width: `${progressRatio * 100}%` }]} />
-          </View>
-
-          {/* Scrub handle dot */}
-          {trackWidth > 0 ? (
-            <View
-              style={[
-                styles.scrubHandle,
-                isDragging && styles.scrubHandleDragging,
-                {
-                  left: Math.max(
-                    0,
-                    Math.min(
-                      trackWidth - (isDragging ? 16 : 10),
-                      progressRatio * trackWidth - (isDragging ? 8 : 5),
-                    ),
-                  ),
-                },
-              ]}
-              pointerEvents="none"
-            />
-          ) : null}
-
-          {/* Floating time bubble during drag */}
-          {isDragging && trackWidth > 0 ? (
-            <View
-              style={[
-                styles.timeBubble,
-                { left: Math.max(0, Math.min(trackWidth - 54, progressRatio * trackWidth - 27)) },
-              ]}
-              pointerEvents="none"
-            >
-              <Text style={styles.timeBubbleText}>{formatTime(displayTime)}</Text>
-            </View>
-          ) : null}
-        </View>
-      </GestureDetector>
-
+      {trackJSX}
       <Text style={styles.timecodeText}>{formatTime(durationSec)}</Text>
     </View>
   );
