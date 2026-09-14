@@ -40,6 +40,19 @@ api.interceptors.response.use(
     if (isFamilyEndpoint && response.data?.token && typeof response.data.token === 'string') {
       useAuthStore.getState().updateToken(response.data.token).catch(() => {});
     }
+
+    // Fix 3: Silently rotate guest tokens — backend emits a fresh token in X-Refreshed-Token
+    // whenever photos load successfully. Save it so the token never goes stale (365-day window resets).
+    const refreshedToken = response.headers?.['x-refreshed-token'];
+    if (refreshedToken && typeof refreshedToken === 'string') {
+      const currentToken = useAuthStore.getState().token;
+      // Only overwrite if the current stored token is a guest token (not a family token)
+      // to avoid accidentally replacing a global family session with an event-scoped guest token.
+      if (currentToken && currentToken !== refreshedToken) {
+        useAuthStore.getState().updateToken(refreshedToken).catch(() => {});
+      }
+    }
+
     return response;
   },
   async (error) => {
