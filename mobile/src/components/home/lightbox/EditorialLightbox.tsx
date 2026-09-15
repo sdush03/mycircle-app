@@ -36,6 +36,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { LightboxImageItem } from './components/LightboxImageItem';
 import { Image as ExpoImage } from 'expo-image';
 import { savesService } from '../../../services/savesService';
+import { analyticsService } from '../../../services/analyticsService';
 import { tabEvents, EVENT_SAVES_UPDATED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
 import {
@@ -146,6 +147,18 @@ export function EditorialLightbox({
     });
     return () => unsub();
   }, []);
+
+  // Track lightbox full-screen impressions
+  useEffect(() => {
+    if (visible && images && images[activeIdx]) {
+      const current = images[activeIdx];
+      const mediaId = current.id || current.uri || current.r2Url;
+      const isVideo = Boolean(current.isVideo || current.type === 'VIDEO' || current.videoUrl);
+      const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
+      const url = current.r2Url || current.fullUri || current.uri || current.photoUrl;
+      analyticsService.trackImpression(mediaId, mediaType, 'LIGHTBOX', url);
+    }
+  }, [visible, activeIdx, images]);
 
   // Universal Bounds & Animation Shared Values
   const expandProgress = useSharedValue(0);
@@ -558,6 +571,11 @@ export function EditorialLightbox({
 
     try {
       setIsDownloading(true);
+      if (currentItem) {
+        const mediaId = currentItem.id || currentItem.uri || currentItem.r2Url;
+        const isVideo = Boolean(currentItem.isVideo || currentItem.type === 'VIDEO' || currentItem.videoUrl);
+        analyticsService.trackDownload(mediaId, isVideo ? 'VIDEO' : 'PHOTO', 'LIGHTBOX_DOWNLOAD');
+      }
 
       const rawTargetUri =
         currentItem.fullUri ||

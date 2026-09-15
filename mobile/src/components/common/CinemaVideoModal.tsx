@@ -14,6 +14,7 @@ import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import { playbackFocusManager } from '../../services/playbackFocusManager';
 import { videoWatchProgressManager } from '../../services/videoWatchProgressManager';
+import { analyticsService } from '../../services/analyticsService';
 import { HorizontalCinemaPlayer } from '../cinema/HorizontalCinemaPlayer';
 import { VerticalCinemaPlayer } from '../cinema/VerticalCinemaPlayer';
 import { classifyCinemaCategory, formatCinemaCategoryTitleCase, formatCinemaDisplayTitle, isVerticalVideo } from '../cinema/CinemaLibraryView';
@@ -75,6 +76,8 @@ function VideoPlayerView({
   const heartbeatTickRef = useRef<number>(0);
   const hasResumedRef = useRef<boolean>(false);
   const videoViewRef = useRef<any>(null);
+  const trackedMilestonesRef = useRef<Set<string>>(new Set());
+  const videoId = videoItem?.id || videoItem?.uri || videoUrl;
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [seekRipple, setSeekRipple] = useState<{ direction: 'back' | 'forward'; id: number } | null>(null);
   const [resumedToastSec, setResumedToastSec] = useState<number | null>(resumeTimeSec && resumeTimeSec > 0 ? resumeTimeSec : null);
@@ -134,7 +137,9 @@ function VideoPlayerView({
       console.log(`[CINEMA EVENT 📡 STATUS] -> ${newStatus} (was: ${payload?.oldStatus}) | Playing: ${player.playing}`, payload?.error ? `| ❌ Error: ${JSON.stringify(payload?.error)}` : '');
       setPlayerStatus(newStatus);
       if (payload?.error) {
-        setErrorMessage(payload.error.message || JSON.stringify(payload.error));
+        const errText = payload.error.message || JSON.stringify(payload.error);
+        setErrorMessage(errText);
+        analyticsService.trackMediaError(videoId, 'VIDEO', 'PLAYBACK_ERROR', errText, 'CINEMA_MODAL', videoUrl);
       }
 
       if (newStatus === 'loading') {
@@ -170,6 +175,19 @@ function VideoPlayerView({
         userPausedRef.current = false;
         isEndedRef.current = false;
         setIsBufferingOverlay(false);
+
+        // Track START analytics event once per session
+        if (!trackedMilestonesRef.current.has('START')) {
+          trackedMilestonesRef.current.add('START');
+          analyticsService.trackVideoPlayback(
+            videoId,
+            'START',
+            { totalDurationSeconds: player.duration || 0 },
+            'CINEMA_MODAL',
+            videoUrl
+          );
+        }
+
         // Guarantee audio is unmuted during active playback!
         if (!isSeekingRef.current) {
           player.muted = false;
@@ -186,7 +204,6 @@ function VideoPlayerView({
       if (typeof payload?.bufferedPosition === 'number') setBufferedSec(buf);
 
       // Guard against stale timeUpdate during and immediately after seeking:
-      // If we just sought to target T, ignore incoming ticks reporting pre-seek positions during the settling window.
       if (isSeekingRef.current && seekTargetTimeRef.current !== null) {
         if (Math.abs(cur - seekTargetTimeRef.current) > 1.0 && Date.now() - seekCommitTimeRef.current < 450) {
           return;
@@ -197,9 +214,24 @@ function VideoPlayerView({
 
       lastTimeRef.current = cur;
 
-      // Persist watch progress periodically
       const dur = player.duration ?? 0;
-      // Protect against overwriting saved progress before initial resume seek takes effect
+      if (dur > 0 && cur > 0) {
+        const ratio = cur / dur;
+        if (ratio >= 0.25 && !trackedMilestonesRef.current.has('25')) {
+          trackedMilestonesRef.current.add('25');
+          analyticsService.trackVideoPlayback(videoId, 'MILESTONE_25', { watchTimeSeconds: cur, totalDurationSeconds: dur, completionRatio: ratio }, 'CINEMA_MODAL', videoUrl);
+        }
+        if (ratio >= 0.50 && !trackedMilestonesRef.current.has('50')) {
+          trackedMilestonesRef.current.add('50');
+          analyticsService.trackVideoPlayback(videoId, 'MILESTONE_50', { watchTimeSeconds: cur, totalDurationSeconds: dur, completionRatio: ratio }, 'CINEMA_MODAL', videoUrl);
+        }
+        if (ratio >= 0.75 && !trackedMilestonesRef.current.has('75')) {
+          trackedMilestonesRef.current.add('75');
+          analyticsService.trackVideoPlayback(videoId, 'MILESTONE_75', { watchTimeSeconds: cur, totalDurationSeconds: dur, completionRatio: ratio }, 'CINEMA_MODAL', videoUrl);
+        }
+      }
+
+      // Persist watch progress periodically
       if (resumeTimeSec && resumeTimeSec > 2.0 && cur < 1.0) {
         return;
       }
@@ -226,6 +258,16 @@ function VideoPlayerView({
       setIsCompleted(true);
       if (videoItem) {
         videoWatchProgressManager.markCompleted(videoItem);
+      }
+      if (!trackedMilestonesRef.current.has('COMPLETE')) {
+        trackedMilestonesRef.current.add('COMPLETE');
+        analyticsService.trackVideoPlayback(
+          videoId,
+          'COMPLETE',
+          { watchTimeSeconds: player.duration || 0, totalDurationSeconds: player.duration || 0, completionRatio: 1.0 },
+          'CINEMA_MODAL',
+          videoUrl
+        );
       }
     });
 

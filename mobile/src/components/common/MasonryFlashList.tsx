@@ -15,6 +15,7 @@ import { StyleSheet, View, Dimensions, Animated as RNAnimated } from 'react-nati
 import Animated, { useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import { getPhotoAspect, getPhotoCardAspect } from '../../utils/photoDimensionCache';
+import { analyticsService } from '../../services/analyticsService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -245,6 +246,16 @@ interface SlotViewProps {
 
 const SlotView = React.memo(
   function SlotView({ slot, item, originalIndex, isColumn0, renderItem: renderFn }: SlotViewProps) {
+    useEffect(() => {
+      if (item) {
+        const mediaId = item.id || item.uri || item.r2Url;
+        const isVideo = Boolean(item.isVideo || item.type === 'VIDEO' || item.tab === 'Cinema' || item.videoUrl);
+        const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
+        const url = item.r2Url || item.fullUri || item.uri || item.photoUrl;
+        analyticsService.trackImpression(mediaId, mediaType, 'GRID', url);
+      }
+    }, [item]);
+
     return (
       <View style={[styles.slot, { top: slot.top, height: slot.height }]}>
         {item ? renderFn({ item, index: originalIndex, isColumn0 }) : null}
