@@ -39,7 +39,10 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "appleTeamId": "9S743W7CRJ"
+      "appleTeamId": "9S743W7CRJ",
+      "associatedDomains": [
+        "applinks:mycircle.mistyvisuals.com"
+      ]
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
