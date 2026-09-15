@@ -77,13 +77,28 @@ export const savesService = {
         headers['Authorization'] = `Bearer ${authState.token}`;
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/saves/upload`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
 
-      const data = await res.json();
+      let res: Response;
+      let data: any;
+      try {
+        res = await fetch(`${API_BASE_URL}/api/saves/upload`, {
+          method: 'POST',
+          headers,
+          body: formData,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        data = await res.json();
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          throw new Error('Photo upload timed out. Please check your network connection and try again.');
+        }
+        throw err;
+      }
+
       if (!res.ok) {
         throw new Error(data.error || 'Failed to upload inspiration photo');
       }

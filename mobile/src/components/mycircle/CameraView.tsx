@@ -164,15 +164,29 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const uploadRes = await fetch(`${API_BASE_URL}${uploadUrl}`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-      const data = await uploadRes.json();
-      if (!uploadRes.ok) {
-        throw new Error(data.error || 'Selfie verification failed. Please try taking another photo.');
+      let data: any;
+      try {
+        const uploadRes = await fetch(`${API_BASE_URL}${uploadUrl}`, {
+          method: 'POST',
+          headers,
+          body: formData,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        data = await uploadRes.json();
+        if (!uploadRes.ok) {
+          throw new Error(data.error || 'Selfie verification failed. Please try taking another photo.');
+        }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          throw new Error('Upload timed out. Please check your internet connection and try again.');
+        }
+        throw err;
       }
 
       const returnedSelfieUrl = data.selfieUrl

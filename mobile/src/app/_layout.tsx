@@ -35,6 +35,7 @@ import {
 import * as Linking from 'expo-linking';
 import { handleIncomingUrl, checkServerDeferredDeepLink } from '../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
+import ForceUpdateModal from '../components/common/ForceUpdateModal';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -442,6 +443,7 @@ function RootLayoutContent() {
             }
           }}
         />
+        <ForceUpdateModal />
       </Animated.View>
     </ThemeProvider>
   );
