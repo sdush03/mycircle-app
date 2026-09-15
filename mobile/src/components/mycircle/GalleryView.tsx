@@ -59,8 +59,8 @@ import api, { guestApi } from '../../services/api';
 import { MasonryCard } from '../home/lightbox/components/MasonryCard';
 import { EditorialLightbox, LightboxBounds } from '../home/lightbox/EditorialLightbox';
 import { CinemaVideoModal } from '../common/CinemaVideoModal';
-import { CinemaLibraryView } from '../cinema/CinemaLibraryView';
-import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsEligibleCinemaVideo } from '../cinema/CinemaVideoCard';
+import { CinemaLibraryView, formatCinemaCategoryTitleCase, formatCinemaDisplayTitle, classifyCinemaCategory } from '../cinema/CinemaLibraryView';
+import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsEligibleCinemaVideo, isVerticalVideo } from '../cinema/CinemaVideoCard';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import {
@@ -97,6 +97,14 @@ export function isVideoMedia(p: any): boolean {
   return url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.m4v') || url.includes('/videos/');
 }
 
+export function getCinemaDownloadPriority(v: any, index: number = 0): number {
+  if (!v) return 20;
+  const cat = classifyCinemaCategory(v as any);
+  if (cat.includes('DIRECTOR') || v.isFeatured || index === 0) return 100;
+  if (cat.includes('CANDID') || cat.includes('REEL') || isVerticalVideo(v as any)) return 80;
+  return 20;
+}
+
 function mapPhotoItem(p: any): Photo {
   const isVideo = isVideoMedia(p);
   const isPhotoFile = !hasActualVideoFile(p);
@@ -128,12 +136,16 @@ function mapPhotoItem(p: any): Photo {
   const validThumb = isImageThumb ? rawThumb : undefined;
   const thumbUri = validThumb || (isVideo && !isPhotoFile ? undefined : getThumbnailUrl(p, 400));
   const isActualVideo = isVideo && !isPhotoFile;
-  const w = Number(p.width) || Number(p.videoWidth) || Number(p.exif?.videoWidth) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || (isVideo ? 16 : 0);
-  const h = Number(p.height) || Number(p.videoHeight) || Number(p.exif?.videoHeight) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || (isVideo ? 9 : 0);
+  const isReel = isVideo && isVerticalVideo(p);
+  const defaultW = isVideo ? (isReel ? 9 : 16) : 0;
+  const defaultH = isVideo ? (isReel ? 16 : 9) : 0;
+  const defaultAspect = isVideo ? (isReel ? 9 / 16 : 16 / 9) : null;
+  const w = Number(p.width) || Number(p.videoWidth) || Number(p.exif?.videoWidth) || Number(p.img_width) || Number(p.imageWidth) || Number(p.meta?.width) || Number(p.metadata?.width) || Number(p.exif?.PixelXDimension) || Number(p.exif?.ImageWidth) || defaultW;
+  const h = Number(p.height) || Number(p.videoHeight) || Number(p.exif?.videoHeight) || Number(p.img_height) || Number(p.imageHeight) || Number(p.meta?.height) || Number(p.metadata?.height) || Number(p.exif?.PixelYDimension) || Number(p.exif?.ImageHeight) || defaultH;
   // For actual videos, use actual video dimensions (w/h) so 16:9 widescreen films are never misclassified by their 4:3/2:3 portrait poster thumbnail
   const cachedAspect = isActualVideo ? null : (getPhotoAspect(p.id) || getPhotoAspect(thumbUri) || getPhotoAspect(fullUri));
   const aspectRatio = isActualVideo
-    ? (w > 0 && h > 0 ? w / h : 16 / 9)
+    ? (w > 0 && h > 0 ? w / h : (defaultAspect || 16 / 9))
     : (cachedAspect || (w > 0 && h > 0 ? w / h : (Number(p.aspectRatio) || Number(p.aspect_ratio) || null)));
   return {
     id: p.id,
@@ -143,6 +155,8 @@ function mapPhotoItem(p: any): Photo {
     photoUrl: fullUri,
     videoUrl: isVideo && !isPhotoFile ? fullUri : undefined,
     isVideo,
+    isVertical: isReel,
+    isReel,
     isComingSoon,
     hasBakedCover: isBaked,
     isCoverBaked: isBaked,
@@ -157,7 +171,7 @@ function mapPhotoItem(p: any): Photo {
     likeCount: typeof p.likeCount === 'number' ? p.likeCount : (typeof p.likesCount === 'number' ? p.likesCount : (p._count?.likes || 0)),
     title: p.title || p.exif?.title || p.name || p.caption || p.filename || undefined,
     description: p.description || p.exif?.description || undefined,
-    cinemaCategory: p.cinemaCategory || p.exif?.cinemaCategory || undefined,
+    cinemaCategory: p.cinemaCategory || p.exif?.cinemaCategory || (isReel ? 'CANDID DIARIES' : undefined),
     sortOrder: p.sortOrder !== undefined ? p.sortOrder : (p.exif?.sortOrder !== undefined ? p.exif.sortOrder : undefined),
     duration: p.duration || p.meta?.duration || p.metadata?.duration || undefined,
     isFeatured: Boolean(p.isFeatured || p.featured || p.meta?.isFeatured || p.exif?.isFeatured),
@@ -530,17 +544,26 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           // Preload cinema videos immediately on Frame 1 from SWR cache!
           const cachedCinema = normalizedTabCache['CINEMA'];
           if (cachedCinema && cachedCinema.length > 0) {
-            cachedCinema.forEach((v, idx) => {
+            const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
+            const prioritizedCinema = [...cachedCinema]
+              .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
+              .sort((a, b) => b.priority - a.priority);
+
+            prioritizedCinema.forEach(({ video: v, priority }, queueIdx) => {
               const vUrl = v.videoUrl || v.fullUri || v.r2Url;
               if (vUrl) {
-                if (idx === 0) {
-                  videoPreloadManager.preload(vUrl, v.thumbnailUrl);
-                  videoDownloadManager.queue(vUrl);
+                const headline = formatCinemaDisplayTitle(cleanTitle, v);
+                const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
+                const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
+
+                if (queueIdx === 0) {
+                  videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+                  videoDownloadManager.queue(vUrl, priority);
                 } else {
                   setTimeout(() => {
-                    videoPreloadManager.preload(vUrl, v.thumbnailUrl);
-                    videoDownloadManager.queue(vUrl);
-                  }, idx * 1500);
+                    videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+                    videoDownloadManager.queue(vUrl, priority);
+                  }, queueIdx * 1500);
                 }
               }
             });
@@ -677,21 +700,30 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (Array.isArray(cinemaList) && cinemaList.length > 0) {
           cinemaMapped = cinemaList.map(mapPhotoItem);
           setTabCache((prev) => ({ ...prev, 'CINEMA': cinemaMapped }));
-          cinemaMapped.forEach((v, idx) => {
+          const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
+          const prioritizedCinema = [...cinemaMapped]
+            .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
+            .sort((a, b) => b.priority - a.priority);
+
+          prioritizedCinema.forEach(({ video: v, priority }, queueIdx) => {
             const vUrl = v.videoUrl || v.fullUri || v.r2Url;
             if (vUrl) {
-              if (idx === 0) {
-                videoPreloadManager.preload(vUrl, v.thumbnailUrl);
-                videoDownloadManager.queue(vUrl);
+              const headline = formatCinemaDisplayTitle(cleanTitle, v);
+              const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
+              const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
+
+              if (queueIdx === 0) {
+                videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+                videoDownloadManager.queue(vUrl, priority);
               } else {
                 setTimeout(() => {
-                  videoPreloadManager.preload(vUrl, v.thumbnailUrl);
-                  videoDownloadManager.queue(vUrl);
-                }, idx * 1500);
+                  videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+                  videoDownloadManager.queue(vUrl, priority);
+                }, queueIdx * 1500);
               }
             }
           });
-          console.log(`[CINEMA INSTANT PRELOAD 🎬] Pre-buffering ${cinemaMapped.length} cinema videos immediately on gallery launch!`);
+          console.log(`[CINEMA INSTANT PRELOAD 🎬] Pre-buffering ${cinemaMapped.length} cinema videos (Director's Cut & Candid Diaries prioritized)!`);
         }
 
         const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
@@ -1562,14 +1594,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   useEffect(() => {
     const videoItems = activeCinemaVideos;
     if (videoItems.length > 0) {
-      videoItems.slice(0, 3).forEach((vid) => {
+      videoItems.slice(0, 3).forEach((vid, idx) => {
         const vUrl = vid.videoUrl || vid.fullUri || vid.r2Url || (typeof vid.uri === 'string' && vid.uri.startsWith('http') ? vid.uri : null);
         const tUrl = vid.thumbnailUrl || vid.thumbUri || null;
         if (vUrl) {
           videoPreloadManager.preload(vUrl, tUrl);
-          // Queue silent background download for cinema videos
+          // Queue silent background download for cinema videos with category priority
           if (isCinema) {
-            videoDownloadManager.queue(vUrl);
+            const priority = getCinemaDownloadPriority(vid, idx);
+            videoDownloadManager.queue(vUrl, priority);
           }
         }
       });
@@ -2139,6 +2172,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   }}
                   onBackToGallery={handleBackAction}
                   onScroll={cinemaScrollHandler}
+                  scrollY={cinemaScrollY}
                   mainScrollRef={cinemaScrollRef}
                   refreshControl={
                     <RefreshControl

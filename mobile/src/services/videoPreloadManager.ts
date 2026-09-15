@@ -53,7 +53,11 @@ class VideoPreloadManager {
    * If the video is already downloaded locally, uses the local file:// path
    * so the player reads from disk at full speed with zero network usage.
    */
-  public preload(url: string | null | undefined, thumbnailUrl?: string | null): void {
+  public preload(
+    url: string | null | undefined,
+    thumbnailUrl?: string | null,
+    metadata?: { title?: string; artist?: string; artwork?: string }
+  ): void {
     if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
     // If Cinema playback is active, NEVER preload new players or steal bandwidth!
     if (playbackFocusManager.isPlaying) {
@@ -110,25 +114,27 @@ class VideoPreloadManager {
         }
       }
 
-      // Prefer local downloaded file — file:// reads from disk at memory speed, zero network
-      const localPath = videoDownloadManager.getLocalPath(url);
-      const effectiveUrl = localPath ? `file://${localPath}` : url;
-
-      if (localPath) {
-        console.log(`[PRELOAD ⚡ LOCAL FILE] Using downloaded file for: ${url.slice(0, 60)}...`);
-      }
+      // CRITICAL FOR TV AIRPLAY: Smart TVs (Samsung, Hisense, LG, Roku) run third-party
+      // AirPlay 2 receiver SDKs that require a network-reachable HTTP/HTTPS URL.
+      // If initialized with a local sandbox file:// URL, Smart TVs get stuck on the AirPlay splash screen.
+      const effectiveUrl = url;
 
       // Create native player instance.
-      // waitsToMinimizeStalling: false — AVPlayer starts immediately with available data
-      // and pauses (rate=0) on underrun instead of waiting indefinitely. This is REQUIRED
-      // for the modal's stall-watchdog to work: play() is effective only when rate=0 (paused),
-      // not when the player is in AVPlayer's "waitingToPlayAtSpecifiedRate" mode (true).
-      const player = createVideoPlayer(effectiveUrl);
+      const player = createVideoPlayer({
+        uri: effectiveUrl,
+        metadata: {
+          title: metadata?.title || 'The Wedding Film',
+          artist: metadata?.artist || "Director's Cut",
+          artwork: metadata?.artwork || thumbnailUrl || undefined,
+        },
+      });
       player.loop = false;
-      player.audioMixingMode = 'doNotMix';
+      player.muted = true; // Preloaded players in background must be muted to avoid audio hardware contention
+      player.audioMixingMode = 'auto';
+      player.allowsExternalPlayback = true;
       player.bufferOptions = {
         waitsToMinimizeStalling: true,
-        preferredForwardBufferDuration: 4, // 4s buffer is optimal for 0ms start without memory pressure
+        preferredForwardBufferDuration: 0, // 0 lets iOS/TV auto-negotiate optimal streaming buffer
       };
       player.pause(); // Keep paused while pre-buffering in background
 
@@ -158,6 +164,7 @@ class VideoPreloadManager {
       this.cache.delete(url);
       return null;
     }
+    player.muted = false;
     console.log(`[PRELOAD CACHE ⚡ HIT] Returning warm player! Status: ${player.status} | Buffered: ${player.bufferedPosition?.toFixed(1) ?? '?'}s`);
     return player;
   }
@@ -177,9 +184,11 @@ class VideoPreloadManager {
     if (!url || !this.cache.has(url)) return;
     const player = this.cache.get(url)!;
     try {
+      player.allowsExternalPlayback = false; // Disconnect AirPlay route immediately
+      player.showNowPlayingNotification = false;
       player.pause();
       player.currentTime = 0;
-      player.muted = false;
+      player.muted = true;
     } catch {}
     console.log(`[PRELOAD CACHE 🔁] Rewound to 0s and kept warm in permanent cache!`);
   }

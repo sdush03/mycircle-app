@@ -22,15 +22,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Pressable,
   ActivityIndicator,
   BackHandler,
   StatusBar,
   useWindowDimensions,
-  PanResponder,
   LayoutChangeEvent,
   ViewStyle,
-  GestureResponderEvent,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { VideoView, VideoPlayer } from 'expo-video';
@@ -42,19 +39,31 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withSpring,
+  runOnJS,
+  Easing,
 } from 'react-native-reanimated';
+import {
+  Gesture,
+  GestureDetector,
+} from 'react-native-gesture-handler';
 import {
   FONT_JOST_REGULAR,
   FONT_JOST_MEDIUM,
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
 import { ScreenCastButton } from './ScreenCastButton';
+import { formatCinemaCategoryTitleCase, formatCinemaDisplayTitle } from './CinemaLibraryView';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatTime(sec: number): string {
   if (isNaN(sec) || sec < 0) return '00:00';
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
+  if (h > 0) {
+    return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  }
   return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
@@ -69,6 +78,16 @@ function formatRemaining(currentSec: number, durationSec: number): string {
     return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
   }
   return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function toTitleCase(str: string): string {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -96,6 +115,8 @@ interface HorizontalCinemaPlayerProps {
   seekRipple: { direction: 'back' | 'forward'; id: number } | null;
   resumedToastSec: number | null;
   onRestartFromBeginning: () => void;
+  eventTitle?: string;
+  videoItem?: any;
 }
 
 export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
@@ -104,6 +125,8 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   cleanThumbnailUrl,
   title,
   subtitle,
+  eventTitle,
+  videoItem,
   onClose,
   currentTimeSec,
   durationSec,
@@ -139,10 +162,13 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   const [areControlsVisible, setAreControlsVisible] = useState(true);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isScrubbingRef = useRef(false);
+  const lastScrubTimeRef = useRef(0);
 
   // ── Scrubber state ─────────────────────────────────────────────────────────
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTimeSec, setScrubTimeSec] = useState(0);
+  const [activeScrubSec, setActiveScrubSec] = useState<number | null>(null);
+  const scrubReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trackWidthRef = useRef(0);
   const [trackWidth, setTrackWidth] = useState(0);
 
@@ -167,6 +193,9 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   const controlsOpacity = useSharedValue(1);
   const animatedHudStyle = useAnimatedStyle(() => ({
     opacity: controlsOpacity.value,
+  }));
+  const watermarkAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: Math.max(0, Math.min(1, 1 - controlsOpacity.value)),
   }));
 
   // ── Controls auto-hide timer (3.5s) ────────────────────────────────────────
@@ -210,31 +239,42 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     }
   }, [areControlsVisible, resetControlsTimer, controlsOpacity]);
 
-  // ── Video Touch & Double-Tap ───────────────────────────────────────────────
-  const lastTapRef = useRef<number>(0);
-  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── RNGH Video Tap & Double-Tap Gestures ──────────────────────────────────
+  const handleSingleTap = useCallback(() => {
+    toggleControls();
+  }, [toggleControls]);
 
-  const handleVideoTouch = (e: GestureResponderEvent) => {
-    const now = Date.now();
-    const x = e.nativeEvent.locationX;
-    const isLeftHalf = x < playerWidth / 2;
-
-    if (now - lastTapRef.current < 300) {
-      // Double tap detected
-      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
-      lastTapRef.current = 0;
+  const handleDoubleTap = useCallback(
+    (x: number) => {
+      const isLeft = x < playerWidth / 2;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      onDoubleTapSeek(isLeftHalf ? 'back' : 'forward');
+      onDoubleTapSeek(isLeft ? 'back' : 'forward');
       resetControlsTimer();
-    } else {
-      lastTapRef.current = now;
-      singleTapTimerRef.current = setTimeout(() => {
-        toggleControls();
-      }, 300);
-    }
-  };
+    },
+    [playerWidth, onDoubleTapSeek, resetControlsTimer]
+  );
 
-  // ── Scrubber PanResponder ──────────────────────────────────────────────────
+  const tapGestures = useMemo(() => {
+    const doubleTap = Gesture.Tap()
+      .numberOfTaps(2)
+      .maxDuration(300)
+      .onEnd((e) => {
+        'worklet';
+        runOnJS(handleDoubleTap)(e.x);
+      });
+
+    const singleTap = Gesture.Tap()
+      .numberOfTaps(1)
+      .requireExternalGestureToFail(doubleTap)
+      .onEnd(() => {
+        'worklet';
+        runOnJS(handleSingleTap)();
+      });
+
+    return Gesture.Exclusive(doubleTap, singleTap);
+  }, [handleDoubleTap, handleSingleTap]);
+
+  // ── RNGH Scrubber Gesture ──────────────────────────────────────────────────
   const getTimeFromX = useCallback(
     (locX: number): number => {
       const w = trackWidthRef.current;
@@ -245,42 +285,90 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     [durationSec]
   );
 
-  const scrubberPanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => {
-          isScrubbingRef.current = true;
-          setIsScrubbing(true);
-          if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-          controlsOpacity.value = withTiming(1, { duration: 150 });
-          setAreControlsVisible(true);
-          onSeekStart();
-          const t = getTimeFromX(evt.nativeEvent.locationX);
-          setScrubTimeSec(t);
-          onSeek(t);
-        },
-        onPanResponderMove: (evt) => {
-          const t = getTimeFromX(evt.nativeEvent.locationX);
-          setScrubTimeSec(t);
-          onSeek(t);
-        },
-        onPanResponderRelease: (evt) => {
-          isScrubbingRef.current = false;
-          setIsScrubbing(false);
-          const t = getTimeFromX(evt.nativeEvent.locationX);
-          onSeekEnd(t);
-          resetControlsTimer();
-        },
-        onPanResponderTerminate: () => {
-          isScrubbingRef.current = false;
-          setIsScrubbing(false);
-          resetControlsTimer();
-        },
-      }),
-    [getTimeFromX, onSeekStart, onSeek, onSeekEnd, resetControlsTimer, controlsOpacity]
+  const handleScrubBegin = useCallback(
+    (x: number) => {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      isScrubbingRef.current = true;
+      setIsScrubbing(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      controlsOpacity.value = withTiming(1, { duration: 150 });
+      setAreControlsVisible(true);
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setScrubTimeSec(t);
+      setActiveScrubSec(t);
+      onSeekStart();
+      onSeek(t);
+    },
+    [controlsOpacity, getTimeFromX, onSeekStart, onSeek]
   );
+
+  const handleScrubMove = useCallback(
+    (x: number) => {
+      if (!isScrubbingRef.current) return;
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setScrubTimeSec(t);
+      setActiveScrubSec(t);
+      onSeek(t);
+    },
+    [getTimeFromX, onSeek]
+  );
+
+  const handleScrubEnd = useCallback(
+    (x: number) => {
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setActiveScrubSec(t);
+      onSeekEnd(t);
+      resetControlsTimer();
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      scrubReleaseTimerRef.current = setTimeout(() => {
+        setActiveScrubSec(null);
+      }, 400);
+    },
+    [getTimeFromX, onSeekEnd, resetControlsTimer]
+  );
+
+  const handleScrubFinalize = useCallback(() => {
+    if (isScrubbingRef.current) {
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
+      const t = lastScrubTimeRef.current;
+      setActiveScrubSec(t);
+      onSeekEnd(t);
+      resetControlsTimer();
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      scrubReleaseTimerRef.current = setTimeout(() => {
+        setActiveScrubSec(null);
+      }, 400);
+    }
+  }, [onSeekEnd, resetControlsTimer]);
+
+  const scrubGesture = useMemo(() => {
+    let g = Gesture.Pan()
+      .minDistance(0) // immediately grabs when touched on the track touch target!
+      .onBegin((e) => {
+        'worklet';
+        runOnJS(handleScrubBegin)(e.x);
+      })
+      .onUpdate((e) => {
+        'worklet';
+        runOnJS(handleScrubMove)(e.x);
+      })
+      .onEnd((e) => {
+        'worklet';
+        runOnJS(handleScrubEnd)(e.x);
+      })
+      .onFinalize(() => {
+        'worklet';
+        runOnJS(handleScrubFinalize)();
+      });
+
+    return g;
+  }, [handleScrubBegin, handleScrubMove, handleScrubEnd, handleScrubFinalize]);
 
   const handleTrackLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width;
@@ -289,9 +377,23 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   };
 
   // ── Progress calculations ──────────────────────────────────────────────────
-  const displayTimeSec = isScrubbing ? scrubTimeSec : currentTimeSec;
+  const displayTimeSec = activeScrubSec !== null ? activeScrubSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTimeSec / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
+
+  // ── Couple / Gallery Name + Video Title (e.g. Soumi Abhinav Wedding Trailer) ──
+  const displayTitle = useMemo(() => {
+    return formatCinemaDisplayTitle(eventTitle, videoItem, title);
+  }, [eventTitle, videoItem, title]);
+
+  // ── Category Subtitle (e.g. Director's Cut, Candid Diaries, etc.) ───────────
+  const categorySubtitle = useMemo(() => {
+    const raw = (subtitle || videoItem?.cinemaCategory || videoItem?.category || videoItem?.meta?.category || '').trim();
+    if (raw && raw.toUpperCase() !== 'CINEMA') {
+      return formatCinemaCategoryTitleCase(raw);
+    }
+    return "Director's Cut";
+  }, [subtitle, videoItem]);
 
   // ── Rotated Container Style ────────────────────────────────────────────────
   const containerStyle = useMemo<ViewStyle>(() => {
@@ -305,7 +407,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
         backgroundColor: '#000000',
       };
     }
-    // Compulsorily rotated 90 degrees clockwise to fill portrait screens in landscape
+    // Compulsorily rotated into landscape when phone is held in portrait
     return {
       position: 'absolute',
       top: (screenHeight - screenWidth) / 2,
@@ -317,18 +419,29 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
     };
   }, [isPhysicalLandscape, screenWidth, screenHeight]);
 
-  // Safe area insets protection for notch / dynamic island / home bar
-  const paddingLeft = isPhysicalLandscape ? Math.max(insets.left, 24) : Math.max(insets.top, 24);
-  const paddingRight = isPhysicalLandscape ? Math.max(insets.right, 24) : Math.max(insets.bottom, 24);
-  const paddingTop = isPhysicalLandscape ? Math.max(insets.top, 16) : 16;
-  const paddingBottom = isPhysicalLandscape ? Math.max(insets.bottom, 16) : 16;
+  // Symmetric horizontal safe area padding ensures seekbar and HUD are perfectly centered
+  const horizontalPadding = isPhysicalLandscape
+    ? Math.max(insets.left, insets.right, 28) + 20
+    : Math.max(insets.top, insets.bottom, 28) + 20;
+
+  const paddingLeft = horizontalPadding;
+  const paddingRight = horizontalPadding;
+
+  const paddingTop = isPhysicalLandscape
+    ? Math.max(insets.top, 20)
+    : 22;
+
+  const paddingBottom = isPhysicalLandscape
+    ? Math.max(insets.bottom, 20)
+    : 22;
 
   return (
     <View style={styles.root}>
       {/* ── Compulsorily Rotated Landscape Stage ── */}
       <View style={containerStyle}>
         {/* ── Video Canvas ── */}
-        <Pressable onPress={handleVideoTouch} style={StyleSheet.absoluteFillObject}>
+            <GestureDetector gesture={tapGestures}>
+              <View style={StyleSheet.absoluteFillObject}>
           {/* Background Poster fallback */}
           {cleanThumbnailUrl ? (
             <ExpoImage
@@ -350,6 +463,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             surfaceType="textureView"
             fullscreenOptions={{ enable: false }}
             showsTimecodes={false}
+            allowsVideoFrameAnalysis={false}
           />
 
           {/* ±10s Double Tap Ripple Feedback */}
@@ -377,14 +491,14 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
           {/* Buffering Spinner */}
           {isBuffering && !isCompleted ? (
             <View style={styles.bufferingOverlay} pointerEvents="none">
-              <ActivityIndicator size="large" color="#E50914" />
+              <ActivityIndicator size="large" color="#E5C483" />
             </View>
           ) : null}
 
           {/* Error Overlay */}
           {isError ? (
             <View style={styles.errorOverlay}>
-              <Ionicons name="alert-circle-outline" size={38} color="#E50914" />
+              <Ionicons name="alert-circle-outline" size={38} color="#E5C483" />
               <Text style={styles.errorTitle}>Stream Interrupted</Text>
               <Text style={styles.errorSubtitle}>
                 {errorMessage || 'Please check your connection.'}
@@ -401,7 +515,8 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
               </TouchableOpacity>
             </View>
           ) : null}
-        </Pressable>
+        </View>
+      </GestureDetector>
 
         {/* ── Netflix HUD Overlay ── */}
         <Animated.View
@@ -421,17 +536,23 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             ]}
             pointerEvents={areControlsVisible ? 'box-none' : 'none'}
           >
-            {/* Left: Netflix Red N Badge + Video Title */}
+            {/* Left: Brand Logo + Couple/Gallery Name + Video Title */}
             <View style={styles.topLeftContainer}>
-              <View style={styles.brandBadge}>
-                <Text style={styles.brandNText}>N</Text>
-              </View>
+              <ExpoImage
+                source={require('../../../assets/images/logo-header-white.png')}
+                style={styles.brandLogo}
+                contentFit="contain"
+              />
               <View style={styles.titleWrapper}>
                 <Text style={styles.titleText} numberOfLines={1}>
-                  {title}
+                  {displayTitle}
                 </Text>
                 {resumedToastSec !== null ? (
                   <View style={styles.resumedRow}>
+                    <Text style={styles.subtitleText} numberOfLines={1}>
+                      {categorySubtitle}
+                    </Text>
+                    <Text style={styles.resumedDot}>•</Text>
                     <Text style={styles.resumedText}>
                       Resumed from {formatTime(resumedToastSec)}
                     </Text>
@@ -439,9 +560,9 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
                       <Text style={styles.restartLink}>Restart</Text>
                     </TouchableOpacity>
                   </View>
-                ) : subtitle ? (
+                ) : categorySubtitle ? (
                   <Text style={styles.subtitleText} numberOfLines={1}>
-                    {subtitle}
+                    {categorySubtitle}
                   </Text>
                 ) : null}
               </View>
@@ -452,7 +573,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
               <ScreenCastButton
                 size={22}
                 color="#FFFFFF"
-                activeColor="#E50914"
+                activeColor="#E5C483"
                 videoTitle={title}
               />
               <TouchableOpacity
@@ -527,7 +648,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* ── Bottom Scrubber (Netflix Red Bar + Remaining Time) ── */}
+          {/* ── Bottom Scrubber (Time above seekbar on left + Full-width Seekbar) ── */}
           <LinearGradient
             colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.95)']}
             style={[
@@ -540,72 +661,94 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             ]}
             pointerEvents={areControlsVisible ? 'box-none' : 'none'}
           >
-            <View style={styles.scrubberRow}>
-              {/* Interactive Scrubber Track */}
-              <View
-                style={styles.trackTouchArea}
-                onLayout={handleTrackLayout}
-                {...scrubberPanResponder.panHandlers}
-              >
-                {/* Background Track */}
-                <View style={styles.trackBackground}>
-                  {/* Buffer Track */}
-                  <View
-                    style={[styles.trackBuffer, { width: `${bufferedRatio * 100}%` }]}
-                  />
-                  {/* Played Progress Track (Netflix Red) */}
-                  <View
-                    style={[styles.trackPlayed, { width: `${progressRatio * 100}%` }]}
-                  />
-                </View>
-
-                {/* Red Circular Thumb */}
-                {trackWidth > 0 ? (
-                  <View
-                    style={[
-                      styles.scrubThumb,
-                      isScrubbing && styles.scrubThumbActive,
-                      {
-                        left: Math.max(
-                          0,
-                          Math.min(
-                            trackWidth - (isScrubbing ? 18 : 14),
-                            progressRatio * trackWidth - (isScrubbing ? 9 : 7)
-                          )
-                        ),
-                      },
-                    ]}
-                    pointerEvents="none"
-                  />
-                ) : null}
-
-                {/* Floating Time Bubble while dragging */}
-                {isScrubbing && trackWidth > 0 ? (
-                  <View
-                    style={[
-                      styles.scrubBubble,
-                      {
-                        left: Math.max(
-                          0,
-                          Math.min(trackWidth - 54, progressRatio * trackWidth - 27)
-                        ),
-                      },
-                    ]}
-                    pointerEvents="none"
-                  >
-                    <Text style={styles.scrubBubbleText}>
-                      {formatTime(displayTimeSec)}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-
-              {/* Remaining Time on Far Right (e.g. 2:12:24) */}
-              <Text style={styles.remainingText}>
-                {formatRemaining(displayTimeSec, durationSec)}
+            {/* Time above seekbar on left: position / total time */}
+            <View style={styles.timeRow}>
+              <Text style={styles.timecodeText}>
+                {formatTime(displayTimeSec)} / {formatTime(durationSec)}
               </Text>
             </View>
+
+            <View style={styles.scrubberRow}>
+              {/* Interactive Scrubber Track */}
+              <GestureDetector gesture={scrubGesture}>
+                <View
+                  style={styles.trackTouchArea}
+                  onLayout={handleTrackLayout}
+                >
+                  {/* Background Track */}
+                  <View style={styles.trackBackground}>
+                    {/* Buffer Track */}
+                    <View
+                      style={[styles.trackBuffer, { width: `${bufferedRatio * 100}%` }]}
+                    />
+                    {/* Played Progress Track */}
+                    <View
+                      style={[styles.trackPlayed, { width: `${progressRatio * 100}%` }]}
+                    />
+                  </View>
+
+                  {/* Circular Thumb */}
+                  {trackWidth > 0 ? (
+                    <View
+                      style={[
+                        styles.scrubThumb,
+                        isScrubbing && styles.scrubThumbActive,
+                        {
+                          left: Math.max(
+                            0,
+                            Math.min(
+                              trackWidth - (isScrubbing ? 18 : 14),
+                              progressRatio * trackWidth - (isScrubbing ? 9 : 7)
+                            )
+                          ),
+                        },
+                      ]}
+                      pointerEvents="none"
+                    />
+                  ) : null}
+
+                  {/* Floating Time Bubble while dragging */}
+                  {isScrubbing && trackWidth > 0 ? (
+                    <View
+                      style={[
+                        styles.scrubBubble,
+                        {
+                          left: Math.max(
+                            0,
+                            Math.min(trackWidth - 54, progressRatio * trackWidth - 27)
+                          ),
+                        },
+                      ]}
+                      pointerEvents="none"
+                    >
+                      <Text style={styles.scrubBubbleText}>
+                        {formatTime(displayTimeSec)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </GestureDetector>
+            </View>
           </LinearGradient>
+        </Animated.View>
+
+        {/* ── YouTube-style Bottom-Right Watermark Logo (visible when controls are hidden) ── */}
+        <Animated.View
+          style={[
+            styles.watermarkContainer,
+            {
+              bottom: paddingBottom + 6,
+              right: paddingRight,
+            },
+            watermarkAnimatedStyle,
+          ]}
+          pointerEvents="none"
+        >
+          <ExpoImage
+            source={require('../../../assets/images/logo-header-white.png')}
+            style={styles.watermarkLogo}
+            contentFit="contain"
+          />
         </Animated.View>
       </View>
     </View>
@@ -638,18 +781,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 20,
   },
-  brandBadge: {
-    width: 24,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandNText: {
-    fontFamily: FONT_JOST_SEMIBOLD,
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#E50914', // Classic Netflix Red
-    letterSpacing: -1,
+  brandLogo: {
+    width: 88,
+    height: 26,
   },
   titleWrapper: {
     flex: 1,
@@ -676,6 +810,10 @@ const styles = StyleSheet.create({
     fontFamily: FONT_JOST_REGULAR,
     fontSize: 11,
     color: 'rgba(255, 255, 255, 0.75)',
+  },
+  resumedDot: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.4)',
   },
   restartLink: {
     fontFamily: FONT_JOST_SEMIBOLD,
@@ -722,7 +860,7 @@ const styles = StyleSheet.create({
   },
   trackTouchArea: {
     flex: 1,
-    height: 40,
+    height: 48,
     justifyContent: 'center',
     position: 'relative',
   },
@@ -745,15 +883,16 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: '#E50914', // Netflix Red
+    backgroundColor: '#E5C483', // Champagne Gold matching vertical player
   },
   scrubThumb: {
     position: 'absolute',
-    top: 13,
+    top: '50%',
+    marginTop: -7,
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: '#E50914',
+    backgroundColor: '#E5C483',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.6,
@@ -761,13 +900,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   scrubThumbActive: {
-    top: 11,
+    top: '50%',
+    marginTop: -9,
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#E50914',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E5C483',
     shadowOpacity: 0.8,
     shadowRadius: 4,
     elevation: 6,
@@ -790,12 +930,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
-  remainingText: {
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: -4,
+  },
+  timecodeText: {
     fontFamily: FONT_JOST_MEDIUM,
-    fontSize: 13,
+    fontSize: 12.5,
     color: 'rgba(255, 255, 255, 0.9)',
-    minWidth: 54,
-    textAlign: 'right',
+    letterSpacing: 0.5,
   },
 
   // ─── Double Tap Ripple ────────────────────────────────────────────────────
@@ -860,7 +1004,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   retryButton: {
-    backgroundColor: '#E50914',
+    backgroundColor: '#E5C483',
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 6,
@@ -868,7 +1012,24 @@ const styles = StyleSheet.create({
   retryButtonText: {
     fontFamily: FONT_JOST_SEMIBOLD,
     fontSize: 12,
-    color: '#FFFFFF',
+    color: '#000000',
     letterSpacing: 1.5,
+  },
+
+  // ─── YouTube-style Watermark ──────────────────────────────────────────────
+  watermarkContainer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    elevation: 25,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.9,
+    shadowRadius: 3,
+  },
+  watermarkLogo: {
+    width: 100,
+    height: 30,
   },
 });

@@ -3,6 +3,9 @@ import {
   StyleSheet,
   Modal,
   StatusBar,
+  Image,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { useVideoPlayer, VideoPlayer } from 'expo-video';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -13,6 +16,7 @@ import { playbackFocusManager } from '../../services/playbackFocusManager';
 import { videoWatchProgressManager } from '../../services/videoWatchProgressManager';
 import { HorizontalCinemaPlayer } from '../cinema/HorizontalCinemaPlayer';
 import { VerticalCinemaPlayer } from '../cinema/VerticalCinemaPlayer';
+import { classifyCinemaCategory, formatCinemaCategoryTitleCase, formatCinemaDisplayTitle, isVerticalVideo } from '../cinema/CinemaLibraryView';
 
 interface CinemaVideoModalProps {
   visible: boolean;
@@ -31,6 +35,7 @@ interface CommonPlayerProps {
   allowDownloads?: boolean;
   resumeTimeSec?: number;
   videoItem?: any;
+  eventTitle?: string;
 }
 
 function VideoPlayerView({
@@ -43,6 +48,7 @@ function VideoPlayerView({
   allowDownloads = true,
   resumeTimeSec,
   videoItem,
+  eventTitle,
 }: CommonPlayerProps & { player: VideoPlayer }) {
   const [playerStatus, setPlayerStatus] = useState<string>(player.status);
   const [isPlaying, setIsPlaying] = useState<boolean>(player.playing);
@@ -58,8 +64,12 @@ function VideoPlayerView({
   const userPausedRef = useRef<boolean>(false);
   const isStalledRef = useRef<boolean>(false);
   const isSeekingRef = useRef<boolean>(false);
+  const seekTargetTimeRef = useRef<number | null>(null);
+  const seekCommitTimeRef = useRef<number>(0);
+  const seekSettlingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEndedRef = useRef<boolean>(false);
   const lastTimeRef = useRef<number>(-1);
+  const wasPlayingBeforeBgRef = useRef<boolean>(false);
   const wasPlayingBeforeSeekRef = useRef<boolean>(true);
   const seekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatTickRef = useRef<number>(0);
@@ -97,7 +107,27 @@ function VideoPlayerView({
 
     try {
       player.timeUpdateEventInterval = 0.25;
+      if (resumeTimeSec && resumeTimeSec > 0) {
+        hasResumedRef.current = true;
+        player.currentTime = resumeTimeSec;
+        console.log(`[CINEMA RESUME ⏱️ MOUNT] Resumed at saved position: ${resumeTimeSec.toFixed(1)}s`);
+      } else {
+        player.currentTime = 0;
+      }
     } catch {}
+
+    // Ensure video is played immediately on mount for both horizontal & vertical
+    userPausedRef.current = false;
+    isEndedRef.current = false;
+    if (player.status !== 'error') {
+      try {
+        player.muted = false;
+        player.play();
+        console.log(`[CINEMA VIEW 🎬 AUTO-PLAY] Immediate play() initiated on mount.`);
+      } catch (e) {
+        console.warn(`[CINEMA VIEW ⚠️] Immediate play() error:`, e);
+      }
+    }
 
     const statusSub = (player as any).addListener?.('statusChange', (payload: any) => {
       const newStatus = payload?.status || player.status;
@@ -108,113 +138,71 @@ function VideoPlayerView({
       }
 
       if (newStatus === 'loading') {
-        // Scrubbing or buffering started. Mute audio immediately to prevent random audio chirps!
-        player.muted = true;
-        isStalledRef.current = true;
         setIsBufferingOverlay(true);
       } else if (newStatus === 'readyToPlay') {
-        if (resumeTimeSec && resumeTimeSec > 0 && !hasResumedRef.current) {
+        setIsBufferingOverlay(false);
+        if (resumeTimeSec && resumeTimeSec > 0 && (!hasResumedRef.current || Math.abs((player.currentTime || 0) - resumeTimeSec) > 2)) {
           hasResumedRef.current = true;
           try {
             player.currentTime = resumeTimeSec;
-            console.log(`[CINEMA RESUME ⏱️] Resumed at saved position: ${resumeTimeSec.toFixed(1)}s`);
+            console.log(`[CINEMA RESUME ⏱️ READY] Resumed at saved position: ${resumeTimeSec.toFixed(1)}s`);
+          } catch {}
+        } else if (!resumeTimeSec) {
+          try {
+            player.currentTime = 0;
           } catch {}
         }
-        const cur = player.currentTime ?? 0;
-        const buf = player.bufferedPosition ?? 0;
-        const bufferedAhead = buf - cur;
-        if (bufferedAhead < 2.0 && !userPausedRef.current) {
-          console.log(`[CINEMA STATUS BUFFER ⏳] Status readyToPlay but buffer ahead is only ${bufferedAhead.toFixed(1)}s < 2.0s. Holding pause & mute until buffer reaches 2.0s...`);
-          player.muted = true;
-          try { player.pause(); } catch {}
-          isStalledRef.current = true;
-          setIsBufferingOverlay(true);
-        } else if (bufferedAhead >= 2.0 && !userPausedRef.current && !isEndedRef.current) {
-          console.log(`[CINEMA STATUS BUFFER ✅] Status readyToPlay with healthy buffer (${bufferedAhead.toFixed(1)}s). Unmuting & playing!`);
+        // Ensure audio is unmuted and playing if not paused by user
+        if (!isSeekingRef.current && !userPausedRef.current) {
           player.muted = false;
-          try { player.play(); } catch {}
-          isStalledRef.current = false;
-          setIsBufferingOverlay(false);
+          try {
+            player.play();
+          } catch {}
         }
       }
     });
 
     const playingSub = (player as any).addListener?.('playingChange', (payload: any) => {
       const playing = payload?.isPlaying ?? player.playing;
-      const cur = player.currentTime ?? 0;
-      const buf = player.bufferedPosition ?? 0;
-      const dur = player.duration ?? 0;
-      const bufferedAhead = buf - cur;
-
-      console.log(`[CINEMA EVENT ▶️ PLAYING] isPlaying: ${playing} | Buffer: ${buf.toFixed(1)}s | Current: ${cur.toFixed(1)}s | Ahead: ${bufferedAhead.toFixed(1)}s`);
       setIsPlaying(playing);
 
       if (playing) {
         userPausedRef.current = false;
         isEndedRef.current = false;
-        if (bufferedAhead >= 1.5) {
+        setIsBufferingOverlay(false);
+        // Guarantee audio is unmuted during active playback!
+        if (!isSeekingRef.current) {
           player.muted = false;
-          isStalledRef.current = false;
-          setIsBufferingOverlay(false);
-        } else if (bufferedAhead < 1.0 && isSeekingRef.current) {
-          // Premature play right after a seek with < 1.0s buffer:
-          // Immediately pause and mute to avoid playing a 300ms audio blip before freezing!
-          console.log(`[CINEMA PLAY GUARD 🛡️] Premature play after seek (only ${bufferedAhead.toFixed(1)}s buffer). Pausing & muting to prevent glitch!`);
-          player.muted = true;
-          try { player.pause(); } catch {}
-          isStalledRef.current = true;
-          setIsBufferingOverlay(true);
         }
       } else if (isEndedRef.current) {
-          userPausedRef.current = true;
-          setIsBufferingOverlay(false);
-        } else if (bufferedAhead < 1.0 || isStalledRef.current || isSeekingRef.current) {
-          // Buffer starvation / seek underrun (e.g. backward scrub to unbuffered section)
-          console.log(`[CINEMA STALL ⚠️] Player stalled (buffer ahead: ${bufferedAhead.toFixed(1)}s). Watchdog will auto-resume once buffer >= 2.0s.`);
-          isStalledRef.current = true;
-          userPausedRef.current = false;
-          setIsBufferingOverlay(true);
-        } else {
-          // Intentional user pause during smooth playback
-          console.log(`[CINEMA EVENT ⏸️] User paused playback at ${cur.toFixed(1)}s (buffer ahead: ${bufferedAhead.toFixed(1)}s).`);
-          userPausedRef.current = true;
-          isStalledRef.current = false;
-          setIsBufferingOverlay(false);
-        }
+        userPausedRef.current = true;
+        setIsBufferingOverlay(false);
+      }
     });
 
     const timeSub = (player as any).addListener?.('timeUpdate', (payload: any) => {
       const cur = payload?.currentTime ?? player.currentTime ?? 0;
       const buf = payload?.bufferedPosition ?? player.bufferedPosition ?? 0;
       if (typeof payload?.bufferedPosition === 'number') setBufferedSec(buf);
+
+      // Guard against stale timeUpdate during and immediately after seeking:
+      // If we just sought to target T, ignore incoming ticks reporting pre-seek positions during the settling window.
+      if (isSeekingRef.current && seekTargetTimeRef.current !== null) {
+        if (Math.abs(cur - seekTargetTimeRef.current) > 1.0 && Date.now() - seekCommitTimeRef.current < 450) {
+          return;
+        }
+      }
+
       if (typeof payload?.currentTime === 'number') setCurrentTimeSec(cur);
 
-      const prevTime = lastTimeRef.current;
       lastTimeRef.current = cur;
-
-      // Playhead jump detection (> 1.2s jump = scrubbing / seeking)
-      if (prevTime >= 0 && Math.abs(cur - prevTime) > 1.2) {
-        console.log(`[CINEMA SEEK ⏩] Jump detected: ${prevTime.toFixed(1)}s -> ${cur.toFixed(1)}s`);
-        isSeekingRef.current = true;
-        wasPlayingBeforeSeekRef.current = !userPausedRef.current;
-
-        const bufferedAhead = buf - cur;
-        if (bufferedAhead < 2.0 && wasPlayingBeforeSeekRef.current) {
-          console.log(`[CINEMA SEEK BUFFER 🛡️] Buffer at seek point is only ${bufferedAhead.toFixed(1)}s. Muting & pausing until buffer >= 2.0s...`);
-          player.muted = true;
-          try { player.pause(); } catch {}
-          isStalledRef.current = true;
-          setIsBufferingOverlay(true);
-        }
-
-        if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-        seekTimeoutRef.current = setTimeout(() => {
-          isSeekingRef.current = false;
-        }, 1000);
-      }
 
       // Persist watch progress periodically
       const dur = player.duration ?? 0;
+      // Protect against overwriting saved progress before initial resume seek takes effect
+      if (resumeTimeSec && resumeTimeSec > 2.0 && cur < 1.0) {
+        return;
+      }
       if (videoItem && dur > 0 && cur > 0) {
         videoWatchProgressManager.saveProgress(videoItem, cur, dur);
       }
@@ -222,6 +210,12 @@ function VideoPlayerView({
 
     const sourceLoadSub = (player as any).addListener?.('sourceLoad', () => {
       console.log(`[CINEMA EVENT 📦 SOURCE LOADED] Metadata loaded! Duration: ${player.duration?.toFixed(1) ?? '?'}s`);
+      if (!isSeekingRef.current && !userPausedRef.current) {
+        player.muted = false;
+        try {
+          player.play();
+        } catch {}
+      }
     });
 
     const endSub = (player as any).addListener?.('playToEnd', () => {
@@ -231,16 +225,53 @@ function VideoPlayerView({
       setIsBufferingOverlay(false);
       setIsCompleted(true);
       if (videoItem) {
-        videoWatchProgressManager.clearProgress(videoItem);
+        videoWatchProgressManager.markCompleted(videoItem);
+      }
+    });
+
+    // ── AppState Lifecycle (Background / Screen Cast Guard) ───────────────────
+    // When the app moves to background (or phone is locked / user switches apps):
+    // 1. If AirPlay / Screen Cast is NOT active: Pause playback immediately so it never plays in bg.
+    // 2. If AirPlay / Screen Cast IS active: Allow TV playback to continue seamlessly in background.
+    // 3. When app returns to foreground: Auto-resume if it was playing before backgrounding.
+    const appStateSub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const isExternal = Boolean((player as any)?.isExternalPlaybackActive);
+      console.log(`[CINEMA APP_STATE 📱] State: ${nextAppState} | isExternal: ${isExternal} | playing: ${player.playing}`);
+
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        if (!isExternal) {
+          if (player.playing && !userPausedRef.current) {
+            wasPlayingBeforeBgRef.current = true;
+            try {
+              player.pause();
+            } catch {}
+            console.log('[CINEMA BG ⏸️] App backgrounded without AirPlay/Screen Cast — paused video.');
+          } else {
+            wasPlayingBeforeBgRef.current = false;
+          }
+        } else {
+          console.log('[CINEMA BG 📺] App backgrounded WITH Screen Cast/AirPlay active — maintaining external stream on TV.');
+        }
+      } else if (nextAppState === 'active') {
+        if (!isExternal && wasPlayingBeforeBgRef.current && !userPausedRef.current && !isEndedRef.current) {
+          wasPlayingBeforeBgRef.current = false;
+          try {
+            player.muted = false;
+            player.play();
+            console.log('[CINEMA FG ▶️] App returned to active foreground — resumed playback.');
+          } catch {}
+        }
       }
     });
 
     // 400ms Heartbeat Watchdog:
-    // When AVPlayer stalls on iOS due to buffer starvation, Apple's internal clock stops,
-    // which prevents periodic time observers from firing. This JavaScript interval runs
-    // continuously, monitoring buffer fill from Cloudflare R2 and auto-resuming playback
-    // as soon as a healthy 2.0s cushion is reached!
+    // Synchronizes UI state and ensures playback and audio are resilient
     const heartbeat = setInterval(() => {
+      // Do NOT auto-resume in heartbeat if app is in background and AirPlay is not active!
+      if (AppState.currentState !== 'active' && !(player as any)?.isExternalPlaybackActive) {
+        return;
+      }
+
       heartbeatTickRef.current += 1;
       const s = player.status;
       const p = player.playing;
@@ -249,14 +280,19 @@ function VideoPlayerView({
       const duration = player.duration ?? 0;
       const bufferedAhead = buffered - current;
 
-      if (heartbeatTickRef.current % 3 === 0) {
+      if (heartbeatTickRef.current % 5 === 0) {
         console.log(`[CINEMA HEARTBEAT 💓] Status: ${s} | Playing: ${p} | Buffered: ${buffered.toFixed(1)}s / ${duration.toFixed(1)}s | Current: ${current.toFixed(1)}s | Ahead: ${bufferedAhead.toFixed(1)}s`);
       }
 
       setPlayerStatus(s);
       setIsPlaying(p);
       if (player.bufferedPosition != null) setBufferedSec(buffered);
-      if (player.currentTime != null) setCurrentTimeSec(current);
+      if (player.currentTime != null) {
+        const isStaleSeek = isSeekingRef.current && seekTargetTimeRef.current !== null && Math.abs(current - seekTargetTimeRef.current) > 1.0 && Date.now() - seekCommitTimeRef.current < 450;
+        if (!isStaleSeek) {
+          setCurrentTimeSec(current);
+        }
+      }
       if (player.duration != null) setDurationSec(duration);
 
       const isNearEnd = duration > 0 && current >= duration - 0.2;
@@ -268,19 +304,25 @@ function VideoPlayerView({
         setIsCompleted(false);
       }
 
-      // If playback is not active, not intentionally paused by the user, and not at the end:
-      if (!p && !userPausedRef.current && !isEndedRef.current && s !== 'error') {
-        if (bufferedAhead >= 2.0) {
-          console.log(`[CINEMA WATCHDOG 🐕] Buffer ready (${bufferedAhead.toFixed(1)}s ahead >= 2.0s). Auto-resuming playback at ${current.toFixed(1)}s!`);
-          player.muted = false;
-          try {
-            player.play();
-          } catch {}
-          isStalledRef.current = false;
-          setIsBufferingOverlay(false);
-        } else {
-          // Buffer still filling up
-          setIsBufferingOverlay(true);
+      // Audio safety: if playing and not seeking, guarantee audio is never left muted
+      if (p && !isSeekingRef.current && player.muted) {
+        player.muted = false;
+      }
+
+      // Auto-resume if stalled by network (not user-paused, not ended, not seeking, not error)
+      // When AirPlay is active to TV, do NOT force play() or interfere with the TV's independent buffering
+      const isExternal = (player as any).isExternalPlaybackActive;
+      if (!p && !userPausedRef.current && !isEndedRef.current && !isSeekingRef.current && s !== 'error') {
+        if (!isExternal) {
+          if (bufferedAhead >= 0.5 || s === 'readyToPlay') {
+            player.muted = false;
+            try {
+              player.play();
+            } catch {}
+            setIsBufferingOverlay(false);
+          } else {
+            setIsBufferingOverlay(true);
+          }
         }
       }
     }, 400);
@@ -288,6 +330,7 @@ function VideoPlayerView({
     return () => {
       clearInterval(heartbeat);
       if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+      appStateSub?.remove?.();
       statusSub?.remove?.();
       playingSub?.remove?.();
       timeSub?.remove?.();
@@ -297,10 +340,19 @@ function VideoPlayerView({
         if (!isEndedRef.current) {
           const cur = player.currentTime ?? 0;
           const dur = player.duration ?? 0;
-          if (videoItem && dur > 0 && cur > 0) {
-            videoWatchProgressManager.saveProgress(videoItem, cur, dur);
+          const isStaleZero = resumeTimeSec && resumeTimeSec > 2.0 && cur < 1.0;
+          if (!isStaleZero && videoItem && dur > 0 && cur > 0) {
+            if (cur / dur >= 0.9) {
+              videoWatchProgressManager.markCompleted(videoItem);
+            } else {
+              videoWatchProgressManager.saveProgress(videoItem, cur, dur);
+            }
           }
         }
+      } catch {}
+      try {
+        player.allowsExternalPlayback = false; // Disconnect AirPlay route on close
+        player.showNowPlayingNotification = false;
       } catch {}
       playbackFocusManager.notifyPlaybackStopped();
       console.log(`[CINEMA VIEW 🎬 UNMOUNT] Closed for URL: ${videoUrl.slice(0, 50)}...`);
@@ -310,10 +362,13 @@ function VideoPlayerView({
   const handleClose = useCallback(() => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      // Always disconnect AirPlay and stop playback on the player directly,
+      // because returnPlayer() no-ops if the URL isn't in the preload cache (new player path).
+      player.allowsExternalPlayback = false;
+      player.showNowPlayingNotification = false;
+      player.pause();
       if (videoUrl) {
         videoPreloadManager.returnPlayer(videoUrl);
-      } else {
-        player.pause();
       }
     } catch {}
     onClose();
@@ -340,36 +395,57 @@ function VideoPlayerView({
       setIsCompleted(false);
       isEndedRef.current = false;
       userPausedRef.current = false;
+      player.muted = false;
       player.play();
     } catch {}
   }, [player]);
 
+  const lastSeekThrottleRef = useRef(0);
+  const seekThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onSeekStart = useCallback(() => {
-    player.muted = true;
     isSeekingRef.current = true;
-  }, [player]);
+  }, []);
 
   const onSeek = useCallback((targetTimeSec: number) => {
-    try {
-      player.currentTime = targetTimeSec;
-      setCurrentTimeSec(targetTimeSec);
-    } catch {}
+    seekTargetTimeRef.current = targetTimeSec;
+    seekCommitTimeRef.current = Date.now();
+    setCurrentTimeSec(targetTimeSec);
+    const now = Date.now();
+    // Throttle native AVPlayer currentTime assignments to ~80ms intervals during active drag
+    if (now - lastSeekThrottleRef.current > 80) {
+      lastSeekThrottleRef.current = now;
+      try {
+        player.currentTime = targetTimeSec;
+      } catch {}
+    } else {
+      if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
+      seekThrottleTimerRef.current = setTimeout(() => {
+        try {
+          player.currentTime = targetTimeSec;
+        } catch {}
+      }, 80);
+    }
   }, [player]);
 
   const onSeekEnd = useCallback((targetTimeSec: number) => {
+    if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
+    if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
+    seekTargetTimeRef.current = targetTimeSec;
+    seekCommitTimeRef.current = Date.now();
     try {
       player.currentTime = targetTimeSec;
       setCurrentTimeSec(targetTimeSec);
-    } catch {}
-    isSeekingRef.current = false;
-    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-    seekTimeoutRef.current = setTimeout(() => {
-      const cur = player.currentTime ?? 0;
-      const buf = player.bufferedPosition ?? 0;
-      if (buf - cur >= 1.5 && !userPausedRef.current) {
-        player.muted = false;
+      player.muted = false;
+      if (!userPausedRef.current && player.status !== 'error') {
+        player.play();
       }
-    }, 350);
+    } catch {}
+    // Keep isSeekingRef active for 400ms after seek release to block stale async timeUpdate ticks
+    seekSettlingTimerRef.current = setTimeout(() => {
+      isSeekingRef.current = false;
+      seekTargetTimeRef.current = null;
+    }, 400);
   }, [player]);
 
   const onDoubleTapSeek = useCallback((direction: 'back' | 'forward') => {
@@ -390,22 +466,68 @@ function VideoPlayerView({
       player.currentTime = 0;
       setCurrentTimeSec(0);
       setResumedToastSec(null);
+      player.muted = false;
+      player.play();
       if (videoItem) {
         videoWatchProgressManager.clearProgress(videoItem);
       }
     } catch {}
   }, [player, videoItem]);
 
-  const videoW = Number(videoItem?.videoWidth || videoItem?.exif?.videoWidth || videoItem?.width || videoItem?.meta?.width) || 0;
-  const videoH = Number(videoItem?.videoHeight || videoItem?.exif?.videoHeight || videoItem?.height || videoItem?.meta?.height) || 0;
-  const isExplicitHorizontal = videoW > 0 && videoH > 0 && videoW > videoH;
+  // Ground-truth runtime track size from expo-video
+  const [trackSize, setTrackSize] = useState<{ width: number; height: number } | null>(() => {
+    const size = (player as any)?.videoTrack?.size;
+    if (size && size.width > 0 && size.height > 0) {
+      return { width: size.width, height: size.height };
+    }
+    return null;
+  });
 
-  const isVertical = !isExplicitHorizontal && (
-    (videoH > 0 && videoW > 0 && videoH > videoW) ||
-    (videoItem?.aspectRatio && videoItem.aspectRatio < 0.95) ||
-    (videoItem?.category && videoItem.category.toLowerCase().includes('reel')) ||
-    (title && title.toLowerCase().includes('reel'))
-  );
+  useEffect(() => {
+    const trackSub = (player as any).addListener?.('videoTrackChange', (payload: any) => {
+      const size = payload?.videoTrack?.size || (player as any)?.videoTrack?.size;
+      if (size && size.width > 0 && size.height > 0) {
+        setTrackSize({ width: size.width, height: size.height });
+      }
+    });
+    return () => {
+      trackSub?.remove?.();
+    };
+  }, [player]);
+
+  const isVertical = useMemo(() => {
+    // 1. If player has loaded runtime video track size, it is the ultimate ground truth
+    if (trackSize && trackSize.width > 0 && trackSize.height > 0) {
+      return trackSize.height > trackSize.width;
+    }
+
+    // 2. Explicit metadata and category check via unified helper
+    if (isVerticalVideo(videoItem)) {
+      return true;
+    }
+
+    // 3. Fallback keyword checks on title/subtitle
+    const titleClean = (title || '').toLowerCase();
+    const subClean = (subtitle || '').toLowerCase();
+    if (
+      titleClean.includes('reel') ||
+      titleClean.includes('vertical') ||
+      titleClean.includes('short') ||
+      subClean.includes('candid') ||
+      subClean.includes('reel')
+    ) {
+      return true;
+    }
+
+    // 4. If explicit dimensions are present (ignoring synthetic 16x9 or 9x16 fallbacks)
+    const rawW = Number(videoItem?.videoWidth || videoItem?.exif?.videoWidth || videoItem?.width || videoItem?.meta?.width) || 0;
+    const rawH = Number(videoItem?.videoHeight || videoItem?.exif?.videoHeight || videoItem?.height || videoItem?.meta?.height) || 0;
+    if (rawW > 0 && rawH > 0 && !(rawW === 16 && rawH === 9) && !(rawW === 9 && rawH === 16)) {
+      return rawH > rawW;
+    }
+
+    return false;
+  }, [trackSize, videoItem, title, subtitle]);
 
   if (isVertical) {
     return (
@@ -444,6 +566,8 @@ function VideoPlayerView({
       cleanThumbnailUrl={cleanThumbnailUrl}
       title={title}
       subtitle={subtitle}
+      eventTitle={eventTitle}
+      videoItem={videoItem}
       onClose={handleClose}
       currentTimeSec={currentTimeSec}
       durationSec={durationSec}
@@ -467,20 +591,44 @@ function VideoPlayerView({
 }
 
 function VideoPlayerContentWithNewPlayer(props: CommonPlayerProps) {
-  const localPath = videoDownloadManager.getLocalPath(props.videoUrl);
-  const effectiveUrl = localPath ? (localPath.startsWith('file://') ? localPath : `file://${localPath}`) : props.videoUrl;
-  console.log(`[CINEMA MODAL 🎬] Creating new player for: ${effectiveUrl.slice(0, 60)}... (isLocal: ${!!localPath})`);
-  const player = useVideoPlayer(effectiveUrl, (p) => {
-    p.loop = false;
-    p.audioMixingMode = 'doNotMix';
-    p.allowsExternalPlayback = true;
-    p.bufferOptions = {
-      waitsToMinimizeStalling: true,
-      preferredForwardBufferDuration: 15,
-    };
-    console.log(`[CINEMA MODAL 🎬] New player initialized, calling play()...`);
-    p.play();
-  });
+  // CRITICAL FOR TV AIRPLAY: Smart TVs (Samsung, Hisense, LG, Roku) run third-party
+  // AirPlay 2 receiver SDKs that require a network-reachable HTTP/HTTPS URL.
+  // If initialized with a local sandbox file:// URL, Smart TVs hang on the AirPlay splash screen.
+  const effectiveUrl = props.videoUrl;
+  console.log(`[CINEMA MODAL 🎬] Creating new player for: ${effectiveUrl.slice(0, 60)}...`);
+  const player = useVideoPlayer(
+    {
+      uri: effectiveUrl,
+      metadata: {
+        title: props.title || 'The Wedding Film',
+        artist: props.subtitle || "Director's Cut",
+        artwork: props.thumbnailUrl || undefined,
+      },
+    },
+    (p) => {
+      p.loop = false;
+      p.muted = false;
+      p.audioMixingMode = 'auto';
+      p.allowsExternalPlayback = true;
+      p.showNowPlayingNotification = true;
+      if (props.resumeTimeSec && props.resumeTimeSec > 0) {
+        try {
+          p.currentTime = props.resumeTimeSec;
+          console.log(`[CINEMA NEW PLAYER 🎬] Pre-seeked to resume time: ${props.resumeTimeSec.toFixed(1)}s`);
+        } catch {}
+      } else {
+        try {
+          p.currentTime = 0;
+        } catch {}
+      }
+      p.bufferOptions = {
+        waitsToMinimizeStalling: true,
+        preferredForwardBufferDuration: 0, // 0 allows iOS and TV to negotiate optimal forward buffer
+      };
+      console.log(`[CINEMA MODAL 🎬] New player initialized, calling play()...`);
+      p.play();
+    }
+  );
 
   return <VideoPlayerView player={player} {...props} />;
 }
@@ -488,25 +636,43 @@ function VideoPlayerContentWithNewPlayer(props: CommonPlayerProps) {
 function VideoPlayerContentWithPreloaded(props: CommonPlayerProps & { player: VideoPlayer }) {
   useEffect(() => {
     props.player.loop = false;
-    props.player.audioMixingMode = 'doNotMix';
+    props.player.muted = false;
+    props.player.audioMixingMode = 'auto';
     props.player.allowsExternalPlayback = true;
+    props.player.showNowPlayingNotification = true;
+    if (props.resumeTimeSec && props.resumeTimeSec > 0) {
+      try {
+        props.player.currentTime = props.resumeTimeSec;
+        console.log(`[CINEMA PRELOAD ⚡] Pre-seeked immediately to ${props.resumeTimeSec.toFixed(1)}s`);
+      } catch (e) {
+        console.warn(`[CINEMA PRELOAD ⚠️] Pre-seek error:`, e);
+      }
+    } else {
+      try {
+        props.player.currentTime = 0;
+      } catch {}
+    }
     props.player.bufferOptions = {
       waitsToMinimizeStalling: true,
-      preferredForwardBufferDuration: 15,
+      preferredForwardBufferDuration: 0,
     };
-    console.log(`[CINEMA MODAL ⚡ PRELOAD HIT] Mounted with pre-buffered player! Status: ${props.player.status} | Buffered: ${props.player.bufferedPosition?.toFixed(2)}s`);
+    console.log(`[CINEMA MODAL ⚡ PRELOAD HIT] Mounted with pre-buffered player! Status: ${props.player.status} | Buffered: ${props.player.bufferedPosition?.toFixed(2)}s | Target Resume: ${props.resumeTimeSec ?? 0}s`);
     
     // 50ms settle tick so modal fade animation settles before hardware decode starts
     const timer = setTimeout(() => {
       try {
-        console.log(`[CINEMA MODAL 🎬] Calling play() on pre-buffered player...`);
+        if (props.resumeTimeSec && props.resumeTimeSec > 0) {
+          props.player.currentTime = props.resumeTimeSec;
+          console.log(`[CINEMA PRELOAD ⚡ TIMER] Applied seek to ${props.resumeTimeSec.toFixed(1)}s before play()`);
+        }
+        console.log(`[CINEMA MODAL 🎬] Calling play() on pre-buffered player at position ${props.player.currentTime?.toFixed?.(1) ?? '?'}s...`);
         props.player.play();
       } catch (e) {
         console.warn(`[CINEMA MODAL ⚠️] play() error:`, e);
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [props.player]);
+  }, [props.player, props.resumeTimeSec]);
 
   return <VideoPlayerView {...props} />;
 }
@@ -558,8 +724,38 @@ export function CinemaVideoModal({
     }
     return raw;
   }, [video]);
-  const title = video?.title || video?.filename || eventTitle || 'Cinema Film';
-  const subtitle = video?.tabName || 'CINEMA';
+  // Derive clean Couple + Video Title, Category Subtitle, and Logo Artwork for in-app & TV AirPlay
+  const airplayMeta = useMemo(() => {
+    // Construct Line 1: Couple + Title (e.g. "Soumi Abhinav Wedding Trailer")
+    const displayTitle = formatCinemaDisplayTitle(eventTitle, video);
+
+    // Category: "Director's Cut", "Candid Diaries", "Stage & Spotlight", "Extended Cuts"
+    let cat = "Director's Cut";
+    try {
+      const explicit = (video?.cinemaCategory || video?.category || video?.exif?.cinemaCategory || '').trim();
+      const classified = explicit || classifyCinemaCategory(video);
+      cat = formatCinemaCategoryTitleCase(classified);
+    } catch {}
+
+    // Artist / Subtitle for TV & App: clean category without studio postfix
+    const artist = cat;
+
+    // Artwork: Thumbnail URL or Misty Visuals logo
+    let artwork: string | undefined = cleanThumbnailUrl;
+    if (!artwork) {
+      try {
+        const resolved = Image.resolveAssetSource(require('../../../assets/images/logo-glow.png'));
+        artwork = resolved?.uri;
+      } catch {}
+    }
+
+    return {
+      displayTitle,
+      categorySubtitle: cat,
+      artist,
+      artwork,
+    };
+  }, [video, eventTitle, cleanThumbnailUrl]);
 
   // Check if a warm pre-buffered player instance is already in cache
   const preloadedPlayer = useMemo(() => {
@@ -574,9 +770,9 @@ export function CinemaVideoModal({
 
   useEffect(() => {
     if (visible && videoUrl) {
-      console.log(`[CINEMA MODAL 🎬 OPEN] Title: "${title}" | Preloaded: ${!!preloadedPlayer} | URL: ${videoUrl.slice(0, 60)}...`);
+      console.log(`[CINEMA MODAL 🎬 OPEN] Title: "${airplayMeta.displayTitle}" | Preloaded: ${!!preloadedPlayer} | URL: ${videoUrl.slice(0, 60)}...`);
     }
-  }, [visible, videoUrl, title, preloadedPlayer]);
+  }, [visible, videoUrl, airplayMeta.displayTitle, preloadedPlayer]);
 
   return (
     <Modal
@@ -594,24 +790,26 @@ export function CinemaVideoModal({
             <VideoPlayerContentWithPreloaded
               player={preloadedPlayer}
               videoUrl={videoUrl}
-              thumbnailUrl={cleanThumbnailUrl}
-              title={title}
-              subtitle={subtitle}
+              thumbnailUrl={airplayMeta.artwork}
+              title={airplayMeta.displayTitle}
+              subtitle={airplayMeta.artist}
               onClose={onClose}
               allowDownloads={allowDownloads}
               resumeTimeSec={video?.resumeTimeSec}
               videoItem={video}
+              eventTitle={eventTitle}
             />
           ) : (
             <VideoPlayerContentWithNewPlayer
               videoUrl={videoUrl}
-              thumbnailUrl={cleanThumbnailUrl}
-              title={title}
-              subtitle={subtitle}
+              thumbnailUrl={airplayMeta.artwork}
+              title={airplayMeta.displayTitle}
+              subtitle={airplayMeta.artist}
               onClose={onClose}
               allowDownloads={allowDownloads}
               resumeTimeSec={video?.resumeTimeSec}
               videoItem={video}
+              eventTitle={eventTitle}
             />
           )
         ) : null}
@@ -623,6 +821,6 @@ export function CinemaVideoModal({
 const styles = StyleSheet.create({
   modalRoot: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: 'transparent',
   },
 });

@@ -10,14 +10,21 @@ import {
   Modal,
   Platform,
 } from 'react-native';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
+} from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
+import MaskedView from '@react-native-masked-view/masked-view';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   FONT_FUTURA,
-  FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
   FONT_MONTSERRAT_MEDIUM,
   FONT_MONTSERRAT_SEMIBOLD,
@@ -30,127 +37,19 @@ import {
   POSTER_CARD_HEIGHT,
   getValidImageThumbnail,
   isVideoComingSoon,
-  isVideoNewVersion,
   hasActualVideoFile,
   LightboxBounds,
+  isVerticalVideo,
 } from './CinemaVideoCard';
+export { isVerticalVideo } from './CinemaVideoCard';
 import {
   videoWatchProgressManager,
   WatchProgress,
 } from '../../services/videoWatchProgressManager';
 import { CinemaVideoDetailModal } from './CinemaVideoDetailModal';
-import { ScreenCastButton } from './ScreenCastButton';
+import { ComingSoonDrawer } from './ComingSoonDrawer';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-interface ComingSoonTeaser {
-  icon: string;
-  title: string;
-  body: string;
-}
-
-const COMING_SOON_TEASERS: readonly ComingSoonTeaser[] = [
-  {
-    icon: '🍿',
-    title: 'Popcorn on standby',
-    body: 'Great stories can’t be microwaved. This blockbuster is simmering on low flame until every emotion is seasoned to perfection.',
-  },
-  {
-    icon: '🤌',
-    title: 'Chef’s Secret Recipe',
-    body: 'Real cinema takes patience. We don’t rush the good stuff—keep your high-fives and happy tissues handy for premiere day.',
-  },
-  {
-    icon: '🤫',
-    title: 'No spoilers, strictly vibes',
-    body: 'The romance was simply too iconic to rush out. Savor the anticipation; the best chapters always make a grand entrance.',
-  },
-  {
-    icon: '🎟️',
-    title: 'Curtain call in the queue',
-    body: 'Legendary love stories deserve red-carpet treatment. Front-row tickets reserved, just waiting for the lights to dim.',
-  },
-  {
-    icon: '🍲',
-    title: 'Slow-cooked magic',
-    body: 'Fast food is quick, but royal feasts take their sweet time. Your love story is getting the full five-star banquet treatment.',
-  },
-  {
-    icon: '🎬',
-    title: 'Houseful feelings incoming',
-    body: 'Warning: Excessive smiling, happy tears, and continuous rewinds expected upon premiere. Worth every single second of the wait.',
-  },
-  {
-    icon: '🍷',
-    title: 'Vintage cut in reserve',
-    body: 'Like fine wine and classic vinyl records, true masterpieces only get richer while they rest. Savor the suspense!',
-  },
-  {
-    icon: '🌶️',
-    title: 'Tadka lagna abhi baaki hai',
-    body: 'The ingredients are all top-tier, and the flavors are settling in. When this film drops, it’s going to hit just right.',
-  },
-  {
-    icon: '☕',
-    title: 'Blockbuster brewing',
-    body: 'Some love stories are so big they deserve their own theater marquee. We’re keeping the reel safe until showtime.',
-  },
-  {
-    icon: '🎭',
-    title: 'Zero preservatives, 100% drama',
-    body: 'Instant noodles take 2 minutes, but timeless memories take care. Pure, unfiltered emotions coming your way.',
-  },
-  {
-    icon: '🛋️',
-    title: 'Binge-watch worthy',
-    body: 'Prepare your cozy blanket and favorite snacks. When the premiere unlocks, you won’t be able to press pause.',
-  },
-  {
-    icon: '🎞️',
-    title: 'The reel is resting',
-    body: 'Even rockstars take a moment before walking on stage. The stage is set, and the applause will be deafening.',
-  },
-  {
-    icon: '✨',
-    title: 'Main character energy',
-    body: 'You brought the charisma, the dance moves, and the chemistry. The big screen is officially waiting on you.',
-  },
-  {
-    icon: '🦸',
-    title: 'Patience is a superpower',
-    body: 'Good things come to those who wait—especially when the film stars two legends. Grab a seat, the show will begin in style.',
-  },
-  {
-    icon: '📽️',
-    title: 'Grand premiere in the vault',
-    body: 'All the smiles, the rituals, and the crazy late-night dancing are safely locked in the vault. Big screen magic awaits!',
-  },
-  {
-    icon: '💃🕺',
-    title: 'Bollywood level romance',
-    body: 'If Bollywood saw this chemistry, they’d take notes. Keeping the magic under wraps until the red carpet rolls out.',
-  },
-  {
-    icon: '🍰',
-    title: 'Sweet surprises take time',
-    body: 'You wouldn’t rush a multi-tier wedding cake, would you? Let the sweetness bake. It’s going to be iconic.',
-  },
-  {
-    icon: '🙈',
-    title: 'Timeline blushing hard',
-    body: 'Too much love in one single film. We had to pause just to let the room cool down. Trust us, it’s worth the wait.',
-  },
-  {
-    icon: '🎫',
-    title: 'Front row seats saved',
-    body: 'No queue jumping allowed. When the projector flickers on, you’ll have the best seat in the entire universe.',
-  },
-  {
-    icon: '🪩',
-    title: 'Afterparty in the archives',
-    body: 'The dance floor was wild, the memories are legendary, and this film is marinating into pure nostalgia gold.',
-  },
-];
 
 interface CinemaLibraryViewProps {
   videos: CinemaVideoItem[];
@@ -163,19 +62,9 @@ interface CinemaLibraryViewProps {
   refreshControl?: any;
   mainScrollRef?: any;
   isLoading?: boolean;
+  scrollY?: SharedValue<number>;
 }
 
-function isVerticalVideo(video: CinemaVideoItem): boolean {
-  const w = Number(video.width) || Number(video.exif?.videoWidth) || 0;
-  const h = Number(video.height) || Number(video.exif?.videoHeight) || 0;
-  if (w > 0 && h > 0 && w > h) return false;
-  if (w > 0 && h > 0 && h > w) return true;
-  if (video.aspectRatio && video.aspectRatio < 0.9) return true;
-  const title = (video.title || video.name || '').toLowerCase();
-  const cat = (video.category || '').toLowerCase();
-  if (title.includes('reel') || cat.includes('reel') || title.includes('vertical') || title.includes('short')) return true;
-  return false;
-}
 
 function isExplicitlyPrimary(video: CinemaVideoItem): boolean {
   if (
@@ -249,6 +138,98 @@ export function classifyCinemaCategory(video: CinemaVideoItem): string {
   }
 
   return 'THE DIRECTORS’ CUT';
+}
+
+export function formatCinemaCategoryTitleCase(raw?: string): string {
+  if (!raw) return "Director's Cut";
+  const upper = raw.toUpperCase().replace(/['']/g, '’');
+  if (upper.includes('DIRECTOR')) return "Director's Cut";
+  if (upper.includes('CANDID') || upper.includes('REEL') || upper.includes('DIAR')) return 'Candid Diaries';
+  if (upper.includes('STAGE') || upper.includes('SPOTLIGHT') || upper.includes('PERFORMANCE') || upper.includes('DANCE')) return 'Stage & Spotlight';
+  if (upper.includes('EXTENDED') || upper.includes('CUTS') || upper.includes('CHAPTER') || upper.includes('CEREMONY')) return 'Extended Cuts';
+
+  return raw
+    .toLowerCase()
+    .replace(/(?:^|\s)\w/g, (m) => m.toUpperCase())
+    .replace(/^The\s+/i, '')
+    .trim() || "Director's Cut";
+}
+
+export function toTitleCase(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[·•]/g, ' ')
+    .replace(/[_.-]+/g, ' ')
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+export function formatCinemaDisplayTitle(
+  eventTitle?: string | null,
+  video?: any,
+  fallbackTitle?: string | null
+): string {
+  const rawCouple = (
+    eventTitle ||
+    video?.eventTitle ||
+    video?.eventName ||
+    video?.galleryName ||
+    ''
+  ).trim();
+
+  const rawVideoTitle = (
+    video?.title ||
+    video?.exif?.title ||
+    video?.name ||
+    video?.filename ||
+    fallbackTitle ||
+    ''
+  )
+    .trim()
+    .replace(/\.(mp4|mov|m4v|webm)$/i, '')
+    .replace(/[_.-]+/g, ' ')
+    .trim();
+
+  const cTitle = toTitleCase(rawCouple);
+  let vTitle = toTitleCase(rawVideoTitle);
+
+  if (!vTitle || vTitle.toLowerCase() === 'video') {
+    vTitle = 'Wedding Film';
+  }
+
+  // If the video is just "Trailer" and the couple/event doesn't already contain "Wedding",
+  // expand to "Wedding Trailer"
+  if (vTitle.toLowerCase() === 'trailer' && !cTitle.toLowerCase().includes('wedding')) {
+    vTitle = 'Wedding Trailer';
+  }
+
+  if (cTitle && vTitle) {
+    const cLower = cTitle.toLowerCase();
+    const vLower = vTitle.toLowerCase();
+
+    // If video title already includes the couple name, return video title
+    if (vLower.includes(cLower)) {
+      return vTitle;
+    }
+    // If couple name already includes the video title, return couple name
+    if (cLower.includes(vLower)) {
+      return cTitle;
+    }
+
+    // Merge boundary word if identical (e.g. "Soumi Abhinav Wedding" + "Wedding Trailer" -> "Soumi Abhinav Wedding Trailer")
+    const cWords = cTitle.split(' ');
+    const vWords = vTitle.split(' ');
+    if (cWords[cWords.length - 1].toLowerCase() === vWords[0].toLowerCase()) {
+      return `${cTitle} ${vWords.slice(1).join(' ')}`.trim();
+    }
+
+    return `${cTitle} ${vTitle}`;
+  }
+
+  return cTitle || vTitle || 'The Wedding Film';
 }
 
 function sortCinemaVideos(list: CinemaVideoItem[]): CinemaVideoItem[] {
@@ -342,11 +323,30 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   refreshControl,
   mainScrollRef,
   isLoading = false,
+  scrollY,
 }) => {
   const insets = useSafeAreaInsets();
+  const internalScrollY = useSharedValue(0);
+  const activeScrollY = scrollY || internalScrollY;
+
+  // Smooth blur fade-in after > 50px of scrolling down, feathering to full intensity
+  const headerBlurAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(
+      activeScrollY.value,
+      [50, 110],
+      [0, 1],
+      Extrapolation.CLAMP
+    );
+    return {
+      opacity,
+    };
+  });
+
   const [progressTick, setProgressTick] = useState(0);
   const [detailModalVideo, setDetailModalVideo] = useState<CinemaVideoItem | null>(null);
+  const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<CinemaVideoItem | null>(null);
   const [detailBounds, setDetailBounds] = useState<LightboxBounds | null>(null);
+  const [isDetailFromContinueWatching, setIsDetailFromContinueWatching] = useState<boolean>(false);
   const heroCoverRef = useRef<View>(null);
 
   useEffect(() => {
@@ -482,25 +482,56 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     return undefined;
   }, []);
 
-  const handleCardPress = useCallback((film: CinemaVideoItem, resumeTime?: number, bounds?: LightboxBounds | null) => {
+  const handleCardPress = useCallback((film: CinemaVideoItem, _resumeTime?: number, bounds?: LightboxBounds | null) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const enrichedFilm = {
+      ...film,
+      cinemaCategory: film.cinemaCategory || classifyCinemaCategory(film),
+    };
+    if (isVideoComingSoon(enrichedFilm)) {
+      setComingSoonDrawerVideo(enrichedFilm);
+      return;
+    }
+    setIsDetailFromContinueWatching(false);
     setDetailBounds(bounds || null);
-    setDetailModalVideo(film);
+    setDetailModalVideo(enrichedFilm);
   }, []);
 
+  const handleContinueWatchingPress = useCallback((film: CinemaVideoItem, resumeTime?: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const enrichedFilm = {
+      ...film,
+      cinemaCategory: film.cinemaCategory || classifyCinemaCategory(film),
+    };
+    if (isVideoComingSoon(enrichedFilm)) {
+      setComingSoonDrawerVideo(enrichedFilm);
+      return;
+    }
+    const progress = getProgress(film);
+    const effectiveResumeTime =
+      resumeTime ??
+      (progress && !progress.isCompleted && progress.currentTime > 0
+        ? progress.currentTime
+        : undefined);
+    onSelectVideo(enrichedFilm, effectiveResumeTime);
+  }, [getProgress, onSelectVideo]);
+
   const isPrimaryComingSoon = isVideoComingSoon(primaryVideo);
-  const isPrimaryNewVersion = isVideoNewVersion(primaryVideo);
 
   const handleWatchPrimary = useCallback(() => {
     if (!primaryVideo) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const enrichedPrimary = {
+      ...primaryVideo,
+      cinemaCategory: primaryVideo.cinemaCategory || classifyCinemaCategory(primaryVideo),
+    };
     if (isVideoComingSoon(primaryVideo)) {
-      setDetailModalVideo(primaryVideo);
+      setComingSoonDrawerVideo(enrichedPrimary);
       return;
     }
     const progress = getProgress(primaryVideo);
     const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;
-    onSelectVideo(primaryVideo, resumeTime);
+    onSelectVideo(enrichedPrimary, resumeTime);
   }, [primaryVideo, getProgress, onSelectVideo]);
 
   // Option B: Full-Bleed 70vh Circle Gallery Cover
@@ -525,50 +556,6 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
 
   return (
     <View style={styles.screenContainer}>
-      {/* 1. Floating Top Navigation (Matching Gallery Header Position) */}
-      <View
-        style={[
-          styles.floatingNavBar,
-          { height: Math.max(insets.top + 50, 88) },
-        ]}
-        pointerEvents="box-none"
-      >
-        <LinearGradient
-          colors={['rgba(0, 0, 0, 0.70)', 'rgba(0, 0, 0, 0.25)', 'transparent']}
-          locations={[0, 0.6, 1]}
-          style={StyleSheet.absoluteFillObject}
-          pointerEvents="none"
-        />
-
-        {/* Center: Brand Logo (Exact Gallery Position) */}
-        <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
-          <Image
-            source={require('../../../assets/images/logo-header-white.png')}
-            style={styles.coverHeaderLogo}
-            contentFit="contain"
-          />
-        </View>
-
-        {/* Left: ← PHOTOS (Exact Gallery Position) */}
-        <Pressable
-          onPress={onBackToGallery}
-          hitSlop={16}
-          style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
-        >
-          <Text style={styles.editorialBackText}>← PHOTOS</Text>
-        </Pressable>
-
-        {/* Right: Screen Cast Button (Netflix / Prime Video Style) */}
-        <View style={[styles.headerCastButtonContainer, { top: Math.max(insets.top + 4, 36) }]}>
-          <ScreenCastButton
-            size={22}
-            color="#FFFFFF"
-            activeColor="#E5C483"
-            videoTitle={primaryVideo?.title || eventTitle}
-          />
-        </View>
-      </View>
-
       <Animated.ScrollView
         ref={mainScrollRef}
         onScroll={onScroll}
@@ -618,17 +605,10 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               {heroFilmTitle}
             </Text>
 
-            {/* Film Duration (if available) & New Version Badge */}
-            {(primaryDuration || isPrimaryNewVersion) ? (
+            {/* Film Duration (if available) */}
+            {primaryDuration ? (
               <View style={styles.heroDurationRow}>
-                {primaryDuration ? (
-                  <Text style={styles.heroDurationText}>{primaryDuration}</Text>
-                ) : null}
-                {isPrimaryNewVersion ? (
-                  <View style={styles.heroNewVersionPill}>
-                    <Text style={styles.heroNewVersionText}>NEW VERSION</Text>
-                  </View>
-                ) : null}
+                <Text style={styles.heroDurationText}>{primaryDuration}</Text>
               </View>
             ) : null}
 
@@ -637,61 +617,36 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
               {heroSynopsis}
             </Text>
 
-            {/* Two Action Buttons Row: [ ▶ Play / ✨ Coming Soon ] + [ ⓘ More Info ] */}
+            {/* Action Button: [ ▶ WATCH FILM / RESUME FILM / ✨ COMING SOON ] */}
             <View style={styles.heroButtonRow}>
               {isPrimaryComingSoon ? (
                 <Pressable
                   style={({ pressed }) => [
-                    styles.netflixComingSoonBtn,
+                    styles.heroComingSoonBtn,
                     pressed && styles.btnPressed,
                   ]}
                   onPress={handleWatchPrimary}
                 >
-                  <Text style={styles.netflixComingSoonIcon}>✨</Text>
-                  <Text style={styles.netflixComingSoonText}>Coming Soon</Text>
+                  <Text style={styles.heroComingSoonIcon}>✨</Text>
+                  <Text style={styles.heroComingSoonText}>COMING SOON</Text>
                 </Pressable>
               ) : (
                 <Pressable
                   style={({ pressed }) => [
-                    styles.netflixPlayBtn,
+                    styles.heroPlayBtn,
                     pressed && styles.btnPressed,
                   ]}
                   onPress={handleWatchPrimary}
                 >
-                  <Text style={styles.netflixPlayIcon}>▶</Text>
-                  <Text style={styles.netflixPlayText}>
-                    {primaryProgress && primaryProgress.currentTime > 0 ? 'Resume' : 'Play'}
+                  <Text style={styles.heroPlayIcon}>▶</Text>
+                  <Text style={styles.heroPlayText}>
+                    {primaryProgress && primaryProgress.currentTime > 0 ? 'RESUME FILM' : 'WATCH FILM'}
                   </Text>
                 </Pressable>
               )}
-
-              {/* Frosted More Info Button */}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.netflixInfoBtn,
-                  pressed && styles.btnPressed,
-                ]}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  if (primaryVideo) {
-                    if (heroCoverRef.current) {
-                      heroCoverRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
-                        setDetailBounds({ x, y, width, height });
-                        setDetailModalVideo(primaryVideo);
-                      });
-                    } else {
-                      setDetailBounds(null);
-                      setDetailModalVideo(primaryVideo);
-                    }
-                  }
-                }}
-              >
-                <Text style={styles.netflixInfoIcon}>ⓘ</Text>
-                <Text style={styles.netflixInfoText}>More Info</Text>
-              </Pressable>
             </View>
 
-            {/* Netflix Signature Red Progress Bar */}
+            {/* Editorial Champagne Gold Progress Bar */}
             {primaryProgress && primaryProgress.currentTime > 0 && !primaryProgress.isCompleted ? (
               <View style={styles.heroProgressContainer}>
                 <View style={styles.heroProgressBarTrack}>
@@ -741,7 +696,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                         variant="poster"
                         isContinueWatching={true}
                         watchProgress={getProgress(film)}
-                        onPress={handleCardPress}
+                        onPress={handleContinueWatchingPress}
                       />
                     ))}
                   </ScrollView>
@@ -777,9 +732,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
                               <Pressable
                                 onPress={() => {
                                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                                  const progress = getProgress(film);
-                                  const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;
-                                  handleCardPress(film, resumeTime);
+                                  handleCardPress(film);
                                 }}
                                 style={styles.rankNumberPressable}
                               >
@@ -823,6 +776,68 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         </View>
       </Animated.ScrollView>
 
+      {/* Floating Top Navigation (Rendered after ScrollView so it always sits on top) */}
+      <View
+        style={[
+          styles.floatingNavBar,
+          { height: Math.max(insets.top + 50, 88) },
+        ]}
+        pointerEvents="box-none"
+      >
+        {/* Dynamic Progressive Frosted Blur on Scroll (> 50px) with true alpha-masked fade out */}
+        <Animated.View
+          style={[
+            styles.headerSeamlessOverlay,
+            headerBlurAnimatedStyle,
+          ]}
+          pointerEvents="none"
+        >
+          <MaskedView
+            style={StyleSheet.absoluteFillObject}
+            maskElement={
+              <LinearGradient
+                colors={['black', 'black', 'transparent']}
+                locations={[0, 0.25, 1]}
+                style={StyleSheet.absoluteFillObject}
+              />
+            }
+          >
+            {/* Native iOS Optical Frosted Blur - subtle, refined intensity */}
+            <BlurView
+              intensity={30}
+              tint="dark"
+              style={StyleSheet.absoluteFillObject}
+            />
+
+            {/* Light translucent cinema tint that fades out seamlessly */}
+            <LinearGradient
+              colors={['rgba(0, 0, 0, 0.35)', 'rgba(0, 0, 0, 0.10)', 'transparent']}
+              locations={[0, 0.5, 1]}
+              style={StyleSheet.absoluteFillObject}
+            />
+          </MaskedView>
+        </Animated.View>
+
+        {/* Center: Brand Logo (Exact Gallery Position) */}
+        <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
+          <Image
+            source={require('../../../assets/images/logo-header-white.png')}
+            style={styles.coverHeaderLogo}
+            contentFit="contain"
+          />
+        </View>
+
+        {/* Left: ← PHOTOS (Exact Gallery Position) */}
+        <Pressable
+          onPress={onBackToGallery}
+          hitSlop={16}
+          style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
+        >
+          <Text style={styles.editorialBackText}>← PHOTOS</Text>
+        </Pressable>
+
+      </View>
+
       {/* 5. Netflix & Prime-Style Video Detail & Preview Modal */}
       <CinemaVideoDetailModal
         visible={Boolean(detailModalVideo)}
@@ -831,15 +846,26 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         coverUrl={coverUrl}
         allVideos={videos}
         eventTitle={eventTitle}
+        isFromContinueWatching={isDetailFromContinueWatching}
         onClose={() => {
           setDetailModalVideo(null);
           setDetailBounds(null);
+          setIsDetailFromContinueWatching(false);
         }}
         onPlayVideo={(video, resumeTimeSec) => {
           setDetailModalVideo(null);
           setDetailBounds(null);
+          setIsDetailFromContinueWatching(false);
           onSelectVideo(video, resumeTimeSec);
         }}
+      />
+
+      {/* 6. In-Production Teaser Bottom Drawer */}
+      <ComingSoonDrawer
+        visible={Boolean(comingSoonDrawerVideo)}
+        video={comingSoonDrawerVideo}
+        eventTitle={eventTitle}
+        onClose={() => setComingSoonDrawerVideo(null)}
       />
     </View>
   );
@@ -865,6 +891,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 50,
+    elevation: 50,
+  },
+  headerSeamlessOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: -32,
   },
   coverHeaderLogoContainer: {
     position: 'absolute',
@@ -882,15 +916,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 24,
     zIndex: 100,
+    elevation: 60,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 4,
-  },
-  headerCastButtonContainer: {
-    position: 'absolute',
-    right: 20,
-    zIndex: 100,
   },
   editorialBackText: {
     fontFamily: FONT_JOST_REGULAR,
@@ -973,31 +1003,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     color: '#E5C483',
   },
-  heroNewVersionPill: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroNewVersionText: {
-    ...Platform.select({
-      ios: {
-        fontWeight: '700' as const,
-      },
-      android: {
-        fontFamily: FONT_FUTURA_BOLD,
-      },
-      default: {
-        fontWeight: '700' as const,
-      },
-    }),
-    fontSize: 8.5,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-    includeFontPadding: false,
-  },
   heroSynopsisText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 11,
@@ -1012,59 +1017,61 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
 
-  // ─── Netflix Button Row ───────────────────────────────────────────────────
+  // ─── Editorial Hero Button Row ──────────────────────────────────────────────
   heroButtonRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
-    maxWidth: 280,
-    gap: 12,
     marginBottom: 2,
   },
-  netflixPlayBtn: {
-    flex: 1,
-    maxWidth: 135,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF',
+  heroPlayBtn: {
+    height: 44,
+    paddingHorizontal: 32,
+    minWidth: 175,
+    borderRadius: 22,
+    backgroundColor: '#E5C483',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#E5C483',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  heroPlayIcon: {
+    fontSize: 12,
+    color: '#000000',
+  },
+  heroPlayText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 12.5,
+    color: '#000000',
+    letterSpacing: 1.2,
+  },
+  heroComingSoonBtn: {
+    height: 44,
+    paddingHorizontal: 28,
+    minWidth: 175,
+    borderRadius: 22,
+    backgroundColor: 'rgba(21, 21, 24, 0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.75)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
-  netflixPlayIcon: {
-    fontSize: 14,
-    color: '#000000',
+  heroComingSoonIcon: {
+    fontSize: 13,
   },
-  netflixPlayText: {
+  heroComingSoonText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 14,
-    color: '#000000',
-    letterSpacing: 0.3,
-  },
-  netflixInfoBtn: {
-    flex: 1,
-    maxWidth: 135,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  netflixInfoIcon: {
-    fontSize: 15,
-    color: '#FFFFFF',
-  },
-  netflixInfoText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 13.5,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
+    fontSize: 12.5,
+    color: '#E5C483',
+    letterSpacing: 1.2,
   },
   btnPressed: {
     opacity: 0.85,
@@ -1087,14 +1094,14 @@ const styles = StyleSheet.create({
   },
   heroProgressBarFill: {
     height: '100%',
-    backgroundColor: '#E50914',
+    backgroundColor: '#E5C483',
   },
   heroResumeText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(255, 255, 255, 0.65)',
     marginTop: 4,
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
 
   // ─── Shelves & Content ────────────────────────────────────────────────────
@@ -1129,10 +1136,10 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   shelfBlock: {
-    marginBottom: 18,
+    marginBottom: 20,
   },
   continueWatchingBlock: {
-    marginBottom: 20,
+    marginBottom: 22,
   },
   shelfBlockSpaced: {
     marginTop: 8,
@@ -1218,14 +1225,15 @@ const styles = StyleSheet.create({
     color: '#444444',
   },
   netflixComingSoonBtn: {
-    flex: 1,
+    height: 42,
+    paddingHorizontal: 28,
+    minWidth: 160,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#1C1C22',
     borderWidth: 1,
     borderColor: 'rgba(229, 196, 131, 0.65)',
-    paddingVertical: 10,
     borderRadius: 6,
     gap: 7,
   },

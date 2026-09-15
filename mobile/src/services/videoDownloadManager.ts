@@ -29,12 +29,18 @@ interface DownloadEntry {
   localPath: string;   // absolute path inside documentDirectory
   lastAccessedAt: number; // unix ms — used for LRU eviction
   sizeBytes: number;
+  priority?: number;   // 100 = Director's Cut, 80 = Candid Diaries, 20 = Standard
+}
+
+interface QueueItem {
+  url: string;
+  priority: number;
 }
 
 class VideoDownloadManager {
   /** url → DownloadEntry */
   private map: Map<string, DownloadEntry> = new Map();
-  private _queue: string[] = [];
+  private _queue: QueueItem[] = [];
   private isDownloading = false;
   private isPaused = false;
   private currentDownloadResumable: FileSystem.DownloadResumable | null = null;
@@ -109,17 +115,38 @@ class VideoDownloadManager {
   // ─── Public API ────────────────────────────────────────────────────────────
 
   /**
-   * Add a remote video URL to the download queue.
-   * Safe to call multiple times — already-downloaded or already-queued URLs are ignored.
+   * Add a remote video URL to the download queue with an optional priority level.
+   * Higher priority (e.g. 100 for Director's Cut, 80 for Candid Diaries) moves
+   * the video to the front of the queue and protects it from storage eviction.
    */
-  public queue(url: string | null | undefined): void {
+  public queue(url: string | null | undefined, priority: number = 50): void {
     if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
     const cleanUrl = url.split('?')[0].toLowerCase();
     if (!cleanUrl.endsWith('.mp4') && !cleanUrl.endsWith('.mov') && !cleanUrl.endsWith('.m4v')) return;
-    if (this.map.has(url)) return; // already downloaded
-    if (this._queue.includes(url)) return; // already queued
-    this._queue.push(url);
-    console.log(`[VIDEO DOWNLOAD 📥 QUEUED] ${url.slice(0, 70)}... | Queue size: ${this._queue.length}`);
+
+    // If already downloaded, upgrade stored priority if higher
+    if (this.map.has(url)) {
+      const existing = this.map.get(url)!;
+      if (priority > (existing.priority ?? 0)) {
+        existing.priority = priority;
+        this.persistMap();
+      }
+      return;
+    }
+
+    // If already in queue, upgrade priority and re-sort
+    const inQueueIdx = this._queue.findIndex((item) => item.url === url);
+    if (inQueueIdx >= 0) {
+      if (priority > this._queue[inQueueIdx].priority) {
+        this._queue[inQueueIdx].priority = priority;
+        this._queue.sort((a, b) => b.priority - a.priority);
+      }
+      return;
+    }
+
+    this._queue.push({ url, priority });
+    this._queue.sort((a, b) => b.priority - a.priority);
+    console.log(`[VIDEO DOWNLOAD 📥 QUEUED] priority=${priority} | ${url.slice(0, 70)}... | Queue size: ${this._queue.length}`);
     this.processQueue();
   }
 
@@ -166,17 +193,23 @@ class VideoDownloadManager {
     if (this.isDownloading || this.isPaused || this._queue.length === 0) return;
     this.isDownloading = true;
 
-    const url = this._queue.shift()!;
+    const item = this._queue.shift()!;
+    const url = item.url;
 
     // Double-check: another processQueue call might have already downloaded this
     if (this.map.has(url)) {
+      const existing = this.map.get(url)!;
+      if (item.priority > (existing.priority ?? 0)) {
+        existing.priority = item.priority;
+        this.persistMap();
+      }
       this.isDownloading = false;
       this.processQueue();
       return;
     }
 
     try {
-      await this.downloadOne(url);
+      await this.downloadOne(url, item.priority);
     } catch (err) {
       console.warn(`[VIDEO DOWNLOAD ❌] Failed to download ${url.slice(0, 60)}...:`, err);
     }
@@ -189,8 +222,8 @@ class VideoDownloadManager {
     }
   }
 
-  private async downloadOne(url: string): Promise<void> {
-    // Enforce storage cap before starting (LRU evict if needed)
+  private async downloadOne(url: string, priority: number = 50): Promise<void> {
+    // Enforce storage cap before starting (priority-aware LRU evict if needed)
     await this.enforceStorageCap();
 
     // Derive a stable filename from the URL
@@ -202,9 +235,11 @@ class VideoDownloadManager {
     const existing = await FileSystem.getInfoAsync(finalPath);
     if (existing.exists) {
       const size = (existing as any).size ?? 0;
-      this.map.set(url, { localPath: finalPath, lastAccessedAt: Date.now(), sizeBytes: size });
+      const prevEntry = this.map.get(url);
+      const effectivePriority = Math.max(priority, prevEntry?.priority ?? 0);
+      this.map.set(url, { localPath: finalPath, lastAccessedAt: Date.now(), sizeBytes: size, priority: effectivePriority });
       await this.persistMap();
-      console.log(`[VIDEO DOWNLOAD ✅ SKIP] Already on disk: ${filename}`);
+      console.log(`[VIDEO DOWNLOAD ✅ SKIP] Already on disk: ${filename} (priority ${effectivePriority})`);
       return;
     }
 
@@ -213,7 +248,7 @@ class VideoDownloadManager {
       return;
     }
 
-    console.log(`[VIDEO DOWNLOAD 📡 START] Downloading: ${url.slice(0, 70)}...`);
+    console.log(`[VIDEO DOWNLOAD 📡 START] Downloading (p=${priority}): ${url.slice(0, 70)}...`);
     const startMs = Date.now();
 
     const resumable = FileSystem.createDownloadResumable(url, tmpPath);
@@ -251,10 +286,10 @@ class VideoDownloadManager {
     const sizeMB = (sizeBytes / 1024 ** 2).toFixed(1);
     const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
 
-    this.map.set(url, { localPath: finalPath, lastAccessedAt: Date.now(), sizeBytes });
+    this.map.set(url, { localPath: finalPath, lastAccessedAt: Date.now(), sizeBytes, priority });
     await this.persistMap();
 
-    console.log(`[VIDEO DOWNLOAD ✅ DONE] ${filename} | ${sizeMB} MB in ${elapsed}s → ${finalPath}`);
+    console.log(`[VIDEO DOWNLOAD ✅ DONE] ${filename} | ${sizeMB} MB in ${elapsed}s (p=${priority}) → ${finalPath}`);
   }
 
   // ─── Storage Management ────────────────────────────────────────────────────
@@ -263,10 +298,14 @@ class VideoDownloadManager {
     const totalSize = await this.getTotalSize();
     if (totalSize <= this.storageCap) return;
 
-    // Sort by lastAccessedAt ascending (oldest first = evict first)
-    const sorted = Array.from(this.map.entries()).sort(
-      ([, a], [, b]) => a.lastAccessedAt - b.lastAccessedAt
-    );
+    // Sort by priority ascending first (lower priority = evict first),
+    // then by lastAccessedAt ascending (oldest LRU first)
+    const sorted = Array.from(this.map.entries()).sort(([, a], [, b]) => {
+      const pA = a.priority ?? 50;
+      const pB = b.priority ?? 50;
+      if (pA !== pB) return pA - pB;
+      return a.lastAccessedAt - b.lastAccessedAt;
+    });
 
     let freedBytes = 0;
     const toFree = totalSize - this.storageCap;
@@ -277,7 +316,7 @@ class VideoDownloadManager {
         await FileSystem.deleteAsync(entry.localPath, { idempotent: true });
         this.map.delete(url);
         freedBytes += entry.sizeBytes;
-        console.log(`[VIDEO DOWNLOAD ♻️ EVICT] LRU evicted: ${entry.localPath.split('/').pop()} (${(entry.sizeBytes / 1024 ** 2).toFixed(1)} MB)`);
+        console.log(`[VIDEO DOWNLOAD ♻️ EVICT] LRU evicted (p=${entry.priority ?? 50}): ${entry.localPath.split('/').pop()} (${(entry.sizeBytes / 1024 ** 2).toFixed(1)} MB)`);
       } catch (err) {
         console.warn('[VIDEO DOWNLOAD ⚠️ EVICT] Could not evict:', err);
       }

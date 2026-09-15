@@ -11,11 +11,13 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -34,7 +36,6 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import {
-  FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
   FONT_MONTSERRAT_MEDIUM,
   FONT_MONTSERRAT_SEMIBOLD,
@@ -47,8 +48,8 @@ import {
 } from './CinemaVideoCard';
 import { videoWatchProgressManager, WatchProgress } from '../../services/videoWatchProgressManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
-import { videoWatchlistManager } from '../../services/videoWatchlistManager';
 import { ScreenCastButton } from './ScreenCastButton';
+import { ComingSoonDrawer } from './ComingSoonDrawer';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -74,6 +75,7 @@ interface CinemaVideoDetailModalProps {
   onClose: () => void;
   onPlayVideo: (video: CinemaVideoItem, resumeTimeSec?: number) => void;
   onToggleLike?: (video: CinemaVideoItem) => void;
+  isFromContinueWatching?: boolean;
 }
 
 function formatDuration(sec?: number): string {
@@ -98,6 +100,20 @@ function formatDisplayTitle(video?: CinemaVideoItem | null): string {
     return video.category.toUpperCase();
   }
   return 'The Wedding Film';
+}
+
+function formatCoupleNames(rawTitle?: string | null): string {
+  if (!rawTitle) return 'The Couple & Family';
+  const cleaned = rawTitle
+    .replace(/'s\s+Wedding/gi, '')
+    .replace(/[·•]/g, ' & ')
+    .replace(/[_.-]+/g, ' ')
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => (w === '&' ? '&' : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+  return cleaned || 'The Couple & Family';
 }
 
 function extractCleanVideoUrl(video: any): string | null {
@@ -139,6 +155,7 @@ interface DetailHeroPlayerProps {
   translateY: SharedValue<number>;
   isDismissing: SharedValue<boolean>;
   dismissProgress: SharedValue<number>;
+  videoItem?: any;
 }
 
 const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
@@ -150,20 +167,32 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
   translateY,
   isDismissing,
   dismissProgress,
+  videoItem,
 }) => {
-  const localPath = videoDownloadManager.getLocalPath(videoUrl);
-  const effectiveUrl = localPath
-    ? (localPath.startsWith('file://') ? localPath : `file://${localPath}`)
-    : videoUrl;
+  // CRITICAL FOR TV AIRPLAY: Smart TVs reject local file:// paths over AirPlay
+  const effectiveUrl = videoUrl;
 
   const [isMuted, setIsMuted] = useState<boolean>(true);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
 
-  const player = useVideoPlayer(effectiveUrl, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.allowsExternalPlayback = true;
+  const player = useVideoPlayer(
+    {
+      uri: effectiveUrl,
+      metadata: {
+        title: 'Cinema Preview',
+        artist: "Director's Cut",
+      },
+    },
+    (p) => {
+      p.loop = true;
+      p.muted = true;
+      p.allowsExternalPlayback = true;
+      p.showNowPlayingNotification = false;
+      p.bufferOptions = {
+        waitsToMinimizeStalling: true,
+        preferredForwardBufferDuration: 0,
+      };
     try {
       p.play();
     } catch {}
@@ -175,10 +204,32 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
     } catch {}
   }, [player, isMuted]);
 
+  const wasPlayingBeforeBgRef = useRef<boolean>(false);
+
   useEffect(() => {
     try {
+      player.timeUpdateEventInterval = 1.0;
       player.play();
     } catch {}
+
+    const appStateSub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const isExternal = Boolean((player as any)?.isExternalPlaybackActive);
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        if (!isExternal) {
+          if (player.playing) {
+            wasPlayingBeforeBgRef.current = true;
+            try { player.pause(); } catch {}
+          } else {
+            wasPlayingBeforeBgRef.current = false;
+          }
+        }
+      } else if (nextAppState === 'active') {
+        if (!isExternal && wasPlayingBeforeBgRef.current) {
+          wasPlayingBeforeBgRef.current = false;
+          try { player.play(); } catch {}
+        }
+      }
+    });
 
     const playSub = (player as any).addListener?.('playingChange', (payload: any) => {
       setIsPlaying(payload?.isPlaying ?? player.playing);
@@ -187,15 +238,50 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
       const status = payload?.status ?? player.status;
       setIsBuffering(status === 'loading');
     });
+    const timeSub = (player as any).addListener?.('timeUpdate', (payload: any) => {
+      const cur = payload?.currentTime ?? player.currentTime ?? 0;
+      const dur = player.duration ?? 0;
+      const target = videoItem || videoUrl;
+      if (target && dur > 0 && cur >= 3) {
+        if (cur / dur >= 0.9) {
+          videoWatchProgressManager.markCompleted(target);
+        } else {
+          videoWatchProgressManager.saveProgress(target, cur, dur);
+        }
+      }
+    });
+    const endSub = (player as any).addListener?.('playToEnd', () => {
+      const target = videoItem || videoUrl;
+      if (target) {
+        videoWatchProgressManager.markCompleted(target);
+      }
+    });
 
     return () => {
+      appStateSub?.remove?.();
       playSub?.remove?.();
       statusSub?.remove?.();
+      timeSub?.remove?.();
+      endSub?.remove?.();
       try {
+        const cur = player.currentTime ?? 0;
+        const dur = player.duration ?? 0;
+        const target = videoItem || videoUrl;
+        if (target && dur > 0 && cur >= 3) {
+          if (cur / dur >= 0.9) {
+            videoWatchProgressManager.markCompleted(target);
+          } else {
+            videoWatchProgressManager.saveProgress(target, cur, dur);
+          }
+        }
+      } catch {}
+      try {
+        player.allowsExternalPlayback = false;
+        player.showNowPlayingNotification = false;
         player.pause();
       } catch {}
     };
-  }, [player]);
+  }, [player, videoItem, videoUrl]);
 
   const handleTogglePlay = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -246,6 +332,7 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
         surfaceType="textureView"
         fullscreenOptions={{ enable: false }}
         showsTimecodes={false}
+        allowsVideoFrameAnalysis={false}
       />
 
       {/* 3. Controls & HUD (fades out immediately when closing starts) */}
@@ -333,6 +420,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   onClose,
   onPlayVideo,
   onToggleLike,
+  isFromContinueWatching = false,
 }) => {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
@@ -341,8 +429,8 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
   // Active video currently focused in the modal (swappable via "More Like This")
   const [activeVideo, setActiveVideo] = useState<CinemaVideoItem | null>(initialVideo);
+  const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<CinemaVideoItem | null>(null);
   const [activeTab, setActiveTab] = useState<'more' | 'trailers'>('more');
-  const [inWatchlist, setInWatchlist] = useState<boolean>(false);
   const [isLiked, setIsLiked] = useState<boolean>(false);
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'downloaded'>('idle');
 
@@ -434,10 +522,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     }
   }, [initialVideo]);
 
-  // Sync watchlist & like & download state when activeVideo changes
+  // Sync like & download state when activeVideo changes
   useEffect(() => {
     if (!activeVideo) return;
-    setInWatchlist(videoWatchlistManager.isInWatchlist(activeVideo));
     setIsLiked(Boolean(activeVideo.isLiked));
 
     const vUrl = extractCleanVideoUrl(activeVideo);
@@ -446,14 +533,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     } else {
       setDownloadStatus('idle');
     }
-
-    const unsubWatchlist = videoWatchlistManager.subscribe(() => {
-      setInWatchlist(videoWatchlistManager.isInWatchlist(activeVideo));
-    });
-
-    return () => {
-      unsubWatchlist();
-    };
   }, [activeVideo]);
 
   const videoUrl = useMemo(() => extractCleanVideoUrl(activeVideo), [activeVideo]);
@@ -469,18 +548,76 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     return activeVideo ? videoWatchProgressManager.getProgress(activeVideo) : null;
   }, [activeVideo]);
 
-  const hasProgress = Boolean(watchProgress && !watchProgress.isCompleted && watchProgress.currentTime > 0);
+  // Watch Progress — ONLY allow resuming if explicitly opened from Continue Watching!
+  // Otherwise, videos played from the detail modal restart from 0:00!
+  const hasProgress = Boolean(
+    isFromContinueWatching &&
+    watchProgress &&
+    !watchProgress.isCompleted &&
+    watchProgress.currentTime > 0
+  );
   const resumeTimeSec = hasProgress ? watchProgress?.currentTime : undefined;
 
-  // Shelf Rank or Category Tag
-  const categoryTag = useMemo(() => {
-    if (!activeVideo) return 'THE DIRECTORS’ CUT';
-    const cat = (activeVideo.cinemaCategory || activeVideo.category || '').toUpperCase();
-    if (cat.includes('STAGE') || cat.includes('SPOTLIGHT') || cat.includes('DANCE')) return '#2 in Stage & Spotlight';
-    if (cat.includes('CANDID') || cat.includes('REEL')) return '#1 in Candid Diaries';
-    if (cat.includes('EXTENDED') || cat.includes('CHAPTER')) return '#3 in The Extended Cuts';
-    return '#1 in The Directors’ Cut';
+  // Resolution Detection: 4K vs FHD
+  const is4K = useMemo(() => {
+    if (!activeVideo) return false;
+    const w = Number(activeVideo.width || activeVideo.exif?.width || activeVideo.meta?.width || 0);
+    const h = Number(activeVideo.height || activeVideo.exif?.height || activeVideo.meta?.height || 0);
+    if (w >= 3840 || h >= 3840 || (w >= 2160 && h >= 2160) || Math.min(w, h) >= 2160) {
+      return true;
+    }
+    const resStr = String(
+      activeVideo.resolution ||
+      activeVideo.quality ||
+      activeVideo.meta?.resolution ||
+      activeVideo.meta?.quality ||
+      activeVideo.videoQuality ||
+      ''
+    ).toLowerCase();
+    if (resStr.includes('4k') || resStr.includes('2160') || resStr.includes('uhd')) {
+      return true;
+    }
+    const url = String(activeVideo.videoUrl || activeVideo.r2Url || activeVideo.uri || '').toLowerCase();
+    if (url.includes('4k') || url.includes('2160') || url.includes('uhd')) {
+      return true;
+    }
+    return Boolean(activeVideo.is4k || activeVideo.is4K);
   }, [activeVideo]);
+
+  const resolutionTag = is4K ? '4K' : 'FHD';
+
+  // Trailers & More list (strictly from this gallery / allVideos, excluding active video)
+  const trailersAndMoreVideos = useMemo(() => {
+    if (!allVideos || allVideos.length === 0) return [];
+    const aKey = String(activeVideo?.id || activeVideo?.videoUrl || activeVideo?.uri || '');
+    const others = allVideos.filter((v) => {
+      const vKey = String(v.id || v.videoUrl || v.uri || '');
+      return aKey !== vKey;
+    });
+
+    const priorityClips = others.filter((v) => {
+      const titleLower = String(v.title || v.name || '').toLowerCase();
+      const catLower = String(v.category || v.cinemaCategory || '').toLowerCase();
+      const dur = typeof v.duration === 'number' ? v.duration : 0;
+      const isShort = dur > 0 && dur <= 240;
+      return (
+        titleLower.includes('trailer') ||
+        titleLower.includes('teaser') ||
+        titleLower.includes('highlight') ||
+        titleLower.includes('promo') ||
+        titleLower.includes('reel') ||
+        titleLower.includes('clip') ||
+        catLower.includes('trailer') ||
+        catLower.includes('reel') ||
+        catLower.includes('candid') ||
+        catLower.includes('short') ||
+        isShort
+      );
+    });
+
+    const list = priorityClips.length > 0 ? priorityClips : others;
+    return list.slice(0, 10);
+  }, [allVideos, activeVideo]);
 
   // Year & Metadata Tags
   const releaseYear = useMemo(() => {
@@ -498,6 +635,11 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     if (activeVideo?.exif?.description) return activeVideo.exif.description;
     return 'The celebration comes alive through every glance, laughter, and timeless vow. A cinematic heirloom crafted with pure emotion.';
   }, [activeVideo]);
+
+  // Starring Couple in Title Case (e.g. "Soumi & Abhinav")
+  const starringCouple = useMemo(() => {
+    return formatCoupleNames(eventTitle);
+  }, [eventTitle]);
 
   // More Like This list (exclude active video)
   const moreLikeThisVideos = useMemo(() => {
@@ -802,16 +944,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
       return;
     }
     setDownloadStatus('downloading');
-    videoDownloadManager.queue(videoUrl);
+    videoDownloadManager.queue(videoUrl, 100);
     setTimeout(() => {
       setDownloadStatus('downloaded');
     }, 1800);
-  };
-
-  const handleToggleWatchlist = async () => {
-    if (!activeVideo) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    await videoWatchlistManager.toggleWatchlist(activeVideo);
   };
 
   const handleToggleRate = () => {
@@ -836,6 +972,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
   const handleSelectMoreVideo = (item: CinemaVideoItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (isVideoComingSoon(item)) {
+      setComingSoonDrawerVideo(item);
+      return;
+    }
     setActiveVideo(item);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   };
@@ -880,6 +1020,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 <DetailHeroPlayer
                   key={videoUrl}
                   videoUrl={videoUrl}
+                  videoItem={activeVideo}
                   thumbnailUrl={thumbUrl}
                   videoTitle={title}
                   onClose={handleDismiss}
@@ -961,44 +1102,41 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 {/* Main Title */}
                 <Text style={styles.filmTitle}>{title}</Text>
 
-            {/* Metadata Row: 2026 | U/A 13+ | 2h 21m | HD | Spatial Audio */}
+            {/* Metadata Row: 2026 • 2h 21m • 4K or FHD */}
             <View style={styles.metadataRow}>
               <Text style={styles.metaYearText}>{releaseYear}</Text>
 
-              {/* Age Rating Chip */}
+              {duration ? (
+                <>
+                  <Text style={styles.metaDotSeparator}>•</Text>
+                  <Text style={styles.metaDurationText}>{duration}</Text>
+                </>
+              ) : null}
+
+              <Text style={styles.metaDotSeparator}>•</Text>
+
+              {/* Resolution Chip: 4K or FHD */}
               <View style={styles.metaChip}>
-                <Text style={styles.metaChipText}>U/A 13+</Text>
-              </View>
-
-              {/* Duration */}
-              <Text style={styles.metaDurationText}>{duration}</Text>
-
-              {/* HD / 4K Chip */}
-              <View style={styles.metaChip}>
-                <Text style={styles.metaChipText}>4K</Text>
-              </View>
-
-              {/* Spatial Audio Badge */}
-              <View style={styles.spatialAudioBadge}>
-                <MaterialCommunityIcons name="surround-sound" size={15} color="rgba(255,255,255,0.85)" />
-                <Text style={styles.spatialAudioText}>Spatial Audio</Text>
+                <Text style={styles.metaChipText}>{resolutionTag}</Text>
               </View>
             </View>
 
-            {/* Ranking / Category Badge: [TOP 10] #1 in The Directors' Cut */}
-            <View style={styles.rankingBadgeRow}>
-              <View style={styles.top10Badge}>
-                <Text style={styles.top10Text}>TOP</Text>
-                <Text style={styles.top10Number}>10</Text>
-              </View>
-              <Text style={styles.rankingText}>{categoryTag}</Text>
-            </View>
-
-            {/* Primary CTA: [ ▶ Play / Resume ] */}
+            {/* Primary CTA: [ ▶ Play Film / Resume ] */}
+            {/* Primary CTA: [ ▶ WATCH FILM / RESUME FILM / ✨ COMING SOON ] */}
             {isComingSoon ? (
-              <View style={styles.comingSoonBannerBtn}>
-                <Text style={styles.comingSoonBannerText}>✨ Premiere in Post-Production</Text>
-              </View>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.comingSoonBannerBtn,
+                  pressed && styles.btnPressed,
+                ]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  setComingSoonDrawerVideo(activeVideo);
+                }}
+              >
+                <Text style={styles.comingSoonBannerIcon}>✨</Text>
+                <Text style={styles.comingSoonBannerText}>COMING SOON</Text>
+              </Pressable>
             ) : (
               <Pressable
                 style={({ pressed }) => [
@@ -1007,9 +1145,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 ]}
                 onPress={handlePlay}
               >
-                <Ionicons name="play" size={20} color="#000000" />
+                <Text style={styles.primaryPlayIcon}>▶</Text>
                 <Text style={styles.primaryPlayBtnText}>
-                  {hasProgress ? `Resume (${formatDuration(resumeTimeSec)})` : 'Play'}
+                  {hasProgress ? `RESUME FILM (${formatDuration(resumeTimeSec)})` : 'WATCH FILM'}
                 </Text>
               </Pressable>
             )}
@@ -1028,35 +1166,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
               </View>
             )}
 
-            {/* Secondary CTA: [ 📥 Download ] */}
-            {!isComingSoon && (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.secondaryDownloadBtn,
-                  downloadStatus === 'downloaded' && styles.downloadedBtnBg,
-                  pressed && styles.btnPressed,
-                ]}
-                onPress={handleDownload}
-              >
-                {downloadStatus === 'downloading' ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
-                ) : (
-                  <Feather
-                    name={downloadStatus === 'downloaded' ? 'check' : 'download'}
-                    size={18}
-                    color="#FFFFFF"
-                  />
-                )}
-                <Text style={styles.secondaryDownloadText}>
-                  {downloadStatus === 'downloaded'
-                    ? 'Downloaded'
-                    : downloadStatus === 'downloading'
-                    ? 'Downloading...'
-                    : 'Download'}
-                </Text>
-              </Pressable>
-            )}
-
             {/* Story Synopsis */}
             <Text style={styles.synopsisText}>{synopsis}</Text>
 
@@ -1064,39 +1173,23 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
             <View style={styles.creditsContainer}>
               <Text style={styles.creditLine}>
                 <Text style={styles.creditLabel}>Filmed by: </Text>
-                <Text style={styles.creditValue}>Misty Visuals Cinema</Text>
+                <Text style={styles.creditValue}>Weddings by Misty Visuals</Text>
               </Text>
               <Text style={styles.creditLine}>
                 <Text style={styles.creditLabel}>Starring: </Text>
-                <Text style={styles.creditValue}>{eventTitle || 'The Couple & Family'}</Text>
+                <Text style={styles.creditValue}>{starringCouple}</Text>
               </Text>
               <Text style={styles.creditLine}>
                 <Text style={styles.creditLabel}>Mastered in: </Text>
-                <Text style={styles.creditValue}>4K Ultra HD • Color Graded • Stereo Spatial</Text>
+                <Text style={styles.creditValue}>
+                  {is4K ? '4K Ultra HD' : 'Full HD (1080p)'} • Color Graded • Stereo Spatial
+                </Text>
               </Text>
             </View>
 
-            {/* Action Row: [+ My List] [👍 Rate] [↗ Share] */}
+            {/* Action Row: [❤️ Love] [↗ Share] [📥 Download] */}
             <View style={styles.actionRow}>
-              {/* 1. My List / Watchlist */}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.actionItem,
-                  pressed && styles.btnPressed,
-                ]}
-                onPress={handleToggleWatchlist}
-              >
-                <Ionicons
-                  name={inWatchlist ? 'checkmark' : 'add'}
-                  size={26}
-                  color={inWatchlist ? '#E5C483' : '#FFFFFF'}
-                />
-                <Text style={[styles.actionLabel, inWatchlist && styles.actionLabelActive]}>
-                  {inWatchlist ? 'My List' : 'My List'}
-                </Text>
-              </Pressable>
-
-              {/* 2. Rate / Like */}
+              {/* 1. Love / Favorite */}
               <Pressable
                 style={({ pressed }) => [
                   styles.actionItem,
@@ -1105,16 +1198,16 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 onPress={handleToggleRate}
               >
                 <Ionicons
-                  name={isLiked ? 'thumbs-up' : 'thumbs-up-outline'}
-                  size={23}
-                  color={isLiked ? '#E50914' : '#FFFFFF'}
+                  name={isLiked ? 'heart' : 'heart-outline'}
+                  size={22}
+                  color={isLiked ? '#E5C483' : '#FFFFFF'}
                 />
-                <Text style={[styles.actionLabel, isLiked && styles.actionLabelLiked]}>
-                  {isLiked ? 'Rated' : 'Rate'}
+                <Text style={[styles.actionLabel, isLiked && styles.actionLabelActive]}>
+                  {isLiked ? 'Loved' : 'Love'}
                 </Text>
               </Pressable>
 
-              {/* 3. Share */}
+              {/* 2. Share */}
               <Pressable
                 style={({ pressed }) => [
                   styles.actionItem,
@@ -1122,15 +1215,49 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 ]}
                 onPress={handleShare}
               >
-                <Feather name="send" size={21} color="#FFFFFF" />
+                <Feather name="send" size={20} color="#FFFFFF" />
                 <Text style={styles.actionLabel}>Share</Text>
               </Pressable>
+
+              {/* 3. Download */}
+              {!isComingSoon && (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionItem,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={handleDownload}
+                  disabled={downloadStatus === 'downloading'}
+                >
+                  {downloadStatus === 'downloading' ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ height: 22 }} />
+                  ) : (
+                    <Feather
+                      name={downloadStatus === 'downloaded' ? 'check' : 'download'}
+                      size={20}
+                      color={downloadStatus === 'downloaded' ? '#E5C483' : '#FFFFFF'}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      styles.actionLabel,
+                      downloadStatus === 'downloaded' && styles.actionLabelActive,
+                    ]}
+                  >
+                    {downloadStatus === 'downloaded'
+                      ? 'Downloaded'
+                      : downloadStatus === 'downloading'
+                      ? 'Saving...'
+                      : 'Download'}
+                  </Text>
+                </Pressable>
+              )}
             </View>
 
             {/* Divider Line */}
             <View style={styles.tabsDivider} />
 
-            {/* Tabs: [More Like This] [Trailers & More] */}
+            {/* Tabs: [The Collection] [Teasers & Clips] */}
             <View style={styles.tabsRow}>
               <Pressable
                 style={styles.tabButton}
@@ -1145,7 +1272,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                     activeTab === 'more' && styles.tabButtonTextActive,
                   ]}
                 >
-                  More Like This
+                  The Collection
                 </Text>
                 {activeTab === 'more' && <View style={styles.tabIndicatorActive} />}
               </Pressable>
@@ -1163,7 +1290,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                     activeTab === 'trailers' && styles.tabButtonTextActive,
                   ]}
                 >
-                  Trailers & More
+                  Teasers & Clips
                 </Text>
                 {activeTab === 'trailers' && <View style={styles.tabIndicatorActive} />}
               </Pressable>
@@ -1175,8 +1302,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 {moreLikeThisVideos.length > 0 ? (
                   moreLikeThisVideos.map((item, idx) => {
                     const itemThumb = getValidImageThumbnail(item);
-                    const itemDuration = formatDuration(item.duration);
-                    const itemTitle = formatDisplayTitle(item);
                     const itemComingSoon = isVideoComingSoon(item);
 
                     return (
@@ -1202,30 +1327,12 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                           </View>
                         )}
 
-                        {/* Subtle Bottom Vignette */}
-                        <LinearGradient
-                          colors={['transparent', 'rgba(0,0,0,0.85)']}
-                          style={StyleSheet.absoluteFillObject}
-                          pointerEvents="none"
-                        />
-
-                        {/* Badge / Duration on Poster Card */}
+                        {/* Coming Soon Badge if applicable */}
                         {itemComingSoon ? (
                           <View style={styles.recCardComingSoonPill}>
                             <Text style={styles.recCardComingSoonText}>SOON</Text>
                           </View>
-                        ) : itemDuration ? (
-                          <View style={styles.recCardDurationPill}>
-                            <Text style={styles.recCardDurationText}>{itemDuration}</Text>
-                          </View>
                         ) : null}
-
-                        {/* Title at bottom of recommendation card */}
-                        <View style={styles.recCardInfo}>
-                          <Text style={styles.recCardTitle} numberOfLines={2}>
-                            {itemTitle}
-                          </Text>
-                        </View>
                       </Pressable>
                     );
                   })
@@ -1236,31 +1343,79 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 )}
               </View>
             ) : (
-              /* "Trailers & More" Content */
+              /* "Trailers & More" Content (strictly from this gallery / allVideos) */
               <View style={styles.trailersContainer}>
-                <View style={styles.trailerItemCard}>
-                  <View style={styles.trailerThumbWrapper}>
-                    {thumbUrl ? (
-                      <Image
-                        source={{ uri: thumbUrl }}
-                        style={styles.trailerThumb}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={[styles.trailerThumb, styles.fallbackBg]} />
-                    )}
-                    <View style={styles.trailerPlayCircle}>
-                      <Ionicons name="play" size={18} color="#FFFFFF" style={{ marginLeft: 2 }} />
-                    </View>
+                {trailersAndMoreVideos.length > 0 ? (
+                  trailersAndMoreVideos.map((item, idx) => {
+                    const itemThumb = getValidImageThumbnail(item);
+                    const itemDuration = formatDuration(item.duration);
+                    const itemTitle = formatDisplayTitle(item);
+                    const itemW = Number(item.width || item.exif?.width || item.meta?.width || 0);
+                    const itemH = Number(item.height || item.exif?.height || item.meta?.height || 0);
+                    const itemIs4K =
+                      itemW >= 3840 ||
+                      itemH >= 3840 ||
+                      (itemW >= 2160 && itemH >= 2160) ||
+                      Math.min(itemW, itemH) >= 2160 ||
+                      String(
+                        item.resolution ||
+                        item.quality ||
+                        item.meta?.resolution ||
+                        item.meta?.quality ||
+                        item.videoUrl ||
+                        item.r2Url ||
+                        ''
+                      ).toLowerCase().includes('4k');
+                    const itemRes = itemIs4K ? '4K Master' : 'FHD';
+                    const itemDesc =
+                      item.description ||
+                      item.exif?.description ||
+                      'Highlight moment from the celebration collection.';
+
+                    return (
+                      <Pressable
+                        key={String(item.id || item.videoUrl || item.uri || idx)}
+                        style={({ pressed }) => [
+                          styles.trailerItemCard,
+                          pressed && styles.btnPressed,
+                        ]}
+                        onPress={() => handleSelectMoreVideo(item)}
+                      >
+                        <View style={styles.trailerThumbWrapper}>
+                          {itemThumb ? (
+                            <Image
+                              source={{ uri: itemThumb }}
+                              style={styles.trailerThumb}
+                              contentFit="cover"
+                            />
+                          ) : (
+                            <View style={[styles.trailerThumb, styles.fallbackBg]}>
+                              <Ionicons name="film-outline" size={20} color="#666" />
+                            </View>
+                          )}
+                          <View style={styles.trailerPlayCircle}>
+                            <Ionicons name="play" size={16} color="#FFFFFF" style={{ marginLeft: 2 }} />
+                          </View>
+                        </View>
+                        <View style={styles.trailerInfo}>
+                          <Text style={styles.trailerTitle} numberOfLines={1}>
+                            {itemTitle}
+                          </Text>
+                          <Text style={styles.trailerMeta}>
+                            {itemDuration ? `${itemDuration} • ` : ''}{itemRes}
+                          </Text>
+                          <Text style={styles.trailerDesc} numberOfLines={2}>
+                            {itemDesc}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <View style={styles.emptyRecsContainer}>
+                    <Text style={styles.emptyRecsText}>No additional trailers or clips in this collection.</Text>
                   </View>
-                  <View style={styles.trailerInfo}>
-                    <Text style={styles.trailerTitle}>Official Teaser</Text>
-                    <Text style={styles.trailerMeta}>1m 15s • 4K Master</Text>
-                    <Text style={styles.trailerDesc} numberOfLines={2}>
-                      Experience the grand highlight montage with original score.
-                    </Text>
-                  </View>
-                </View>
+                )}
               </View>
             )}
           </ScrollView>
@@ -1287,6 +1442,14 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
           </Animated.View>
         </GestureDetector>
       </GestureHandlerRootView>
+
+      {/* In-Production Teaser Bottom Drawer */}
+      <ComingSoonDrawer
+        visible={Boolean(comingSoonDrawerVideo)}
+        video={comingSoonDrawerVideo}
+        eventTitle={eventTitle}
+        onClose={() => setComingSoonDrawerVideo(null)}
+      />
     </Modal>
   );
 };
@@ -1412,17 +1575,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 14,
   },
   metaYearText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.75)',
   },
+  metaDotSeparator: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 9,
+    color: 'rgba(255, 255, 255, 0.35)',
+  },
   metaChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(229, 196, 131, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: 'rgba(229, 196, 131, 0.35)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 1.5,
@@ -1430,87 +1598,45 @@ const styles = StyleSheet.create({
   metaChipText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#E5C483',
+    letterSpacing: 0.5,
   },
   metaDurationText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.75)',
   },
-  spatialAudioBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginLeft: 2,
-  },
-  spatialAudioText: {
-    fontFamily: FONT_MONTSERRAT_MEDIUM,
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
 
-  // ─── Ranking Badge: [TOP 10] #1 in The Directors' Cut ──────────────────
-  rankingBadgeRow: {
+  // ─── Buttons: Play CTA (Matching Cinema Tab Pill Style) ───────────────────
+  primaryPlayBtn: {
+    backgroundColor: '#E5C483',
+    height: 44,
+    borderRadius: 22,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
     marginBottom: 14,
+    shadowColor: '#E5C483',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  top10Badge: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  top10Text: {
-    ...Platform.select({
-      ios: { fontWeight: '800' as const },
-      android: { fontFamily: FONT_FUTURA_BOLD },
-      default: { fontWeight: '800' as const },
-    }),
-    fontSize: 7.5,
-    color: '#FFFFFF',
-    lineHeight: 8.5,
-  },
-  top10Number: {
-    ...Platform.select({
-      ios: { fontWeight: '900' as const },
-      android: { fontFamily: FONT_FUTURA_BOLD },
-      default: { fontWeight: '900' as const },
-    }),
-    fontSize: 10,
-    color: '#FFFFFF',
-    lineHeight: 11,
-  },
-  rankingText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 13,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-
-  // ─── Buttons: Play & Download ──────────────────────────────────────────
-  primaryPlayBtn: {
-    backgroundColor: '#FFFFFF',
-    height: 44,
-    borderRadius: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 10,
+  primaryPlayIcon: {
+    fontSize: 12,
+    color: '#000000',
   },
   primaryPlayBtnText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 15,
+    fontSize: 12.5,
     color: '#000000',
-    letterSpacing: 0.2,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
   inProgressContainer: {
     width: '100%',
-    marginBottom: 10,
+    marginBottom: 14,
     marginTop: -4,
   },
   inProgressBarTrack: {
@@ -1522,44 +1648,29 @@ const styles = StyleSheet.create({
   },
   inProgressBarFill: {
     height: '100%',
-    backgroundColor: '#E50914',
+    backgroundColor: '#E5C483',
   },
-  secondaryDownloadBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  comingSoonBannerBtn: {
+    backgroundColor: 'rgba(21, 21, 24, 0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.75)',
     height: 44,
-    borderRadius: 6,
+    borderRadius: 22,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginBottom: 16,
-  },
-  downloadedBtnBg: {
-    backgroundColor: 'rgba(52, 199, 89, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(52, 199, 89, 0.4)',
-  },
-  secondaryDownloadText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 14,
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
-  },
-  comingSoonBannerBtn: {
-    backgroundColor: 'rgba(229, 196, 131, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(229, 196, 131, 0.35)',
-    height: 44,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: 14,
+  },
+  comingSoonBannerIcon: {
+    fontSize: 13,
   },
   comingSoonBannerText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 13.5,
+    fontSize: 12.5,
     color: '#E5C483',
-    letterSpacing: 0.4,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
 
   // ─── Synopsis & Credits ─────────────────────────────────────────────────
@@ -1586,10 +1697,11 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.82)',
   },
 
-  // ─── Action Row: [+ My List] [👍 Rate] [↗ Share] ─────────────────────────
+  // ─── Action Row: [❤️ Love] [↗ Share] [📥 Download] ────────────────────────
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 36,
     paddingHorizontal: 8,
     marginBottom: 22,
@@ -1597,7 +1709,8 @@ const styles = StyleSheet.create({
   actionItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    minWidth: 52,
+    gap: 6,
   },
   actionLabel: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
@@ -1607,11 +1720,8 @@ const styles = StyleSheet.create({
   actionLabelActive: {
     color: '#E5C483',
   },
-  actionLabelLiked: {
-    color: '#E50914',
-  },
 
-  // ─── Tabs: [More Like This] [Trailers & More] ────────────────────────────
+  // ─── Tabs: [The Collection] [Teasers & Clips] ────────────────────────────
   tabsDivider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
@@ -1630,7 +1740,8 @@ const styles = StyleSheet.create({
   tabButtonText: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     fontSize: 13.5,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(255, 255, 255, 0.55)',
+    letterSpacing: 0.3,
   },
   tabButtonTextActive: {
     color: '#FFFFFF',
@@ -1640,9 +1751,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 3,
-    backgroundColor: '#E50914', // Signature Netflix red active tab indicator
-    borderRadius: 1.5,
+    height: 2,
+    backgroundColor: '#E5C483', // Signature Misty Visuals champagne gold indicator
+    borderRadius: 1,
   },
 
   // ─── 3-Column Recommendations Grid ──────────────────────────────────────
@@ -1683,35 +1794,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: '#000000',
     letterSpacing: 0.3,
-  },
-  recCardDurationPill: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingHorizontal: 4,
-    paddingVertical: 1.5,
-    borderRadius: 3,
-  },
-  recCardDurationText: {
-    fontFamily: FONT_MONTSERRAT_REGULAR,
-    fontSize: 9,
-    color: '#FFFFFF',
-  },
-  recCardInfo: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    right: 6,
-  },
-  recCardTitle: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 10.5,
-    lineHeight: 13,
-    color: '#FFFFFF',
-    textShadowColor: 'rgba(0,0,0,0.9)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
   },
   emptyRecsContainer: {
     paddingVertical: 30,

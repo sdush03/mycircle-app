@@ -134,7 +134,7 @@
           }
         }
       ],
-      "expo-video"
+      ["expo-video", { "supportsBackgroundPlayback": true }]
     ],
     "experiments": {
       "typedRoutes": true,

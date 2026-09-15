@@ -19,12 +19,25 @@ class VideoWatchProgressManager {
     this.loadFromStorage();
   }
 
-  private getKey(item: any): string {
-    if (!item) return '';
-    if (item.id !== undefined && item.id !== null) return String(item.id);
-    if (item.videoUrl) return item.videoUrl;
-    if (item.r2Url) return item.r2Url;
-    return '';
+  private getKeys(item: any): string[] {
+    if (!item) return [];
+    const keys: string[] = [];
+    if (typeof item === 'string') {
+      const clean = item.split('?')[0].toLowerCase();
+      keys.push(clean);
+      if (clean !== item) keys.push(item);
+      return keys;
+    }
+    if (item.id !== undefined && item.id !== null) {
+      keys.push(String(item.id));
+    }
+    const rawUrl = item.videoUrl || item.r2Url || item.fullUri || item.uri || item.photoUrl || item.file_url || item.filename;
+    if (rawUrl && typeof rawUrl === 'string') {
+      const clean = rawUrl.split('?')[0].toLowerCase();
+      if (!keys.includes(clean)) keys.push(clean);
+      if (clean !== rawUrl && !keys.includes(rawUrl)) keys.push(rawUrl);
+    }
+    return keys;
   }
 
   private async loadFromStorage(): Promise<void> {
@@ -73,14 +86,23 @@ class VideoWatchProgressManager {
 
   /**
    * Returns watch progress for a video item.
+   * Checks multi-key fallback (both ID and videoUrl).
    * If < 5% watched: returns null (clean unwatched state).
-   * If >= 90% watched: returns { isCompleted: true, progressPercent: 0, currentTime: 0 } (reset state).
+   * If >= 90% watched or completed: returns { isCompleted: true, progressPercent: 0, currentTime: 0 } (reset state).
    * If 5% <= progress < 90%: returns { isCompleted: false, progressPercent, currentTime }.
    */
   public getProgress(item: any): WatchProgress | null {
-    const key = this.getKey(item);
-    if (!key) return null;
-    const entry = this.cache.get(key);
+    const keys = this.getKeys(item);
+    if (keys.length === 0) return null;
+
+    let entry: WatchProgress | undefined;
+    for (const k of keys) {
+      const found = this.cache.get(k);
+      if (found) {
+        entry = found;
+        break;
+      }
+    }
     if (!entry) return null;
 
     // If video was replaced with a new version after this progress was saved, invalidate stale progress
@@ -130,8 +152,8 @@ class VideoWatchProgressManager {
    * Save playback progress. Called during video playback.
    */
   public saveProgress(item: any, currentTime: number, duration: number): void {
-    const key = this.getKey(item);
-    if (!key || duration <= 0) return;
+    const keys = this.getKeys(item);
+    if (keys.length === 0 || duration <= 0) return;
 
     const ratio = currentTime / duration;
     const isCompleted = ratio >= 0.9;
@@ -144,7 +166,7 @@ class VideoWatchProgressManager {
       updatedAt: Date.now(),
     };
 
-    this.cache.set(key, progress);
+    keys.forEach((k) => this.cache.set(k, progress));
     this.persistToStorage();
     this.notifyListeners();
   }
@@ -153,9 +175,9 @@ class VideoWatchProgressManager {
    * Clear watch progress for a video (e.g. restart from 0:00).
    */
   public clearProgress(item: any): void {
-    const key = this.getKey(item);
-    if (!key) return;
-    this.cache.delete(key);
+    const keys = this.getKeys(item);
+    if (keys.length === 0) return;
+    keys.forEach((k) => this.cache.delete(k));
     this.persistToStorage();
     this.notifyListeners();
   }
@@ -177,40 +199,66 @@ class VideoWatchProgressManager {
    * Check whether a video item has been seen completely (>= 90% or explicitly completed).
    */
   public isSeenCompletely(item: any): boolean {
-    const key = this.getKey(item);
-    if (!key) return false;
-    const entry = this.cache.get(key);
-    if (!entry) return false;
+    const keys = this.getKeys(item);
+    if (keys.length === 0) return false;
 
-    // If video was replaced with a new version after this was completed, it hasn't been seen completely
-    const replacedRaw = item?.videoReplacedAt || item?.exif?.videoReplacedAt || item?.meta?.videoReplacedAt || item?.raw?.videoReplacedAt || item?.raw?.exif?.videoReplacedAt;
-    if (replacedRaw) {
-      const replacedTime = new Date(replacedRaw).getTime();
-      if (!isNaN(replacedTime) && entry.updatedAt && entry.updatedAt < replacedTime) {
-        return false;
+    for (const key of keys) {
+      const entry = this.cache.get(key);
+      if (!entry) continue;
+
+      // If video was replaced with a new version after this was completed, it hasn't been seen completely
+      const replacedRaw = item?.videoReplacedAt || item?.exif?.videoReplacedAt || item?.meta?.videoReplacedAt || item?.raw?.videoReplacedAt || item?.raw?.exif?.videoReplacedAt;
+      if (replacedRaw) {
+        const replacedTime = new Date(replacedRaw).getTime();
+        if (!isNaN(replacedTime) && entry.updatedAt && entry.updatedAt < replacedTime) {
+          continue;
+        }
       }
+
+      if (entry.isCompleted) return true;
+      const ratio = entry.duration > 0 ? entry.currentTime / entry.duration : 0;
+      if (ratio >= 0.9) return true;
     }
 
-    if (entry.isCompleted) return true;
-    const ratio = entry.duration > 0 ? entry.currentTime / entry.duration : 0;
-    return ratio >= 0.9;
+    return false;
+  }
+
+  /**
+   * Check whether a video has been watched (either in progress or completed).
+   */
+  public hasWatched(item: any): boolean {
+    if (this.isSeenCompletely(item)) return true;
+    const progress = this.getProgress(item);
+    return Boolean(progress && (progress.currentTime > 0 || progress.isCompleted));
   }
 
   /**
    * Explicitly mark a video as completed (seen completely).
+   * Keeps completed status permanently so "New for you" badge never re-appears.
    */
   public markCompleted(item: any): void {
-    const key = this.getKey(item);
-    if (!key) return;
-    const entry = this.cache.get(key);
+    const keys = this.getKeys(item);
+    if (keys.length === 0) return;
+
+    let existingDuration = 0;
+    for (const k of keys) {
+      const e = this.cache.get(k);
+      if (e?.duration) {
+        existingDuration = e.duration;
+        break;
+      }
+    }
+    const dur = existingDuration || (typeof item?.duration === 'number' ? item.duration : 0);
+
     const completedProgress: WatchProgress = {
       currentTime: 0,
-      duration: entry?.duration ?? 0,
+      duration: dur,
       progressPercent: 0,
       isCompleted: true,
       updatedAt: Date.now(),
     };
-    this.cache.set(key, completedProgress);
+
+    keys.forEach((k) => this.cache.set(k, completedProgress));
     this.persistToStorage();
     this.notifyListeners();
   }

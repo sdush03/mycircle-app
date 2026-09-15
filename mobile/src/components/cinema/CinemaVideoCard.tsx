@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Dimensions, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -104,7 +104,8 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
   const meta = video.meta || video.raw?.meta || {};
   const metadata = video.metadata || video.raw?.metadata || {};
 
-  const candidates = [
+  // Priority 1: Direct upload or creation timestamps in the system
+  const uploadCandidates = [
     video.createdAt,
     video.created_at,
     video.uploadedAt,
@@ -113,10 +114,6 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
     video.upload_date,
     video.addedAt,
     video.added_at,
-    video.date,
-    video.dateCreated,
-    video.date_created,
-    video.timestamp,
     raw.createdAt,
     raw.created_at,
     raw.uploadedAt,
@@ -125,10 +122,6 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
     raw.upload_date,
     raw.addedAt,
     raw.added_at,
-    raw.date,
-    raw.dateCreated,
-    raw.date_created,
-    raw.timestamp,
     meta.createdAt,
     meta.created_at,
     meta.uploadDate,
@@ -137,6 +130,26 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
     metadata.created_at,
     metadata.uploadDate,
     metadata.uploadedAt,
+  ];
+
+  for (const c of uploadCandidates) {
+    const parsed = parseDateFlexible(c);
+    if (parsed) {
+      const diffMs = Math.max(0, Date.now() - parsed.getTime());
+      return diffMs / (1000 * 60 * 60 * 24);
+    }
+  }
+
+  // Priority 2: Fallback date fields (shoot date/EXIF)
+  const fallbackCandidates = [
+    video.date,
+    video.dateCreated,
+    video.date_created,
+    video.timestamp,
+    raw.date,
+    raw.dateCreated,
+    raw.date_created,
+    raw.timestamp,
     exif.DateTimeOriginal,
     exif.CreateDate,
     exif.ModifyDate,
@@ -144,10 +157,10 @@ export function getVideoDaysOld(video: CinemaVideoItem): number | null {
     exif.DateTime,
   ];
 
-  for (const c of candidates) {
+  for (const c of fallbackCandidates) {
     const parsed = parseDateFlexible(c);
     if (parsed) {
-      const diffMs = Date.now() - parsed.getTime();
+      const diffMs = Math.max(0, Date.now() - parsed.getTime());
       return diffMs / (1000 * 60 * 60 * 24);
     }
   }
@@ -351,16 +364,59 @@ function formatEditorialTitle(video: CinemaVideoItem): string {
   return 'Wedding Film';
 }
 
-function isReelVideo(video: CinemaVideoItem): boolean {
-  const w = Number(video.width) || Number(video.exif?.videoWidth) || 0;
-  const h = Number(video.height) || Number(video.exif?.videoHeight) || 0;
-  if (w > 0 && h > 0 && w > h) return false;
-  if (w > 0 && h > 0 && h > w) return true;
-  if (video.aspectRatio && video.aspectRatio < 0.9) return true;
-  const title = (video.title || video.name || '').toLowerCase();
-  const cat = (video.category || '').toLowerCase();
-  if (title.includes('reel') || cat.includes('reel') || title.includes('vertical') || title.includes('short')) return true;
+export function isVerticalVideo(video: any): boolean {
+  if (!video) return false;
+  if (video.isVertical === true || video.orientation === 'portrait') return true;
+  if (video.isVertical === false || video.orientation === 'landscape') return false;
+
+  const w = Number(video.videoWidth || video.exif?.videoWidth || video.width || video.meta?.width || video.metadata?.width) || 0;
+  const h = Number(video.videoHeight || video.exif?.videoHeight || video.height || video.meta?.height || video.metadata?.height) || 0;
+  const isSynthetic16by9 = (w === 16 && h === 9);
+
+  const cat = (
+    (video.cinemaCategory || '') + ' ' +
+    (video.category || '') + ' ' +
+    (video.videoCategory || '') + ' ' +
+    (video.tabName || '') + ' ' +
+    (video.tab_name || '') + ' ' +
+    (video.tab || '') + ' ' +
+    (video.shelfType || '') + ' ' +
+    (video.meta?.category || '') + ' ' +
+    (video.raw?.category || '')
+  ).toLowerCase();
+
+  if (
+    cat.includes('reel') ||
+    cat.includes('candid') ||
+    cat.includes('diar') ||
+    cat.includes('vertical') ||
+    cat.includes('short')
+  ) {
+    return true;
+  }
+
+  const title = (video.title || video.name || video.filename || video.caption || '').toLowerCase();
+  if (
+    title.includes('reel') ||
+    title.includes('vertical') ||
+    title.includes('short') ||
+    title.includes('portrait')
+  ) {
+    return true;
+  }
+
+  if (video.aspectRatio && !isSynthetic16by9 && video.aspectRatio < 0.95) return true;
+
+  if (!isSynthetic16by9 && w > 0 && h > 0) {
+    if (h > w) return true;
+    if (w > h) return false;
+  }
+
   return false;
+}
+
+export function isReelVideo(video: CinemaVideoItem): boolean {
+  return isVerticalVideo(video);
 }
 
 export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
@@ -372,6 +428,13 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   showPlayButton,
   showProgressBar,
 }) => {
+  const [, setProgressTick] = useState<number>(0);
+  useEffect(() => {
+    return videoWatchProgressManager.subscribe(() => {
+      setProgressTick((p) => p + 1);
+    });
+  }, []);
+
   const thumbUri = getValidImageThumbnail(video);
   const title = formatEditorialTitle(video);
   const durationText = formatDuration(video.duration);
@@ -383,16 +446,20 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
   const hasWatched = Boolean(isSeen || (progress && (progress.currentTime > 0 || progress.isCompleted)));
 
   const isComingSoon = isVideoComingSoon(video);
-  const isNewVersion = isVideoNewVersion(video);
+  
+  // "New version" badge expires after 7 days OR once the user has watched the new version!
+  const isNewVersion = isVideoNewVersion(video) && !hasWatched;
 
   const daysOld = getVideoDaysOld(video);
+  // "Recently added" strictly expires after 7 days (prevents stale database boolean flags from lingering forever)
   const isRecentlyAdded =
     !isComingSoon &&
     !isNewVersion &&
-    (video.isRecentlyAdded === true ||
-      video.recentlyAdded === true ||
-      (daysOld !== null && daysOld <= 7));
+    (daysOld !== null
+      ? daysOld <= 7
+      : (video.isRecentlyAdded === true || video.recentlyAdded === true));
 
+  // "New for you" strictly shows for unwatched catalog films, expiring immediately once watched
   const isNewForYou =
     !isComingSoon &&
     !isNewVersion &&
@@ -581,7 +648,9 @@ const styles = StyleSheet.create({
   mediaFrame: {
     width: POSTER_CARD_WIDTH,
     height: POSTER_CARD_HEIGHT,
-    borderRadius: 6,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
     overflow: 'hidden',
     backgroundColor: '#161618',
     position: 'relative',
@@ -595,7 +664,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#18181B',
   },
 
-  // ─── Top Badge (Stuck at Top Centre - Netflix Style) ──────────────────────
+  // ─── Top Badge (Editorial Champagne Gold Badge) ─────────────────────────
   topBadgesRow: {
     position: 'absolute',
     top: 0,
@@ -606,13 +675,14 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   topBadgeContainer: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 7,
+    backgroundColor: 'rgba(18, 18, 22, 0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.7)',
+    borderTopWidth: 0,
+    paddingHorizontal: 8,
     paddingVertical: 3,
-    borderBottomLeftRadius: 3,
-    borderBottomRightRadius: 3,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
@@ -622,7 +692,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
-  // ─── Bottom Badge (Stuck at Bottom Centre - Netflix Style) ───────────────────
+  // ─── Bottom Badge (Editorial Champagne Gold Badge) ──────────────────────
   bottomBadgeRow: {
     position: 'absolute',
     bottom: 0,
@@ -633,13 +703,14 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   bottomBadgeContainer: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 7,
+    backgroundColor: 'rgba(18, 18, 22, 0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.7)',
+    borderBottomWidth: 0,
+    paddingHorizontal: 8,
     paddingVertical: 3,
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
@@ -649,33 +720,32 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   comingSoonBadgeContainer: {
-    backgroundColor: 'rgba(18, 18, 22, 0.95)',
-    borderWidth: 1,
-    borderColor: 'rgba(229, 196, 131, 0.85)',
-    borderBottomWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
+    backgroundColor: '#E5C483',
+    borderWidth: 0,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
   },
   comingSoonBadgeText: {
-    color: '#E5C483',
-    letterSpacing: 0.1,
+    color: '#000000',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 
   badgeText: {
     ...Platform.select({
       ios: {
-        fontWeight: '700' as const,
+        fontWeight: '600' as const,
       },
       android: {
         fontFamily: FONT_FUTURA_BOLD,
       },
       default: {
-        fontWeight: '700' as const,
+        fontWeight: '600' as const,
       },
     }),
     fontSize: 9,
-    color: '#FFFFFF',
-    letterSpacing: -0.1,
+    color: '#E5C483',
+    letterSpacing: 0.3,
     lineHeight: 11,
     textAlign: 'center',
     includeFontPadding: false,
@@ -703,7 +773,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // ─── Bottom Typography Inside Card (Wedflix/Netflix Style) ────────────────
+  // ─── Bottom Typography Inside Card ────────────────────────────────────────
   posterBottomContent: {
     position: 'absolute',
     left: 4,
@@ -748,6 +818,6 @@ const styles = StyleSheet.create({
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#E50914',
+    backgroundColor: '#E5C483',
   },
 });

@@ -78,11 +78,15 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
   const [trackWidth, setTrackWidth] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragTimeSec, setDragTimeSec] = useState<number>(0);
+  const [activeDragSec, setActiveDragSec] = useState<number | null>(null);
+  const releaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mutable refs safe to read from worklet via runOnJS callbacks
   const trackWidthRef = useRef<number>(0);
   const durationRef = useRef<number>(durationSec);
   durationRef.current = durationSec;
+  const isDraggingRef = useRef<boolean>(false);
+  const lastDragTimeRef = useRef<number>(0);
 
   const handleLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width;
@@ -93,11 +97,15 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
   // JS-thread callbacks — called via runOnJS from the worklet
   const jsOnBegin = useCallback(
     (localX: number) => {
+      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
       const w = trackWidthRef.current;
       const dur = durationRef.current;
       const t = w > 0 && dur > 0 ? (Math.max(0, Math.min(w, localX)) / w) * dur : 0;
+      isDraggingRef.current = true;
+      lastDragTimeRef.current = t;
       setIsDragging(true);
       setDragTimeSec(t);
+      setActiveDragSec(t);
       onSeekStart?.();
       onScrubStart?.();
       onSeek(t);
@@ -111,7 +119,9 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
       const dur = durationRef.current;
       if (w <= 0 || dur <= 0) return;
       const t = (Math.max(0, Math.min(w, localX)) / w) * dur;
+      lastDragTimeRef.current = t;
       setDragTimeSec(t);
+      setActiveDragSec(t);
       onSeek(t);
     },
     [onSeek],
@@ -122,17 +132,34 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
       const w = trackWidthRef.current;
       const dur = durationRef.current;
       const t = w > 0 && dur > 0 ? (Math.max(0, Math.min(w, localX)) / w) * dur : 0;
+      isDraggingRef.current = false;
+      lastDragTimeRef.current = t;
       setIsDragging(false);
+      setActiveDragSec(t);
       onSeekEnd(t);
       onScrubEnd?.();
+      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
+      releaseTimerRef.current = setTimeout(() => {
+        setActiveDragSec(null);
+      }, 400);
     },
     [onSeekEnd, onScrubEnd],
   );
 
   const jsOnFinalize = useCallback(() => {
-    setIsDragging(false);
-    onScrubEnd?.();
-  }, [onScrubEnd]);
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      const t = lastDragTimeRef.current;
+      setActiveDragSec(t);
+      onSeekEnd(t);
+      onScrubEnd?.();
+      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
+      releaseTimerRef.current = setTimeout(() => {
+        setActiveDragSec(null);
+      }, 400);
+    }
+  }, [onSeekEnd, onScrubEnd]);
 
   // ── Build RNGH Pan gesture ─────────────────────────────────────────────────
   // NOTE: gesture is rebuilt each render so closures always capture fresh callbacks.
@@ -170,7 +197,7 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
 
   const scrubGesture = buildGesture();
 
-  const displayTime = isDragging ? dragTimeSec : currentTimeSec;
+  const displayTime = activeDragSec !== null ? activeDragSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTime / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
 

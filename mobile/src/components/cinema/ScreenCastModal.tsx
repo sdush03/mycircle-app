@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,15 @@ import {
   Pressable,
   Platform,
   Dimensions,
+  Animated,
+  Easing,
+  Linking,
+  ScrollView,
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { VideoAirPlayButton } from 'expo-video';
 import {
   FONT_MONTSERRAT_REGULAR,
   FONT_MONTSERRAT_MEDIUM,
@@ -32,11 +37,117 @@ export const ScreenCastModal: React.FC<ScreenCastModalProps> = ({
   videoTitle,
 }) => {
   const insets = useSafeAreaInsets();
+  const [isScanning, setIsScanning] = useState(true);
+
+  // Radar wave pulse animations
+  const pulseAnim1 = useRef(new Animated.Value(0)).current;
+  const pulseAnim2 = useRef(new Animated.Value(0)).current;
+
+  const startScanningAnimation = () => {
+    setIsScanning(true);
+    pulseAnim1.setValue(0);
+    pulseAnim2.setValue(0);
+
+    const createPulse = (anim: Animated.Value, delay: number) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 1900,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    const loop1 = createPulse(pulseAnim1, 0);
+    const loop2 = createPulse(pulseAnim2, 950);
+    loop1.start();
+    loop2.start();
+
+    const timer = setTimeout(() => {
+      setIsScanning(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    }, 2200);
+
+    return () => {
+      loop1.stop();
+      loop2.stop();
+      clearTimeout(timer);
+    };
+  };
+
+  useEffect(() => {
+    if (visible) {
+      const cleanup = startScanningAnimation();
+      return cleanup;
+    }
+  }, [visible]);
 
   const handleDismiss = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     onClose();
   };
+
+  const handleRescan = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    startScanningAnimation();
+  };
+
+  const handleOpenCastSettings = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.settings.CAST_SETTINGS');
+      } catch {
+        try {
+          await Linking.openSettings();
+        } catch {}
+      }
+    }
+  };
+
+  const handleOpenSmartView = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.settings.WIFI_DISPLAY_SETTINGS');
+      } catch {
+        try {
+          await Linking.sendIntent('android.settings.CAST_SETTINGS');
+        } catch {
+          await Linking.openSettings();
+        }
+      }
+    }
+  };
+
+  const isIOS = Platform.OS === 'ios';
+
+  const ring1Scale = pulseAnim1.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.8, 2.4],
+  });
+  const ring1Opacity = pulseAnim1.interpolate({
+    inputRange: [0, 0.3, 1],
+    outputRange: [0.7, 0.4, 0],
+  });
+
+  const ring2Scale = pulseAnim2.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.8, 2.4],
+  });
+  const ring2Opacity = pulseAnim2.interpolate({
+    inputRange: [0, 0.3, 1],
+    outputRange: [0.7, 0.4, 0],
+  });
 
   return (
     <Modal
@@ -47,7 +158,7 @@ export const ScreenCastModal: React.FC<ScreenCastModalProps> = ({
     >
       <View style={styles.modalOverlay}>
         <Pressable style={styles.modalDismissArea} onPress={handleDismiss} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom + 16, 28) }]}>
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom + 14, 26) }]}>
           {/* Top Drag Handle */}
           <View style={styles.modalDragHandle} />
 
@@ -63,100 +174,208 @@ export const ScreenCastModal: React.FC<ScreenCastModalProps> = ({
           {/* Brand Prefix */}
           <Text style={styles.brandPrefix}>MISTY VISUALS CINEMA</Text>
 
-          {/* Title & Video Info */}
+          {/* Header Row with Animated Radar Icon */}
           <View style={styles.headerRow}>
-            <View style={styles.castIconCircle}>
-              <MaterialCommunityIcons name="cast" size={24} color="#E5C483" />
+            <View style={styles.radarWrapper}>
+              {isScanning && (
+                <>
+                  <Animated.View
+                    style={[
+                      styles.radarRing,
+                      {
+                        transform: [{ scale: ring1Scale }],
+                        opacity: ring1Opacity,
+                      },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.radarRing,
+                      {
+                        transform: [{ scale: ring2Scale }],
+                        opacity: ring2Opacity,
+                      },
+                    ]}
+                  />
+                </>
+              )}
+              <View style={[styles.castIconCircle, isScanning && styles.castIconCircleActive]}>
+                <MaterialCommunityIcons
+                  name={isScanning ? 'radar' : 'cast-connected'}
+                  size={22}
+                  color="#E5C483"
+                />
+              </View>
             </View>
+
             <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Cast to TV or Screen</Text>
               <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {videoTitle ? `Streaming: ${videoTitle}` : 'Experience your films in 4K on the big screen'}
+                {videoTitle ? `Streaming: ${videoTitle}` : 'Experience your wedding films in 4K on the big screen'}
               </Text>
             </View>
           </View>
 
-          {/* Wi-Fi Status Bar */}
+          {/* Live Wi-Fi Scanning Status Banner */}
           <View style={styles.wifiStatusBar}>
-            <View style={styles.wifiDot} />
+            <View
+              style={[
+                styles.wifiDot,
+                isScanning ? styles.wifiDotScanning : styles.wifiDotReady,
+              ]}
+            />
             <Text style={styles.wifiStatusText}>
-              Ready to stream • Make sure TV and phone share the same Wi-Fi
+              {isScanning
+                ? 'Scanning local Wi-Fi for available screens & TVs…'
+                : 'Connected to Wi-Fi • Ready to stream'}
             </Text>
+
+            {!isScanning && (
+              <Pressable
+                onPress={handleRescan}
+                hitSlop={8}
+                style={({ pressed }) => [
+                  styles.rescanBtn,
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Feather name="refresh-cw" size={12} color="#E5C483" />
+                <Text style={styles.rescanText}>Rescan</Text>
+              </Pressable>
+            )}
           </View>
 
-          {/* Cast Options List */}
-          <View style={styles.optionsList}>
-            {/* 1. Apple AirPlay 2 */}
+          {/* Active Device Targets */}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            style={styles.optionsScrollView}
+            contentContainerStyle={styles.optionsList}
+          >
+            {/* 1. Apple TV & AirPlay 2 */}
             <View style={styles.deviceOptionCard}>
               <View style={styles.deviceIconBg}>
                 <Ionicons name="tv-outline" size={22} color="#FFFFFF" />
               </View>
               <View style={styles.deviceInfo}>
-                <Text style={styles.deviceName}>Apple TV & AirPlay 2</Text>
+                <View style={styles.deviceNameRow}>
+                  <Text style={styles.deviceName}>Apple TV & AirPlay 2</Text>
+                  <View style={styles.badgeTag}>
+                    <Text style={styles.badgeTagText}>AirPlay 2</Text>
+                  </View>
+                </View>
                 <Text style={styles.deviceDesc}>
                   Apple TV, Roku, Sony, Samsung & LG TVs with AirPlay
                 </Text>
               </View>
-              {Platform.OS === 'ios' ? (
-                <View style={styles.activeTag}>
-                  <Text style={styles.activeTagText}>Active</Text>
+
+              {isIOS ? (
+                <View style={styles.airplayRowBtnContainer}>
+                  <VideoAirPlayButton
+                    tint="#FFFFFF"
+                    activeTint="#E5C483"
+                    prioritizeVideoDevices={true}
+                    style={styles.inlineAirPlayBtn}
+                  />
+                  <Text style={styles.connectBtnText}>Connect</Text>
                 </View>
-              ) : null}
+              ) : (
+                <View style={styles.passiveTag}>
+                  <Text style={styles.passiveTagText}>Apple Devices</Text>
+                </View>
+              )}
             </View>
 
-            {/* 2. Google Cast / Chromecast */}
+            {/* 2. Google Cast & Chromecast */}
             <View style={styles.deviceOptionCard}>
               <View style={styles.deviceIconBg}>
                 <MaterialCommunityIcons name="google-chrome" size={20} color="#FFFFFF" />
               </View>
               <View style={styles.deviceInfo}>
-                <Text style={styles.deviceName}>Chromecast & Android TV</Text>
+                <View style={styles.deviceNameRow}>
+                  <Text style={styles.deviceName}>Chromecast & Google TV</Text>
+                  <View style={styles.badgeTag}>
+                    <Text style={styles.badgeTagText}>Google Cast</Text>
+                  </View>
+                </View>
                 <Text style={styles.deviceDesc}>
-                  Google TV, Android TV, Chromecast with Google TV
+                  Google TV, Android TV, Chromecast Ultra
                 </Text>
               </View>
+
+              {!isIOS ? (
+                <Pressable
+                  onPress={handleOpenCastSettings}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.actionBtn,
+                    pressed && styles.btnPressed,
+                  ]}
+                >
+                  <Text style={styles.actionBtnText}>Connect →</Text>
+                </Pressable>
+              ) : (
+                <View style={styles.passiveTag}>
+                  <Text style={styles.passiveTagText}>Smart TV</Text>
+                </View>
+              )}
             </View>
 
-            {/* 3. Smart TV Screen Mirroring */}
+            {/* 3. Smart TV Screen Mirroring (Samsung Smart View / Miracast) */}
             <View style={styles.deviceOptionCard}>
               <View style={styles.deviceIconBg}>
-                <Feather name="airplay" size={20} color="#FFFFFF" />
+                <MaterialCommunityIcons name="television-play" size={20} color="#FFFFFF" />
               </View>
               <View style={styles.deviceInfo}>
-                <Text style={styles.deviceName}>Smart TV Mirroring</Text>
+                <View style={styles.deviceNameRow}>
+                  <Text style={styles.deviceName}>Smart TV Mirroring</Text>
+                  <View style={styles.badgeTag}>
+                    <Text style={styles.badgeTagText}>Smart View</Text>
+                  </View>
+                </View>
                 <Text style={styles.deviceDesc}>
-                  Samsung Smart View, LG webOS, DLNA Screen Cast
+                  Samsung Smart View, LG webOS, DLNA Mirroring
+                </Text>
+              </View>
+
+              {!isIOS ? (
+                <Pressable
+                  onPress={handleOpenSmartView}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.actionBtn,
+                    pressed && styles.btnPressed,
+                  ]}
+                >
+                  <Text style={styles.actionBtnText}>Mirror →</Text>
+                </Pressable>
+              ) : (
+                <View style={styles.passiveTag}>
+                  <Text style={styles.passiveTagText}>Mirroring</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Quick Tips Box */}
+            <View style={styles.instructionsCard}>
+              <Text style={styles.instructionsTitle}>QUICK TIPS FOR 4K STREAMING</Text>
+              <View style={styles.instructionStep}>
+                <Text style={styles.stepDot}>•</Text>
+                <Text style={styles.stepText}>
+                  Keep both your phone and smart TV on the same Wi-Fi network (5GHz recommended for smooth 4K playback).
+                </Text>
+              </View>
+              <View style={styles.instructionStep}>
+                <Text style={styles.stepDot}>•</Text>
+                <Text style={styles.stepText}>
+                  {isIOS
+                    ? 'Tap the AirPlay Connect icon to select your TV and begin theater playback.'
+                    : 'Tap Connect or pull down Quick Settings to launch Screen Cast / Smart View.'}
                 </Text>
               </View>
             </View>
-          </View>
+          </ScrollView>
 
-          {/* Quick Instructions Card */}
-          <View style={styles.instructionsCard}>
-            <Text style={styles.instructionsTitle}>HOW TO CONNECT</Text>
-            <View style={styles.instructionStep}>
-              <Text style={styles.stepNumber}>1</Text>
-              <Text style={styles.stepText}>
-                Connect both your phone and smart TV to the same Wi-Fi network.
-              </Text>
-            </View>
-            <View style={styles.instructionStep}>
-              <Text style={styles.stepNumber}>2</Text>
-              <Text style={styles.stepText}>
-                {Platform.OS === 'ios'
-                  ? 'Tap the Cast button on the video player to pick your Apple TV or AirPlay display.'
-                  : 'Swipe down your phone’s Quick Settings and tap Screen Cast / Smart View.'}
-              </Text>
-            </View>
-            <View style={styles.instructionStep}>
-              <Text style={styles.stepNumber}>3</Text>
-              <Text style={styles.stepText}>
-                Sit back and enjoy your wedding memories in cinema-grade color and sound!
-              </Text>
-            </View>
-          </View>
-
-          {/* Got it / Dismiss Button */}
+          {/* Dismiss Button */}
           <Pressable
             style={({ pressed }) => [
               styles.dismissBtn,
@@ -175,20 +394,21 @@ export const ScreenCastModal: React.FC<ScreenCastModalProps> = ({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
     justifyContent: 'flex-end',
   },
   modalDismissArea: {
     flex: 1,
   },
   modalSheet: {
-    backgroundColor: '#161618',
+    backgroundColor: '#141416',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.12)',
     paddingHorizontal: 20,
     paddingTop: 12,
+    maxHeight: '85%',
   },
   modalDragHandle: {
     width: 36,
@@ -226,18 +446,37 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
     marginBottom: 14,
+  },
+  radarWrapper: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  radarRing: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#E5C483',
   },
   castIconCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(229, 196, 131, 0.15)',
+    backgroundColor: 'rgba(229, 196, 131, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(229, 196, 131, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  castIconCircleActive: {
+    borderColor: '#E5C483',
+    backgroundColor: 'rgba(229, 196, 131, 0.22)',
   },
   headerTextContainer: {
     flex: 1,
@@ -259,15 +498,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 8,
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   wifiDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  wifiDotScanning: {
+    backgroundColor: '#E5C483',
+  },
+  wifiDotReady: {
     backgroundColor: '#34C759',
   },
   wifiStatusText: {
@@ -276,9 +520,26 @@ const styles = StyleSheet.create({
     color: '#D4D4D8',
     flex: 1,
   },
+  rescanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    backgroundColor: 'rgba(229, 196, 131, 0.15)',
+  },
+  rescanText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 10,
+    color: '#E5C483',
+  },
+  optionsScrollView: {
+    maxHeight: 320,
+    marginBottom: 14,
+  },
   optionsList: {
     gap: 10,
-    marginBottom: 16,
   },
   deviceOptionCard: {
     flexDirection: 'row',
@@ -291,8 +552,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   deviceIconBg: {
-    width: 38,
-    height: 38,
+    width: 40,
+    height: 40,
     borderRadius: 10,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
@@ -301,68 +562,107 @@ const styles = StyleSheet.create({
   deviceInfo: {
     flex: 1,
   },
+  deviceNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
   deviceName: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     fontSize: 13.5,
     color: '#FFFFFF',
-    marginBottom: 2,
+  },
+  badgeTag: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeTagText: {
+    fontFamily: FONT_MONTSERRAT_MEDIUM,
+    fontSize: 9,
+    color: 'rgba(255, 255, 255, 0.7)',
   },
   deviceDesc: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
     fontSize: 11,
     color: 'rgba(255, 255, 255, 0.55)',
   },
-  activeTag: {
-    backgroundColor: 'rgba(52, 199, 89, 0.15)',
+  actionBtn: {
+    backgroundColor: 'rgba(229, 196, 131, 0.18)',
     borderWidth: 1,
-    borderColor: 'rgba(52, 199, 89, 0.4)',
+    borderColor: 'rgba(229, 196, 131, 0.4)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 7,
+  },
+  actionBtnText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 11.5,
+    color: '#E5C483',
+    letterSpacing: 0.3,
+  },
+  airplayRowBtnContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 7,
+  },
+  inlineAirPlayBtn: {
+    width: 22,
+    height: 22,
+  },
+  connectBtnText: {
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    fontSize: 11.5,
+    color: '#FFFFFF',
+  },
+  passiveTag: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
   },
-  activeTagText: {
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+  passiveTagText: {
+    fontFamily: FONT_MONTSERRAT_MEDIUM,
     fontSize: 10,
-    color: '#34C759',
-    letterSpacing: 0.3,
+    color: 'rgba(255, 255, 255, 0.5)',
   },
   instructionsCard: {
     backgroundColor: 'rgba(229, 196, 131, 0.05)',
     borderWidth: 1,
     borderColor: 'rgba(229, 196, 131, 0.18)',
     borderRadius: 12,
-    padding: 14,
-    gap: 8,
-    marginBottom: 16,
+    padding: 12,
+    gap: 6,
+    marginTop: 4,
   },
   instructionsTitle: {
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 10.5,
-    letterSpacing: 1.5,
+    fontSize: 10,
+    letterSpacing: 1.4,
     color: '#E5C483',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   instructionStep: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 6,
   },
-  stepNumber: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(229, 196, 131, 0.2)',
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    fontSize: 10.5,
+  stepDot: {
     color: '#E5C483',
-    textAlign: 'center',
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
   },
   stepText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
-    fontSize: 11.5,
+    fontSize: 11,
     lineHeight: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: 'rgba(255, 255, 255, 0.75)',
     flex: 1,
   },
   dismissBtn: {

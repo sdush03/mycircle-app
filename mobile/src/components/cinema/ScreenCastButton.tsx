@@ -42,33 +42,51 @@ export const ScreenCastButton: React.FC<ScreenCastButtonProps> = ({
 
   const isIOS = Platform.OS === 'ios';
 
-  return (
-    <>
-      <View style={[styles.container, style]}>
-        {/* Visual Cast Icon */}
-        <Pressable
-          onPress={handlePress}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.iconButton,
-            pressed && styles.btnPressed,
-          ]}
-        >
-          <MaterialCommunityIcons name="cast" size={size} color={color} />
-        </Pressable>
-
-        {/* On iOS, overlay native VideoAirPlayButton so tap opens Apple AVRoutePickerView directly */}
-        {isIOS && (
-          <View style={styles.airplayOverlay} pointerEvents="box-only">
+  // On iOS, if no custom onPress handler is provided, render native Apple AirPlay button
+  // which immediately discovers and presents available Apple TVs and AirPlay 2 screens
+  if (isIOS && !onPress) {
+    return (
+      <>
+        <View style={[styles.container, style]}>
+          <View style={styles.iconButton}>
             <VideoAirPlayButton
-              tint="transparent"
+              tint={color}
               activeTint={activeColor}
               prioritizeVideoDevices={true}
+              onBeginPresentingRoutes={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              }}
               style={styles.airplayNativeBtn}
             />
           </View>
-        )}
-      </View>
+        </View>
+
+        <ScreenCastModal
+          visible={modalVisible}
+          onClose={() => setModalVisible(false)}
+          videoTitle={videoTitle}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Pressable
+        onPress={handlePress}
+        hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+        style={({ pressed }) => [
+          styles.container,
+          style,
+          pressed && styles.btnPressed,
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Cast to TV"
+      >
+        <View style={styles.iconButton}>
+          <MaterialCommunityIcons name="cast" size={size} color={color} />
+        </View>
+      </Pressable>
 
       <ScreenCastModal
         visible={modalVisible}
@@ -81,11 +99,10 @@ export const ScreenCastButton: React.FC<ScreenCastButtonProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    width: 38,
-    height: 38,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
   },
   iconButton: {
     width: 36,
@@ -97,15 +114,10 @@ const styles = StyleSheet.create({
   },
   btnPressed: {
     opacity: 0.75,
-    transform: [{ scale: 0.96 }],
-  },
-  airplayOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.011, // Almost invisible but receives the touch on iOS to invoke native AVRoutePickerView
-    zIndex: 10,
+    transform: [{ scale: 0.94 }],
   },
   airplayNativeBtn: {
-    width: '100%',
-    height: '100%',
+    width: 26,
+    height: 26,
   },
 });

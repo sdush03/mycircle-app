@@ -17,12 +17,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
+  LayoutChangeEvent,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { VideoView, VideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
   GestureDetector,
@@ -32,7 +33,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
@@ -41,7 +41,6 @@ import {
   FONT_JOST_MEDIUM,
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
-import { CinemaScrubber } from './CinemaScrubber';
 import { ScreenCastButton } from './ScreenCastButton';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -49,9 +48,14 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatTime(sec: number): string {
   if (isNaN(sec) || sec < 0) return '00:00';
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  const totalSec = Math.floor(sec);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+  }
+  return `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -112,12 +116,25 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
   const insets = useSafeAreaInsets();
   const [areControlsVisible, setAreControlsVisible] = useState(true);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isScrubbing = useRef(false);
+
+  // ── Scrubber state ─────────────────────────────────────────────────────────
+  const isScrubbingRef = useRef(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubTimeSec, setScrubTimeSec] = useState(0);
+  const [activeScrubSec, setActiveScrubSec] = useState<number | null>(null);
+  const scrubReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrubTimeRef = useRef(0);
+  const trackWidthRef = useRef(0);
+  const [trackWidth, setTrackWidth] = useState(0);
 
   // ── Reanimated shared values ───────────────────────────────────────────────
   const controlsOpacity = useSharedValue(1);
   const dismissTranslateY = useSharedValue(0);
+  const dismissScale = useSharedValue(1);
+  const dismissBorderRadius = useSharedValue(0);
   const backdropOpacity = useSharedValue(1);
+  const isPinching = useSharedValue(false);
+  const pinchScale = useSharedValue(1);
 
   // ── Controls auto-hide ─────────────────────────────────────────────────────
   const resetControlsTimer = useCallback(() => {
@@ -127,7 +144,7 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
 
     if (isPlaying && !isCompleted && !isBuffering && !isError) {
       controlsTimeoutRef.current = setTimeout(() => {
-        if (isScrubbing.current) return;
+        if (isScrubbingRef.current) return;
         controlsOpacity.value = withTiming(0, { duration: 300 });
         setAreControlsVisible(false);
       }, 3000);
@@ -138,6 +155,7 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     resetControlsTimer();
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
     };
   }, [resetControlsTimer]);
 
@@ -160,56 +178,139 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     }
   }, [areControlsVisible, resetControlsTimer, controlsOpacity]);
 
-  // ── Scrubber callbacks ─────────────────────────────────────────────────────
-  const handleScrubStart = useCallback(() => {
-    isScrubbing.current = true;
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsOpacity.value = withTiming(1, { duration: 180 });
-    setAreControlsVisible(true);
-    onSeekStart();
-  }, [onSeekStart, controlsOpacity]);
+  // ── Zoom / Aspect Ratio mode (Default: 'cover' full-screen, pinch to toggle) ─
+  const [contentFitMode, setContentFitMode] = useState<'cover' | 'contain'>('cover');
+  const [zoomToast, setZoomToast] = useState<'cover' | 'contain' | null>(null);
+  const zoomToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleScrubEnd = useCallback(() => {
-    isScrubbing.current = false;
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (isPlaying && !isCompleted && !isBuffering && !isError) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        controlsOpacity.value = withTiming(0, { duration: 300 });
-        setAreControlsVisible(false);
-      }, 1500);
-    }
-  }, [isPlaying, isCompleted, isBuffering, isError, controlsOpacity]);
+  const showZoomToast = useCallback((mode: 'cover' | 'contain') => {
+    setContentFitMode(mode);
+    setZoomToast(mode);
+    if (zoomToastTimerRef.current) clearTimeout(zoomToastTimerRef.current);
+    zoomToastTimerRef.current = setTimeout(() => {
+      setZoomToast(null);
+    }, 1500);
+  }, []);
 
-  // ── Swipe-to-dismiss gesture ───────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (zoomToastTimerRef.current) clearTimeout(zoomToastTimerRef.current);
+    };
+  }, []);
+
+  // ── Swipe-to-dismiss gesture (Apple fluid physics, zero bounce) ────────────
   const dismissGestureRef = useRef<any>(null);
-  const panGesture = Gesture.Pan()
-    .withRef(dismissGestureRef)
-    .activeOffsetY([8, Infinity])
-    .failOffsetY([-8, Infinity])
-    .onUpdate((e) => {
-      'worklet';
-      if (e.translationY > 0) {
-        dismissTranslateY.value = e.translationY;
-        const progress = Math.min(1, Math.max(0, (e.translationY - 20) / 200));
-        backdropOpacity.value = 1 - progress * 0.65;
-      }
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (e.translationY > 100 || e.velocityY > 500) {
-        backdropOpacity.value = withTiming(0, { duration: 270 });
-        dismissTranslateY.value = withTiming(
-          SCREEN_HEIGHT,
-          { duration: 310, easing: Easing.bezier(0.25, 1, 0.5, 1) },
-          (fin) => {
-            if (fin) runOnJS(onClose)();
-          },
-        );
-      } else {
-        dismissTranslateY.value = withSpring(0, { damping: 20, stiffness: 220 });
-        backdropOpacity.value = withTiming(1, { duration: 200 });
-      }
-    });
+  const pinchGestureRef = useRef<any>(null);
+
+  const panGesture = useMemo(() => {
+    let p = Gesture.Pan()
+      .withRef(dismissGestureRef)
+      .maxPointers(1)
+      .activeOffsetY(14)
+      .failOffsetY(-10)
+      .failOffsetX([-25, 25])
+      .onUpdate((e) => {
+        'worklet';
+        if (isPinching.value) return;
+        if (e.translationY > 0) {
+          dismissTranslateY.value = e.translationY;
+          const progress = Math.min(1, Math.max(0, e.translationY / 360));
+          dismissScale.value = 1 - progress * 0.1;
+          dismissBorderRadius.value = progress * 24;
+          backdropOpacity.value = 1 - progress * 0.7;
+        } else {
+          dismissTranslateY.value = e.translationY * 0.08;
+        }
+      })
+      .onEnd((e) => {
+        'worklet';
+        if (isPinching.value) {
+          dismissTranslateY.value = withTiming(0, { duration: 200 });
+          return;
+        }
+        const isFlickDown = e.velocityY > 450 && e.velocityY > Math.abs(e.velocityX) * 1.2;
+        const isDragDown = e.translationY > 90;
+
+        if (isFlickDown || isDragDown) {
+          // Apple dismiss: smooth slide off to the bottom
+          backdropOpacity.value = withTiming(0, { duration: 280 });
+          dismissScale.value = withTiming(0.86, { duration: 300, easing: Easing.bezier(0.25, 1, 0.5, 1) });
+          dismissBorderRadius.value = withTiming(24, { duration: 300 });
+          dismissTranslateY.value = withTiming(
+            SCREEN_HEIGHT + 80,
+            { duration: 320, easing: Easing.bezier(0.25, 1, 0.5, 1) },
+            (fin) => {
+              if (fin) runOnJS(onClose)();
+            }
+          );
+        } else {
+          // Apple cancel: smooth non-bouncing glide back to center
+          dismissTranslateY.value = withTiming(0, {
+            duration: 280,
+            easing: Easing.bezier(0.25, 1, 0.5, 1),
+          });
+          dismissScale.value = withTiming(1, {
+            duration: 280,
+            easing: Easing.bezier(0.25, 1, 0.5, 1),
+          });
+          dismissBorderRadius.value = withTiming(0, { duration: 220 });
+          backdropOpacity.value = withTiming(1, { duration: 260 });
+        }
+      });
+
+    if (pinchGestureRef) {
+      p = (p as any).simultaneousWithExternalGesture(pinchGestureRef) as typeof p;
+    }
+    return p;
+  }, [onClose, isPinching, dismissTranslateY, dismissScale, dismissBorderRadius, backdropOpacity]);
+
+  // ── Pinch to Zoom Gesture (Fluid scaling with Apple snap-back) ─────────────
+  const pinchGesture = useMemo(() => {
+    let g = Gesture.Pinch()
+      .withRef(pinchGestureRef)
+      .onStart(() => {
+        'worklet';
+        isPinching.value = true;
+      })
+      .onUpdate((e) => {
+        'worklet';
+        pinchScale.value = Math.max(0.65, Math.min(3.5, e.scale));
+      })
+      .onEnd((e) => {
+        'worklet';
+        isPinching.value = false;
+        if (e.scale < 0.88) {
+          // Pinch in: Zoom out to fit full uncropped frame
+          runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+          runOnJS(showZoomToast)('contain');
+        } else if (e.scale > 1.14) {
+          // Pinch out: Zoom in to fill screen
+          runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+          runOnJS(showZoomToast)('cover');
+        }
+        pinchScale.value = withTiming(1, {
+          duration: 260,
+          easing: Easing.bezier(0.25, 1, 0.5, 1),
+        });
+      })
+      .onFinalize(() => {
+        'worklet';
+        isPinching.value = false;
+        pinchScale.value = withTiming(1, {
+          duration: 260,
+          easing: Easing.bezier(0.25, 1, 0.5, 1),
+        });
+      });
+
+    if (dismissGestureRef) {
+      g = (g as any).simultaneousWithExternalGesture(dismissGestureRef) as typeof g;
+    }
+    return g;
+  }, [isPinching, pinchScale, showZoomToast]);
+
+  const rootGestures = useMemo(() => {
+    return Gesture.Simultaneous(panGesture, pinchGesture);
+  }, [panGesture, pinchGesture]);
 
   // ── RNGH Tap gestures ─────────────────────────────────────────────────────
   const handleSingleTap = useCallback(() => {
@@ -230,6 +331,7 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     const doubleTap = Gesture.Tap()
       .numberOfTaps(2)
       .maxDuration(300)
+      .simultaneousWithExternalGesture(dismissGestureRef)
       .onEnd((e) => {
         'worklet';
         runOnJS(handleDoubleTap)(e.x);
@@ -238,6 +340,7 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     const singleTap = Gesture.Tap()
       .numberOfTaps(1)
       .requireExternalGestureToFail(doubleTap)
+      .simultaneousWithExternalGesture(dismissGestureRef)
       .onEnd(() => {
         'worklet';
         runOnJS(handleSingleTap)();
@@ -246,9 +349,131 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     return Gesture.Exclusive(doubleTap, singleTap);
   }, [handleDoubleTap, handleSingleTap]);
 
+  // ── RNGH Scrubber Gesture & Callbacks ──────────────────────────────────────
+  const getTimeFromX = useCallback(
+    (locX: number): number => {
+      const w = trackWidthRef.current;
+      if (w <= 0 || durationSec <= 0) return 0;
+      const clampedX = Math.max(0, Math.min(w, locX));
+      return (clampedX / w) * durationSec;
+    },
+    [durationSec]
+  );
+
+  const handleScrubBegin = useCallback(
+    (x: number) => {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      isScrubbingRef.current = true;
+      setIsScrubbing(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      controlsOpacity.value = withTiming(1, { duration: 150 });
+      setAreControlsVisible(true);
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setScrubTimeSec(t);
+      setActiveScrubSec(t);
+      onSeekStart();
+      onSeek(t);
+    },
+    [controlsOpacity, getTimeFromX, onSeekStart, onSeek]
+  );
+
+  const handleScrubMove = useCallback(
+    (x: number) => {
+      if (!isScrubbingRef.current) return;
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setScrubTimeSec(t);
+      setActiveScrubSec(t);
+      onSeek(t);
+    },
+    [getTimeFromX, onSeek]
+  );
+
+  const handleScrubEnd = useCallback(
+    (x: number) => {
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
+      const t = getTimeFromX(x);
+      lastScrubTimeRef.current = t;
+      setActiveScrubSec(t);
+      onSeekEnd(t);
+      resetControlsTimer();
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      scrubReleaseTimerRef.current = setTimeout(() => {
+        setActiveScrubSec(null);
+      }, 400);
+    },
+    [getTimeFromX, onSeekEnd, resetControlsTimer]
+  );
+
+  const handleScrubFinalize = useCallback(() => {
+    if (isScrubbingRef.current) {
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
+      const t = lastScrubTimeRef.current;
+      setActiveScrubSec(t);
+      onSeekEnd(t);
+      resetControlsTimer();
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
+      scrubReleaseTimerRef.current = setTimeout(() => {
+        setActiveScrubSec(null);
+      }, 400);
+    }
+  }, [onSeekEnd, resetControlsTimer]);
+
+  const scrubGesture = useMemo(() => {
+    let g = Gesture.Pan()
+      .minDistance(0)
+      .maxPointers(1)
+      .onBegin((e) => {
+        'worklet';
+        if (isPinching.value) return;
+        runOnJS(handleScrubBegin)(e.x);
+      })
+      .onUpdate((e) => {
+        'worklet';
+        if (isPinching.value) return;
+        runOnJS(handleScrubMove)(e.x);
+      })
+      .onEnd((e) => {
+        'worklet';
+        if (isPinching.value) return;
+        runOnJS(handleScrubEnd)(e.x);
+      })
+      .onFinalize(() => {
+        'worklet';
+        runOnJS(handleScrubFinalize)();
+      });
+
+    if (dismissGestureRef) {
+      g = (g as any).simultaneousWithExternalGesture(dismissGestureRef) as typeof g;
+    }
+    if (pinchGestureRef) {
+      g = (g as any).simultaneousWithExternalGesture(pinchGestureRef) as typeof g;
+    }
+    return g;
+  }, [handleScrubBegin, handleScrubMove, handleScrubEnd, handleScrubFinalize, isPinching]);
+
+  const handleTrackLayout = (e: LayoutChangeEvent) => {
+    const w = e.nativeEvent.layout.width;
+    setTrackWidth(w);
+    trackWidthRef.current = w;
+  };
+
+  // ── Progress calculations ──────────────────────────────────────────────────
+  const displayTimeSec = activeScrubSec !== null ? activeScrubSec : currentTimeSec;
+  const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTimeSec / durationSec)) : 0;
+  const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
+
   // ── Animated styles ────────────────────────────────────────────────────────
   const animatedContainerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dismissTranslateY.value }],
+    transform: [
+      { translateY: dismissTranslateY.value },
+      { scale: dismissScale.value },
+    ],
+    borderRadius: dismissBorderRadius.value,
+    overflow: 'hidden',
   }));
 
   const animatedBackdropStyle = useAnimatedStyle(() => ({
@@ -259,36 +484,70 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     opacity: controlsOpacity.value,
   }));
 
+  const watermarkAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: Math.max(0, Math.min(1, 1 - controlsOpacity.value)),
+  }));
+
+  const animatedVideoZoomStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pinchScale.value }],
+    backgroundColor: '#000000',
+  }));
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Animated.View style={[styles.backdrop, animatedBackdropStyle]}>
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={rootGestures}>
         <Animated.View style={[styles.root, animatedContainerStyle]}>
 
-          {/* ── Full-height video touch area ── */}
+          {/* ── Full-height video touch area (Tap to toggle/seek) ── */}
           <GestureDetector gesture={tapGestures}>
-            <View style={StyleSheet.absoluteFillObject}>
-              {/* Background poster */}
-              {cleanThumbnailUrl ? (
-                <ExpoImage
-                  source={{ uri: cleanThumbnailUrl }}
-                  style={StyleSheet.absoluteFillObject}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  priority="high"
-                />
-              ) : null}
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000000' }]}>
+              <Animated.View style={[StyleSheet.absoluteFillObject, animatedVideoZoomStyle]}>
+                {/* Background poster */}
+                {cleanThumbnailUrl ? (
+                  <ExpoImage
+                    source={{ uri: cleanThumbnailUrl }}
+                    style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000000' }]}
+                    contentFit={contentFitMode}
+                    cachePolicy="memory-disk"
+                    priority="high"
+                  />
+                ) : null}
 
-              {/* Native VideoView */}
-              <VideoView
-                ref={videoViewRef}
-                player={player}
-                style={StyleSheet.absoluteFillObject}
-                contentFit="cover"
-                nativeControls={false}
-                fullscreenOptions={{ enable: false }}
-                showsTimecodes={false}
-              />
+                {/* Native VideoView (default 'cover' full screen, pinch to toggle 'contain') */}
+                <VideoView
+                  ref={videoViewRef}
+                  player={player}
+                  style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000000' }]}
+                  contentFit={contentFitMode}
+                  nativeControls={false}
+                  fullscreenOptions={{ enable: false }}
+                  showsTimecodes={false}
+                  allowsVideoFrameAnalysis={false}
+                />
+              </Animated.View>
+
+              {/* Floating Zoom Toast Badge */}
+              {zoomToast ? (
+                <View
+                  style={[
+                    styles.zoomToastContainer,
+                    { top: Math.max(insets.top + 58, 88) },
+                  ]}
+                  pointerEvents="none"
+                >
+                  <View style={styles.zoomToastBubble}>
+                    <Ionicons
+                      name={zoomToast === 'cover' ? 'expand-outline' : 'contract-outline'}
+                      size={14}
+                      color="#E5C483"
+                    />
+                    <Text style={styles.zoomToastText}>
+                      {zoomToast === 'cover' ? 'Zoomed to Fill' : 'Fit to Screen'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
 
               {/* Seek zone flash indicators */}
               {seekRipple ? (
@@ -338,112 +597,199 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
             </View>
           </GestureDetector>
 
-          {/* ── Top Bar ── */}
+          {/* ── Netflix HUD Overlay (Fades in/out on tap anywhere) ── */}
           <Animated.View
-            style={[
-              styles.topBar,
-              { paddingTop: Math.max(insets.top + 6, 36) },
-              animatedHudStyle,
-            ]}
-            pointerEvents={areControlsVisible ? 'auto' : 'none'}
+            style={[StyleSheet.absoluteFillObject, animatedHudStyle]}
+            pointerEvents={areControlsVisible ? 'box-none' : 'none'}
           >
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                onClose();
-              }}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              activeOpacity={0.7}
+            {/* ── Top Bar ── */}
+            <LinearGradient
+              colors={['rgba(0,0,0,0.85)', 'rgba(0,0,0,0.4)', 'transparent']}
+              style={[
+                styles.topBar,
+                { paddingTop: Math.max(insets.top + 6, 36) },
+              ]}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
             >
-              <Ionicons name="chevron-down" size={22} color="#FFFFFF" />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  onClose();
+                }}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
 
-            <View style={styles.topRightRow}>
-              {resumedToastSec !== null ? (
-                <View style={styles.resumedToast}>
-                  <Text style={styles.resumedToastText}>
-                    Resumed from {formatTime(resumedToastSec)}
-                  </Text>
-                  <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
-                    <Text style={styles.restartLink}>Restart</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-              <ScreenCastButton
-                size={20}
-                color="#FFFFFF"
-                activeColor="#E5C483"
-                videoTitle={title}
-              />
+              <View style={styles.topRightRow}>
+                {resumedToastSec !== null ? (
+                  <View style={styles.resumedToast}>
+                    <Text style={styles.resumedToastText}>
+                      Resumed from {formatTime(resumedToastSec)}
+                    </Text>
+                    <TouchableOpacity onPress={onRestartFromBeginning} hitSlop={10}>
+                      <Text style={styles.restartLink}>Restart</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                <ScreenCastButton
+                  size={22}
+                  color="#FFFFFF"
+                  activeColor="#E5C483"
+                  videoTitle={title}
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    onClose();
+                  }}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                  activeOpacity={0.7}
+                  style={styles.closeButton}
+                >
+                  <Ionicons name="close" size={28} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            {/* ── Center Play / Pause / Replay ── */}
+            <View
+              style={styles.centerControlsOverlay}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
+            >
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  resetControlsTimer();
+                  if (isCompleted) {
+                    onReplay();
+                  } else {
+                    onPlayPauseToggle();
+                  }
+                }}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                activeOpacity={0.7}
+                style={styles.centerButton}
+              >
+                {isCompleted ? (
+                  <MaterialIcons name="replay" size={62} color="#FFFFFF" />
+                ) : isPlaying ? (
+                  <MaterialIcons name="pause" size={68} color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons name="play-arrow" size={72} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
             </View>
-          </Animated.View>
 
-          {/* ── Center Play / Pause / Replay ── */}
-          <Animated.View
-            style={[styles.centerControlsOverlay, animatedHudStyle]}
-            pointerEvents={areControlsVisible ? 'auto' : 'none'}
-          >
-            <TouchableOpacity
-              style={styles.centerPlayButton}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                resetControlsTimer();
-                if (isCompleted) onReplay(); else onPlayPauseToggle();
-              }}
-              hitSlop={20}
-              activeOpacity={0.85}
-            >
-              {isCompleted ? (
-                <Ionicons name="reload" size={28} color="#E5C483" />
-              ) : isPlaying ? (
-                <Ionicons name="pause" size={28} color="#FFFFFF" />
-              ) : (
-                <Ionicons name="play" size={28} color="#FFFFFF" style={{ marginLeft: 3 }} />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* ── Bottom Section: title + scrubber ── */}
-          <View style={styles.bottomContainer} pointerEvents="box-none">
+            {/* ── Bottom Section: title + time + seekbar ── */}
             <LinearGradient
               colors={['transparent', 'rgba(11,11,12,0.65)', 'rgba(11,11,12,0.96)']}
               locations={[0, 0.4, 1]}
-              style={StyleSheet.absoluteFillObject}
-              pointerEvents="none"
-            />
-
-            <Animated.View
               style={[
-                styles.bottomInfoRow,
-                { paddingBottom: Math.max(insets.bottom + 8, 16) },
-                animatedHudStyle,
+                styles.bottomContainer,
+                { paddingBottom: Math.max(insets.bottom + 8, 20) },
               ]}
-              pointerEvents={areControlsVisible ? 'auto' : 'none'}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
             >
+              {/* Title & Subtitle */}
               <View style={styles.titleWrapper}>
                 <Text style={styles.reelTitleText} numberOfLines={1}>{title}</Text>
                 {subtitle ? (
                   <Text style={styles.reelSubtitleText} numberOfLines={1}>{subtitle}</Text>
                 ) : null}
               </View>
-            </Animated.View>
 
-            {/* Flush scrubber at the very bottom — thumb + time bubble now visible */}
-            <CinemaScrubber
-              currentTimeSec={currentTimeSec}
-              durationSec={durationSec}
-              bufferedSec={bufferedSec}
-              onSeekStart={handleScrubStart}
-              onSeek={onSeek}
-              onSeekEnd={(t) => { onSeekEnd(t); handleScrubEnd(); }}
-              onScrubStart={handleScrubStart}
-              onScrubEnd={handleScrubEnd}
-              isControlsVisible={areControlsVisible}
-              variant="vertical"
-              dismissGestureRef={dismissGestureRef}
+              {/* Time above seekbar on left: position / total time */}
+              <View style={styles.timeRow}>
+                <Text style={styles.timecodeText}>
+                  {formatTime(displayTimeSec)} / {formatTime(durationSec)}
+                </Text>
+              </View>
+
+              {/* Seekbar Track */}
+              <View style={styles.scrubberRow}>
+                <GestureDetector gesture={scrubGesture}>
+                  <View
+                    style={styles.trackTouchArea}
+                    onLayout={handleTrackLayout}
+                  >
+                    {/* Background Track */}
+                    <View style={styles.trackBackground}>
+                      {/* Buffer Track */}
+                      <View
+                        style={[styles.trackBuffer, { width: `${bufferedRatio * 100}%` }]}
+                      />
+                      {/* Played Progress Track */}
+                      <View
+                        style={[styles.trackPlayed, { width: `${progressRatio * 100}%` }]}
+                      />
+                    </View>
+
+                    {/* Circular Thumb */}
+                    {trackWidth > 0 ? (
+                      <View
+                        style={[
+                          styles.scrubThumb,
+                          isScrubbing && styles.scrubThumbActive,
+                          {
+                            left: Math.max(
+                              0,
+                              Math.min(
+                                trackWidth - (isScrubbing ? 18 : 14),
+                                progressRatio * trackWidth - (isScrubbing ? 9 : 7)
+                              )
+                            ),
+                          },
+                        ]}
+                        pointerEvents="none"
+                      />
+                    ) : null}
+
+                    {/* Floating Time Bubble while dragging */}
+                    {isScrubbing && trackWidth > 0 ? (
+                      <View
+                        style={[
+                          styles.scrubBubble,
+                          {
+                            left: Math.max(
+                              0,
+                              Math.min(trackWidth - 54, progressRatio * trackWidth - 27)
+                            ),
+                          },
+                        ]}
+                        pointerEvents="none"
+                      >
+                        <Text style={styles.scrubBubbleText}>
+                          {formatTime(displayTimeSec)}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </GestureDetector>
+              </View>
+            </LinearGradient>
+          </Animated.View>
+
+          {/* ── YouTube-style Bottom-Right Watermark Logo (visible when controls are hidden) ── */}
+          <Animated.View
+            style={[
+              styles.watermarkContainer,
+              {
+                bottom: Math.max(insets.bottom + 12, 24),
+                right: 20,
+              },
+              watermarkAnimatedStyle,
+            ]}
+            pointerEvents="none"
+          >
+            <ExpoImage
+              source={require('../../../assets/images/logo-header-white.png')}
+              style={styles.watermarkLogo}
+              contentFit="contain"
             />
-          </View>
+          </Animated.View>
 
         </Animated.View>
       </GestureDetector>
@@ -459,7 +805,7 @@ const styles = StyleSheet.create({
   },
   root: {
     flex: 1,
-    backgroundColor: '#0B0B0C',
+    backgroundColor: '#000000',
     position: 'relative',
   },
 
@@ -479,7 +825,10 @@ const styles = StyleSheet.create({
   topRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 16,
+  },
+  closeButton: {
+    padding: 4,
   },
   backButton: {
     flexDirection: 'row',
@@ -517,13 +866,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 40,
   },
-  centerPlayButton: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    backgroundColor: 'rgba(20,20,24,0.88)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+  centerButton: {
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -535,15 +878,13 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 45,
-    // Taller than needed so time bubble from scrubber can float upward
     paddingTop: 80,
-    overflow: 'visible',
-  },
-  bottomInfoRow: {
     paddingHorizontal: 20,
+    overflow: 'visible',
   },
   titleWrapper: {
     width: '100%',
+    marginBottom: 8,
   },
   reelTitleText: {
     fontFamily: FONT_JOST_SEMIBOLD,
@@ -557,6 +898,110 @@ const styles = StyleSheet.create({
     color: '#C5A880',
     marginTop: 3,
     letterSpacing: 0.3,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: -4,
+  },
+  timecodeText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 12.5,
+    color: 'rgba(255, 255, 255, 0.9)',
+    letterSpacing: 0.5,
+  },
+  scrubberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  trackTouchArea: {
+    flex: 1,
+    height: 48,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  trackBackground: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  trackBuffer: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+  },
+  trackPlayed: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: '#E5C483',
+  },
+  scrubThumb: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -7,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#E5C483',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.6,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  scrubThumbActive: {
+    top: '50%',
+    marginTop: -9,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E5C483',
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 6,
+  },
+  scrubBubble: {
+    position: 'absolute',
+    top: -30,
+    backgroundColor: 'rgba(11, 11, 12, 0.92)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrubBubbleText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 11,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+
+  // ─── Watermark ───────────────────────────────────────────────────────────
+  watermarkContainer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    elevation: 25,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.9,
+    shadowRadius: 3,
+  },
+  watermarkLogo: {
+    width: 90,
+    height: 26,
   },
 
   // ─── Seek Zone Flash ──────────────────────────────────────────────────────
@@ -631,5 +1076,36 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#0B0B0C',
     letterSpacing: 1.5,
+  },
+
+  // ─── Floating Zoom Toast ──────────────────────────────────────────────────
+  zoomToastContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 60,
+  },
+  zoomToastBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(11, 11, 12, 0.85)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  zoomToastText: {
+    fontFamily: FONT_JOST_MEDIUM,
+    fontSize: 12,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
 });
