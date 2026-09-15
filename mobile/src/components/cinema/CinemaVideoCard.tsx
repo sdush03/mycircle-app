@@ -675,10 +675,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   topBadgeContainer: {
-    backgroundColor: 'rgba(18, 18, 22, 0.92)',
-    borderWidth: 1,
-    borderColor: 'rgba(229, 196, 131, 0.7)',
-    borderTopWidth: 0,
+    backgroundColor: '#E5C483',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderBottomLeftRadius: 4,
@@ -692,7 +689,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
-  // ─── Bottom Badge (Editorial Champagne Gold Badge) ──────────────────────
+  // ─── Bottom Badge (Editorial Champagne Gold / Glass Badges) ──────────────
   bottomBadgeRow: {
     position: 'absolute',
     bottom: 0,
@@ -703,10 +700,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   bottomBadgeContainer: {
-    backgroundColor: 'rgba(18, 18, 22, 0.92)',
-    borderWidth: 1,
-    borderColor: 'rgba(229, 196, 131, 0.7)',
-    borderBottomWidth: 0,
+    backgroundColor: '#E5C483',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderTopLeftRadius: 4,
@@ -720,31 +714,33 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   comingSoonBadgeContainer: {
-    backgroundColor: '#E5C483',
-    borderWidth: 0,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
+    backgroundColor: 'rgba(18, 18, 22, 0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 196, 131, 0.75)',
+    borderBottomWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
   },
   comingSoonBadgeText: {
-    color: '#000000',
-    fontWeight: '700',
+    color: '#E5C483',
+    fontWeight: '600',
     letterSpacing: 0.2,
   },
 
   badgeText: {
     ...Platform.select({
       ios: {
-        fontWeight: '600' as const,
+        fontWeight: '700' as const,
       },
       android: {
         fontFamily: FONT_FUTURA_BOLD,
       },
       default: {
-        fontWeight: '600' as const,
+        fontWeight: '700' as const,
       },
     }),
     fontSize: 9,
-    color: '#E5C483',
+    color: '#000000',
     letterSpacing: 0.3,
     lineHeight: 11,
     textAlign: 'center',
