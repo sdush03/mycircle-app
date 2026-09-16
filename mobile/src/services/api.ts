@@ -1,14 +1,18 @@
 import axios from 'axios';
+import Constants from 'expo-constants';
 import { useAuthStore } from '../store/authStore';
 
 // In local development, change this to your computer's IP address (e.g. 'http://192.168.1.X:3004')
 // when testing on a physical phone via Expo Go.
 export const API_BASE_URL = 'https://mycircle.mistyvisuals.com';
 
+const appVersion = Constants.expoConfig?.version || '1.2.0';
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    'X-App-Version': appVersion,
   },
 });
 
@@ -17,6 +21,7 @@ const api = axios.create({
 // This lets callers pass a per-event guest token without it being overwritten.
 api.interceptors.request.use(
   (config) => {
+    config.headers['X-App-Version'] = appVersion;
     if (!config.headers.Authorization) {
       const token = useAuthStore.getState().token;
       if (token) {
@@ -79,6 +84,11 @@ export const guestApi = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    'X-App-Version': appVersion,
   },
+});
+guestApi.interceptors.request.use((config) => {
+  config.headers['X-App-Version'] = appVersion;
+  return config;
 });
 
