@@ -29,7 +29,7 @@ interface VersionConfig {
 const DEFAULT_ANDROID_STORE_URL =
   'https://play.google.com/store/apps/details?id=com.mistyvisuals.mycircle';
 const DEFAULT_IOS_STORE_URL =
-  'https://apps.apple.com/app/id6400000000'; // Replace with actual App Store ID once published
+  'https://apps.apple.com/app/id6796633077';
 
 export default function ForceUpdateModal() {
   const [mustUpdate, setMustUpdate] = useState(false);
