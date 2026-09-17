@@ -21,7 +21,13 @@ const api = axios.create({
 // This lets callers pass a per-event guest token without it being overwritten.
 api.interceptors.request.use(
   (config) => {
+    if (config.headers && typeof (config.headers as any).set === 'function') {
+      (config.headers as any).set('X-App-Version', appVersion);
+      (config.headers as any).set('x-app-version', appVersion);
+    }
     config.headers['X-App-Version'] = appVersion;
+    config.headers['x-app-version'] = appVersion;
+
     if (!config.headers.Authorization) {
       const token = useAuthStore.getState().token;
       if (token) {
@@ -85,10 +91,16 @@ export const guestApi = axios.create({
   headers: {
     'Content-Type': 'application/json',
     'X-App-Version': appVersion,
+    'x-app-version': appVersion,
   },
 });
 guestApi.interceptors.request.use((config) => {
+  if (config.headers && typeof (config.headers as any).set === 'function') {
+    (config.headers as any).set('X-App-Version', appVersion);
+    (config.headers as any).set('x-app-version', appVersion);
+  }
   config.headers['X-App-Version'] = appVersion;
+  config.headers['x-app-version'] = appVersion;
   return config;
 });
 
