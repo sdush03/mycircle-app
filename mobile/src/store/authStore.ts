@@ -95,7 +95,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   getGalleryCache: (eventSlug) => {
     if (!eventSlug) return null;
-    return get().galleryCache[eventSlug] || null;
+    const entry = get().galleryCache[eventSlug];
+    if (!entry) return null;
+    // Invalidate stale cache if it contains synthetic upgrade banner photo (id 999999)
+    if (entry.photos && entry.photos.some((p: any) => p.id === 999999)) {
+      return null;
+    }
+    return entry;
   },
 
   setAuth: async (token, profile, userEvents = []) => {
