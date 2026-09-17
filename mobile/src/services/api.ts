@@ -6,7 +6,7 @@ import { useAuthStore } from '../store/authStore';
 // when testing on a physical phone via Expo Go.
 export const API_BASE_URL = 'https://mycircle.mistyvisuals.com';
 
-const appVersion = Constants.expoConfig?.version || '1.2.0';
+const appVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.0';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
