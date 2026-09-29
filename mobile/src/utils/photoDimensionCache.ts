@@ -49,24 +49,17 @@ export function getPhotoCardAspect(
 
   if (isLandscape) {
     // Landscape photos: use their real aspect ratio (e.g. 1.5, 1.33) or default to 3/2 (1.5)
-    return numColumns >= 4 ? 1.15 : ((rawAspect && rawAspect > 1.0) ? rawAspect : 1.5);
+    return (rawAspect && rawAspect > 1.0) ? rawAspect : 1.5;
   }
 
-  // 4. Portrait photos:
+  // 4. Portrait photos: Cycle 2/3 → 3/4 → 4/5 for organic editorial masonry rhythm!
+  // Deterministic calculation based on photo ID + column offset so cards stagger naturally
   const idNum = typeof item?.id === 'number'
     ? item.id
     : (typeof item?.id === 'string' ? item.id.split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0) : index);
   const safeId = (typeof idNum === 'number' && !isNaN(idNum)) ? idNum : (index || 0);
   const colOffset = typeof isColumn0OrColIdx === 'number' ? isColumn0OrColIdx : (isColumn0OrColIdx ? 0 : 1);
   const cycle = Math.abs((safeId || 0) + (colOffset || 0)) % 3;
-
-  // In dense 4 and 5 column modes, keep aspect near square (0.95 - 1.1) like Apple Photos
-  if (numColumns >= 4) {
-    const denseResult = cycle === 0 ? 0.95 : (cycle === 1 ? 1.0 : 1.05);
-    return denseResult;
-  }
-
-  // Cycle 2/3 → 3/4 → 4/5 for organic editorial masonry rhythm in 2-3 columns!
   const result = cycle === 0 ? 2 / 3 : (cycle === 1 ? 3 / 4 : 4 / 5);
   return isNaN(result) || result <= 0 ? 0.75 : result;
 }
