@@ -28,6 +28,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   interpolate,
+  Extrapolation,
   Easing,
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
@@ -471,8 +472,8 @@ function buildTransitionCards<T>(
   const cardsMap = new Map<string | number, TransitionCardData<T>>();
 
   // Screen visible bounds with edge padding to smoothly catch entering/leaving cards
-  const screenMinY = -60;
-  const screenMaxY = SCREEN_HEIGHT + 60;
+  const screenMinY = -180;
+  const screenMaxY = SCREEN_HEIGHT + 180;
 
   // 1. Process items visible in fromLayout:
   fromLayout.columns.forEach((col, cIdx) => {
@@ -755,6 +756,7 @@ export function MasonryFlashList<T = any>({
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const gridOpacity = useSharedValue(1);
   const toastOpacity = useSharedValue(0);
+  const hasTransitionCardsShared = useSharedValue(false);
 
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
@@ -770,6 +772,14 @@ export function MasonryFlashList<T = any>({
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
   const [transitionToCols, setTransitionToCols] = useState(numColumnsProp || 2);
   const [toastText, setToastText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (transitionCards && transitionCards.length > 0) {
+      requestAnimationFrame(() => {
+        hasTransitionCardsShared.value = true;
+      });
+    }
+  }, [transitionCards, hasTransitionCardsShared]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -968,31 +978,32 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
     showColumnToast(targetCols);
-
-    // Keep gridOpacity at 0 until React + native have committed and painted the new grid layout,
-    // then atomically swap: unhide base grid and remove transition overlay in the same frame!
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        gridOpacity.value = 1;
-        setTransitionCards(null);
-        setIsTransitioning(false);
-        isTransitioningRef.current = false;
-        setIsPinchingState(false);
-        transitionProgress.value = 0;
-        pinchDirection.value = 0;
-      });
-    });
-  }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity]);
+    // Keep the transition overlay cards visible for 110ms while React + native
+    // mount and paint the new base grid views in native.
+    // The base grid remains completely invisible (opacity 0) underneath during this time,
+    // so nothing shifts or shows through in the background!
+    setTimeout(() => {
+      gridOpacity.value = 1;
+      hasTransitionCardsShared.value = false;
+      setTransitionCards(null);
+      setIsTransitioning(false);
+      isTransitioningRef.current = false;
+      setIsPinchingState(false);
+      transitionProgress.value = 0;
+      pinchDirection.value = 0;
+    }, 110);
+  }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity, hasTransitionCardsShared]);
 
   const cancelTransition = useCallback(() => {
     gridOpacity.value = 1;
+    hasTransitionCardsShared.value = false;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     transitionProgress.value = 0;
     pinchDirection.value = 0;
-  }, [gridOpacity, transitionProgress, pinchDirection]);
+  }, [gridOpacity, transitionProgress, pinchDirection, hasTransitionCardsShared]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1053,6 +1064,8 @@ export function MasonryFlashList<T = any>({
         focalYShared.value = e.focalY;
         pinchDirection.value = 0;
         transitionProgress.value = 0;
+        gridOpacity.value = 1;
+        hasTransitionCardsShared.value = false;
         hasTriggeredHaptic.value = false;
         runOnJS(setIsPinchingState)(true);
       })
@@ -1078,6 +1091,7 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value === 1) {
           const p = Math.max(0, Math.min(1, (0.97 - e.scale) / 0.20));
           transitionProgress.value = p;
+          gridOpacity.value = interpolate(p, [0.08, 0.28], [1, 0], Extrapolation.CLAMP);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
@@ -1085,6 +1099,7 @@ export function MasonryFlashList<T = any>({
         } else if (pinchDirection.value === -1) {
           const p = Math.max(0, Math.min(1, (e.scale - 1.03) / 0.20));
           transitionProgress.value = p;
+          gridOpacity.value = interpolate(p, [0.08, 0.28], [1, 0], Extrapolation.CLAMP);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
@@ -1105,21 +1120,22 @@ export function MasonryFlashList<T = any>({
             transitionProgress.value = withTiming(1, {
               duration: 220,
               easing: Easing.bezier(0.25, 1, 0.5, 1),
-            }, (finished) => {
-              if (finished) {
-                runOnJS(commitTransition)(targetCols);
-              }
+            }, () => {
+              runOnJS(commitTransition)(targetCols);
             });
           } else {
-            // Cancel transition: animate back to 0:
-            transitionProgress.value = withTiming(0, {
-              duration: 180,
-              easing: Easing.bezier(0.25, 1, 0.5, 1),
-            }, (finished) => {
-              if (finished) {
+            // Cancel transition: animate cards back to 0:
+            gridOpacity.value = withTiming(1, { duration: 180 });
+            if (currentP > 0.01) {
+              transitionProgress.value = withTiming(0, {
+                duration: 180,
+                easing: Easing.bezier(0.25, 1, 0.5, 1),
+              }, () => {
                 runOnJS(cancelTransition)();
-              }
-            });
+              });
+            } else {
+              runOnJS(cancelTransition)();
+            }
           }
         } else {
           runOnJS(setIsPinchingState)(false);
@@ -1129,6 +1145,7 @@ export function MasonryFlashList<T = any>({
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
+        runOnJS(setIsPinchingState)(false);
       });
   }, [
     enablePinchToZoom,
@@ -1154,9 +1171,14 @@ export function MasonryFlashList<T = any>({
     return { transform: [{ scale: 1 }] };
   });
 
-  const gridVisibilityStyle = useAnimatedStyle(() => ({
-    opacity: gridOpacity.value,
-  }));
+  const gridVisibilityStyle = useAnimatedStyle(() => {
+    if (!hasTransitionCardsShared.value) {
+      return { opacity: 1 };
+    }
+    return {
+      opacity: gridOpacity.value,
+    };
+  });
 
   const toastAnimatedStyle = useAnimatedStyle(() => ({
     opacity: toastOpacity.value,
@@ -1272,7 +1294,7 @@ export function MasonryFlashList<T = any>({
           style={StyleSheet.absoluteFillObject}
           pointerEvents="none"
           onLayout={() => {
-            gridOpacity.value = 0;
+            hasTransitionCardsShared.value = true;
           }}
         >
           {transitionCards.map((card) => (
