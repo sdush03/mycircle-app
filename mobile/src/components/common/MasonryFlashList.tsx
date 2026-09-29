@@ -966,31 +966,32 @@ export function MasonryFlashList<T = any>({
       layoutRef.current = targetLayout;
     }
 
-    gridOpacity.value = 1;
     onNumColumnsChange?.(targetCols);
     showColumnToast(targetCols);
 
-    // Keep the transition overlay cards visible for 70ms while React mounts the new base grid views:
-    setTimeout(() => {
-      setTransitionCards(null);
-      setIsTransitioning(false);
-      isTransitioningRef.current = false;
-      setIsPinchingState(false);
-      transitionProgress.value = 0;
-      pinchDirection.value = 0;
-    }, 70);
+    // Keep gridOpacity at 0 until React + native have committed and painted the new grid layout,
+    // then atomically swap: unhide base grid and remove transition overlay in the same frame!
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        gridOpacity.value = 1;
+        setTransitionCards(null);
+        setIsTransitioning(false);
+        isTransitioningRef.current = false;
+        setIsPinchingState(false);
+        transitionProgress.value = 0;
+        pinchDirection.value = 0;
+      });
+    });
   }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity]);
 
   const cancelTransition = useCallback(() => {
     gridOpacity.value = 1;
-    setTimeout(() => {
-      setTransitionCards(null);
-      setIsTransitioning(false);
-      isTransitioningRef.current = false;
-      setIsPinchingState(false);
-      transitionProgress.value = 0;
-      pinchDirection.value = 0;
-    }, 70);
+    setTransitionCards(null);
+    setIsTransitioning(false);
+    isTransitioningRef.current = false;
+    setIsPinchingState(false);
+    transitionProgress.value = 0;
+    pinchDirection.value = 0;
   }, [gridOpacity, transitionProgress, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
@@ -1075,17 +1076,15 @@ export function MasonryFlashList<T = any>({
 
         // Live interactive gesture flight progress directly tracking user's fingers:
         if (pinchDirection.value === 1) {
-          const p = Math.max(0, Math.min(1, (1 - e.scale) / 0.22));
+          const p = Math.max(0, Math.min(1, (0.97 - e.scale) / 0.20));
           transitionProgress.value = p;
-          gridOpacity.value = interpolate(p, [0, 0.08], [1, 0]);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
           }
         } else if (pinchDirection.value === -1) {
-          const p = Math.max(0, Math.min(1, (e.scale - 1) / 0.22));
+          const p = Math.max(0, Math.min(1, (e.scale - 1.03) / 0.20));
           transitionProgress.value = p;
-          gridOpacity.value = interpolate(p, [0, 0.08], [1, 0]);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
@@ -1113,7 +1112,6 @@ export function MasonryFlashList<T = any>({
             });
           } else {
             // Cancel transition: animate back to 0:
-            gridOpacity.value = withTiming(1, { duration: 180 });
             transitionProgress.value = withTiming(0, {
               duration: 180,
               easing: Easing.bezier(0.25, 1, 0.5, 1),
@@ -1270,7 +1268,13 @@ export function MasonryFlashList<T = any>({
 
       {/* ─── Apple Photos Flight Transition Overlay ─────────────────────── */}
       {transitionCards && (
-        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+        <View
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+          onLayout={() => {
+            gridOpacity.value = 0;
+          }}
+        >
           {transitionCards.map((card) => (
             <AnimatingCard
               key={`trans-${card.id}`}
