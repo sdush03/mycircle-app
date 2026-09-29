@@ -29,23 +29,28 @@ class VideoPreloadManager {
   private cache: Map<string, VideoPlayer> = new Map();
   private maxCached: number = 2; // 2 players max in RAM prevents iOS memory pressure & buffer purge for 4K video
   private probedUrls: Set<string> = new Set();
+  private activeUrl: string | null = null;
 
   constructor() {
-    // When cinema playback is active, suspend all cached background players to free up bandwidth & RAM
+    // When cinema playback is active, clear background preloaded players to prevent Android MediaCodec hardware decoder contention
     playbackFocusManager.subscribe((isPlaying) => {
       if (isPlaying) {
-        this.cache.forEach((player) => {
+        this.cache.forEach((player, url) => {
+          if (this.activeUrl && url === this.activeUrl) {
+            return;
+          }
           try {
-            player.bufferOptions = {
-              waitsToMinimizeStalling: false,
-              preferredForwardBufferDuration: 0,
-            };
             player.pause();
           } catch {}
         });
-        console.log('[VIDEO PRELOAD ⏸️] Background players suspended — 100% bandwidth & decoder focus given to active Cinema film.');
+        this.cache.clear();
+        console.log('[VIDEO PRELOAD 🧹] Background preloaded players cleared — 100% decoder focus given to active Cinema film.');
       }
     });
+  }
+
+  public setActiveUrl(url: string | null): void {
+    this.activeUrl = url;
   }
 
   /**
@@ -59,8 +64,8 @@ class VideoPreloadManager {
     metadata?: { title?: string; artist?: string; artwork?: string }
   ): void {
     if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
-    // If Cinema playback is active, NEVER preload new players or steal bandwidth!
-    if (playbackFocusManager.isPlaying) {
+    // If Cinema playback is active or url is currently active, NEVER create new background players!
+    if (playbackFocusManager.isPlaying || (this.activeUrl && url === this.activeUrl)) {
       return;
     }
     const cleanUrl = url.split('?')[0].toLowerCase();
@@ -134,7 +139,6 @@ class VideoPreloadManager {
       player.allowsExternalPlayback = true;
       player.bufferOptions = {
         waitsToMinimizeStalling: true,
-        preferredForwardBufferDuration: 0, // 0 lets iOS/TV auto-negotiate optimal streaming buffer
       };
       player.pause(); // Keep paused while pre-buffering in background
 
@@ -171,16 +175,26 @@ class VideoPreloadManager {
 
   /**
    * Backward-compatible alias for getPlayer.
-   * DOES NOT delete the player so it remains warm for subsequent taps.
+   * Transfers ownership to active modal and removes from preloader pool.
    */
   public takePlayer(url: string | null | undefined): VideoPlayer | null {
-    return this.getPlayer(url);
+    if (url) {
+      this.activeUrl = url;
+    }
+    const player = this.getPlayer(url);
+    if (player && url) {
+      this.cache.delete(url);
+    }
+    return player;
   }
 
   /**
    * Called when modal closes: pauses player, rewinds to 0s, and keeps it warm.
    */
   public returnPlayer(url: string | null | undefined): void {
+    if (url && this.activeUrl === url) {
+      this.activeUrl = null;
+    }
     if (!url || !this.cache.has(url)) return;
     const player = this.cache.get(url)!;
     try {

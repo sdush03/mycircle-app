@@ -104,6 +104,7 @@ function VideoPlayerView({
   useEffect(() => {
     // 1. Claim 100% network & CPU focus for the entire duration this Cinema modal is open.
     // Suspends all background downloads, probes, and thumbnail prefetching.
+    videoPreloadManager.setActiveUrl(videoUrl);
     playbackFocusManager.notifyPlaybackStarted();
 
     console.log(`[CINEMA VIEW 🎬 MOUNT] URL: ${videoUrl.slice(0, 70)}... | Initial Status: ${player.status} | Playing: ${player.playing} | Buffered: ${player.bufferedPosition?.toFixed?.(2) ?? '?'}s | Duration: ${player.duration?.toFixed?.(2) ?? '?'}s`);
@@ -146,19 +147,17 @@ function VideoPlayerView({
         setIsBufferingOverlay(true);
       } else if (newStatus === 'readyToPlay') {
         setIsBufferingOverlay(false);
-        if (resumeTimeSec && resumeTimeSec > 0 && (!hasResumedRef.current || Math.abs((player.currentTime || 0) - resumeTimeSec) > 2)) {
+        if (resumeTimeSec && resumeTimeSec > 0 && !hasResumedRef.current) {
           hasResumedRef.current = true;
           try {
             player.currentTime = resumeTimeSec;
             console.log(`[CINEMA RESUME ⏱️ READY] Resumed at saved position: ${resumeTimeSec.toFixed(1)}s`);
           } catch {}
-        } else if (!resumeTimeSec) {
-          try {
-            player.currentTime = 0;
-          } catch {}
         }
-        // Ensure audio is unmuted and playing if not paused by user
-        if (!isSeekingRef.current && !userPausedRef.current) {
+        hasResumedRef.current = true;
+
+        // Ensure audio is unmuted and playing if not paused by user and not already playing
+        if (!isSeekingRef.current && !userPausedRef.current && !player.playing) {
           player.muted = false;
           try {
             player.play();
@@ -242,7 +241,7 @@ function VideoPlayerView({
 
     const sourceLoadSub = (player as any).addListener?.('sourceLoad', () => {
       console.log(`[CINEMA EVENT 📦 SOURCE LOADED] Metadata loaded! Duration: ${player.duration?.toFixed(1) ?? '?'}s`);
-      if (!isSeekingRef.current && !userPausedRef.current) {
+      if (!isSeekingRef.current && !userPausedRef.current && !player.playing) {
         player.muted = false;
         try {
           player.play();
@@ -351,10 +350,10 @@ function VideoPlayerView({
         player.muted = false;
       }
 
-      // Auto-resume if stalled by network (not user-paused, not ended, not seeking, not error)
+      // Auto-resume if stalled by network (not user-paused, not ended, not seeking, not error, not loading)
       // When AirPlay is active to TV, do NOT force play() or interfere with the TV's independent buffering
       const isExternal = (player as any).isExternalPlaybackActive;
-      if (!p && !userPausedRef.current && !isEndedRef.current && !isSeekingRef.current && s !== 'error') {
+      if (!p && !userPausedRef.current && !isEndedRef.current && !isSeekingRef.current && s !== 'error' && s !== 'loading') {
         if (!isExternal) {
           if (bufferedAhead >= 0.5 || s === 'readyToPlay') {
             player.muted = false;
@@ -395,7 +394,12 @@ function VideoPlayerView({
       try {
         player.allowsExternalPlayback = false; // Disconnect AirPlay route on close
         player.showNowPlayingNotification = false;
+        player.pause();
+        if (videoUrl) {
+          videoPreloadManager.returnPlayer(videoUrl);
+        }
       } catch {}
+      videoPreloadManager.setActiveUrl(null);
       playbackFocusManager.notifyPlaybackStopped();
       console.log(`[CINEMA VIEW 🎬 UNMOUNT] Closed for URL: ${videoUrl.slice(0, 50)}...`);
     };
@@ -665,7 +669,6 @@ function VideoPlayerContentWithNewPlayer(props: CommonPlayerProps) {
       }
       p.bufferOptions = {
         waitsToMinimizeStalling: true,
-        preferredForwardBufferDuration: 0, // 0 allows iOS and TV to negotiate optimal forward buffer
       };
       console.log(`[CINEMA MODAL 🎬] New player initialized, calling play()...`);
       p.play();
@@ -696,7 +699,6 @@ function VideoPlayerContentWithPreloaded(props: CommonPlayerProps & { player: Vi
     }
     props.player.bufferOptions = {
       waitsToMinimizeStalling: true,
-      preferredForwardBufferDuration: 0,
     };
     console.log(`[CINEMA MODAL ⚡ PRELOAD HIT] Mounted with pre-buffered player! Status: ${props.player.status} | Buffered: ${props.player.bufferedPosition?.toFixed(2)}s | Target Resume: ${props.resumeTimeSec ?? 0}s`);
     

@@ -26,6 +26,7 @@ import {
   BackHandler,
   StatusBar,
   useWindowDimensions,
+  Dimensions,
   LayoutChangeEvent,
   ViewStyle,
 } from 'react-native';
@@ -147,12 +148,13 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   onRestartFromBeginning,
 }) => {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const windowDim = useWindowDimensions();
+  const screenDim = Dimensions.get('screen');
 
-  // Screen dimensions
-  const isPhysicalLandscape = windowWidth > windowHeight;
-  const screenWidth = Math.min(windowWidth, windowHeight);
-  const screenHeight = Math.max(windowWidth, windowHeight);
+  // Screen dimensions: use full physical screen bounds (including nav/status bars)
+  const isPhysicalLandscape = windowDim.width > windowDim.height;
+  const screenWidth = Math.min(screenDim.width, screenDim.height);
+  const screenHeight = Math.max(screenDim.width, screenDim.height);
 
   // Landscape player dimensions:
   const playerWidth = screenHeight;
@@ -405,6 +407,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
         right: 0,
         bottom: 0,
         backgroundColor: '#000000',
+        overflow: 'hidden',
       };
     }
     // Compulsorily rotated into landscape when phone is held in portrait
@@ -416,6 +419,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
       height: screenWidth,
       transform: [{ rotate: '90deg' }],
       backgroundColor: '#000000',
+      overflow: 'hidden',
     };
   }, [isPhysicalLandscape, screenWidth, screenHeight]);
 
@@ -441,7 +445,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
       <View style={containerStyle}>
         {/* ── Video Canvas ── */}
             <GestureDetector gesture={tapGestures}>
-              <View style={StyleSheet.absoluteFillObject}>
+              <View style={[StyleSheet.absoluteFillObject, { overflow: 'hidden', backgroundColor: '#000000' }]}>
           {/* Background Poster fallback */}
           {cleanThumbnailUrl ? (
             <ExpoImage
@@ -453,7 +457,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             />
           ) : null}
 
-          {/* Native VideoView (textureView allows seamless Android 90deg CSS rotation) */}
+          {/* Native VideoView (textureView allows 90deg CSS rotation on Android) */}
           <VideoView
             ref={videoViewRef}
             player={player}

@@ -48,6 +48,8 @@ import {
 } from '../../services/videoWatchProgressManager';
 import { CinemaVideoDetailModal } from './CinemaVideoDetailModal';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
+import { videoPreloadManager } from '../../services/videoPreloadManager';
+import { playbackFocusManager } from '../../services/playbackFocusManager';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -482,6 +484,52 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     return undefined;
   }, []);
 
+  // Background Preload on Library Mount:
+  // Fires 1.5s after the cinema shelf renders — pre-buffers the primary video and
+  // the first unviewed video from the first shelf, so AVPlayer/ExoPlayer has already
+  // started downloading before the user taps anything.
+  // The 1.5s delay avoids racing with GalleryView's immediate preload on data fetch.
+  // videoPreloadManager internally deduplicates — calling preload twice for the same
+  // URL is a no-op if a warm player already exists in the pool.
+  useEffect(() => {
+    if (!videos || videos.length === 0) return;
+    const timer = setTimeout(() => {
+      if (playbackFocusManager.isPlaying) return; // never preload while a video is actively playing
+      let preloaded = 0;
+      // 1. Primary hero video (highest priority)
+      if (primaryVideo) {
+        const url = primaryVideo.videoUrl || primaryVideo.r2Url || primaryVideo.uri;
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          videoPreloadManager.preload(url, getValidImageThumbnail(primaryVideo) ?? undefined, {
+            title: primaryVideo.title,
+            artist: primaryVideo.cinemaCategory,
+          });
+          preloaded++;
+        }
+      }
+      // 2. First video of each shelf that isn't already the primary (up to pool limit of 2)
+      for (const shelf of shelves) {
+        if (preloaded >= 2) break;
+        const first = shelf.items.find(
+          (v) =>
+            !isVideoComingSoon(v) &&
+            (v.videoUrl || v.r2Url || v.uri) !==
+              (primaryVideo?.videoUrl || primaryVideo?.r2Url || primaryVideo?.uri)
+        );
+        if (!first) continue;
+        const url = first.videoUrl || first.r2Url || first.uri;
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          videoPreloadManager.preload(url, getValidImageThumbnail(first) ?? undefined, {
+            title: first.title,
+            artist: first.cinemaCategory,
+          });
+          preloaded++;
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [videos, primaryVideo, shelves]);
+
   const handleCardPress = useCallback((film: CinemaVideoItem, _resumeTime?: number, bounds?: LightboxBounds | null) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const enrichedFilm = {
@@ -491,6 +539,15 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     if (isVideoComingSoon(enrichedFilm)) {
       setComingSoonDrawerVideo(enrichedFilm);
       return;
+    }
+    // Preload immediately — user will spend 1-3s on the detail sheet before tapping play.
+    // This gives the native player a head start buffering before the modal even opens.
+    const vUrl = enrichedFilm.videoUrl || enrichedFilm.r2Url || enrichedFilm.uri;
+    if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
+      videoPreloadManager.preload(vUrl, getValidImageThumbnail(enrichedFilm) ?? undefined, {
+        title: enrichedFilm.title,
+        artist: enrichedFilm.cinemaCategory,
+      });
     }
     setIsDetailFromContinueWatching(false);
     setDetailBounds(bounds || null);
@@ -528,6 +585,15 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     if (isVideoComingSoon(primaryVideo)) {
       setComingSoonDrawerVideo(enrichedPrimary);
       return;
+    }
+    // Preload immediately — even a 300ms head start before the modal opens
+    // means the player already has the first few seconds buffered on arrival.
+    const vUrl = enrichedPrimary.videoUrl || enrichedPrimary.r2Url || enrichedPrimary.uri;
+    if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
+      videoPreloadManager.preload(vUrl, getValidImageThumbnail(enrichedPrimary) ?? undefined, {
+        title: enrichedPrimary.title,
+        artist: enrichedPrimary.cinemaCategory,
+      });
     }
     const progress = getProgress(primaryVideo);
     const resumeTime = progress && !progress.isCompleted && progress.currentTime > 0 ? progress.currentTime : undefined;

@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
+  BackHandler,
   LayoutChangeEvent,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
@@ -177,6 +178,15 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
       resetControlsTimer();
     }
   }, [areControlsVisible, resetControlsTimer, controlsOpacity]);
+
+  // ── Android hardware back button ───────────────────────────────────────────
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => backHandler.remove();
+  }, [onClose]);
 
   // ── Zoom / Aspect Ratio mode (Default: 'cover' full-screen, pinch to toggle) ─
   const [contentFitMode, setContentFitMode] = useState<'cover' | 'contain'>('cover');

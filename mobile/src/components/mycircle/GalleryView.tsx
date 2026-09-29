@@ -210,36 +210,96 @@ interface GalleryViewProps {
 
 const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, onScreenProtectionChange }: GalleryViewProps) {
   const insets = useSafeAreaInsets();
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [allPhotos, setAllPhotos] = useState<Photo[]>([]);
-  const [totalAllPhotosCount, setTotalAllPhotosCount] = useState<number | null>(null);
-  const [eventDetails, setEventDetailsData] = useState<any>(null);
+
+  const eventSlug = useAuthStore((state) => state.eventSlug);
+  const passcode = useAuthStore((state) => state.passcode);
+  const profile = useAuthStore((state) => state.profile);
+  const userEvents = useAuthStore((state) => state.userEvents);
+  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
+  const eventTitle = useAuthStore((state) => state.eventTitle);
+  const handleScroll = useScrollTabBarCollapse();
+
+  // Instant Frame 1 Cache: Read from sandboxed memory/AsyncStorage store synchronously
+  const cachedInitial = React.useMemo(() => {
+    if (!eventSlug) return null;
+    return useAuthStore.getState().getGalleryCache(eventSlug);
+  }, [eventSlug]);
+
+  const [photos, setPhotos] = useState<Photo[]>(() => {
+    if (cachedInitial?.matched && Array.isArray(cachedInitial.matched)) {
+      return cachedInitial.matched.map(mapPhotoItem);
+    }
+    return [];
+  });
+  const [allPhotos, setAllPhotos] = useState<Photo[]>(() => {
+    if (cachedInitial?.photos && Array.isArray(cachedInitial.photos)) {
+      return cachedInitial.photos.map(mapPhotoItem);
+    }
+    return [];
+  });
+  const [totalAllPhotosCount, setTotalAllPhotosCount] = useState<number | null>(() => {
+    return typeof cachedInitial?.total === 'number' ? cachedInitial.total : null;
+  });
+  const [eventDetails, setEventDetailsData] = useState<any>(() => {
+    return cachedInitial?.details || null;
+  });
   const [eventGuest, setEventGuest] = useState<any>(null);
+
+  const [guestAccessLevel, setGuestAccessLevel] = useState<boolean | null>(() => {
+    if (cachedInitial && typeof cachedInitial.hasFullAccess === 'boolean') {
+      return cachedInitial.hasFullAccess;
+    }
+    return null;
+  });
+  const hasFullAccess = guestAccessLevel ?? (profile?.hasFullAccess ?? false);
+
+  const [tabCache, setTabCache] = useState<Record<string, Photo[]>>(() => {
+    const tabCacheData = cachedInitial?.tabCache;
+    if (tabCacheData) {
+      const normalized: Record<string, Photo[]> = {};
+      Object.keys(tabCacheData).forEach((k) => {
+        normalized[k] = (tabCacheData[k] || []).map(mapPhotoItem);
+      });
+      return normalized;
+    }
+    return {};
+  });
+  const [isTabLoading, setIsTabLoading] = useState(false);
+
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (!eventSlug) return 'HIGHLIGHTS';
-    const cached = useAuthStore.getState().getGalleryCache(eventSlug);
-    if (cached) {
-      if (cached.hasFullAccess === false) {
+    if (cachedInitial) {
+      if (cachedInitial.hasFullAccess === false) {
         return 'HIGHLIGHTS';
       }
-      const hlCount = cached.details?.tabCounts?.['HIGHLIGHTS'] ?? 0;
+      const hlCount = cachedInitial.details?.tabCounts?.['HIGHLIGHTS'] ?? 0;
       if (hlCount > 0) return 'HIGHLIGHTS';
     }
     return 'HIGHLIGHTS';
   });
-  const [isLoading, setIsLoading] = useState(true);
+
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    const hasPhotos = Boolean(cachedInitial?.photos && cachedInitial.photos.length > 0);
+    const hasTabs = Boolean(cachedInitial?.tabCache && Object.keys(cachedInitial.tabCache).length > 0);
+    return !(hasPhotos || hasTabs);
+  });
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshingGallery, setIsRefreshingGallery] = useState(false);
-  const [allPhotosOffset, setAllPhotosOffset] = useState(0);
-  const [hasMorePhotos, setHasMorePhotos] = useState(true);
+  const [allPhotosOffset, setAllPhotosOffset] = useState<number>(() => {
+    return cachedInitial?.photos?.length || 0;
+  });
+  const [hasMorePhotos, setHasMorePhotos] = useState<boolean>(() => {
+    if (cachedInitial?.total !== undefined && cachedInitial?.photos) {
+      return cachedInitial.photos.length < cachedInitial.total;
+    }
+    return true;
+  });
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isMoreDrawerOpen, setIsMoreDrawerOpen] = useState(false);
   const [isScrolledPastHero, setIsScrolledPastHero] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ current: number; total: number } | null>(null);
   const [lockedPhotoIds, setLockedPhotoIds] = useState<Set<number>>(new Set());
-
-
 
   // Lightbox & Video State
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
@@ -253,16 +313,36 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const isTabSwitchingRef = useRef<boolean>(false);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
   const eventHeadersRef = useRef<Record<string, string>>({});
-  const allPhotosOffsetRef = useRef<number>(0);
+  const allPhotosOffsetRef = useRef<number>(cachedInitial?.photos?.length || 0);
   const tabOffsetsRef = useRef<Record<string, number>>({});
   const tabHasMoreRef = useRef<Record<string, boolean>>({});
-  const eventSlug = useAuthStore((state) => state.eventSlug);
-  const passcode = useAuthStore((state) => state.passcode);
-  const profile = useAuthStore((state) => state.profile);
-  const userEvents = useAuthStore((state) => state.userEvents);
-  const eventCoverUrl = useAuthStore((state) => state.eventCoverUrl);
-  const eventTitle = useAuthStore((state) => state.eventTitle);
-  const handleScroll = useScrollTabBarCollapse();
+
+  // Column Density & Pinch-to-Zoom State (1 = editorial, 2 = masonry, 3 = compact grid)
+  const [galleryColumns, setGalleryColumns] = useState<number>(2);
+
+  useEffect(() => {
+    AsyncStorage.getItem('mycircle_gallery_columns').then((val) => {
+      if (val) {
+        const parsed = parseInt(val, 10);
+        if (parsed >= 1 && parsed <= 5) {
+          setGalleryColumns(parsed);
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleGalleryColumnsChange = useCallback((newCols: number) => {
+    setGalleryColumns(newCols);
+    AsyncStorage.setItem('mycircle_gallery_columns', String(newCols)).catch(() => {});
+  }, []);
+
+  const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
+    .toString()
+    .replace(/'s\s+Wedding/gi, '')
+    .replace('&', '·')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
 
   const isFetchingMoreRef = useRef<boolean>(false);
   const lastScrollYRef = useRef<number>(0);
@@ -279,6 +359,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const [isPast60Photos, setIsPast60Photos] = useState(false);
 
   const exactTouchPoint = Math.round(screenHeight * 0.70) - Math.round(insets.top + 45);
+  const heroCoverHeight = Math.round(screenHeight * 0.70);
+
+  const floatingHeaderAnimatedStyle = useAnimatedStyle(() => {
+    const isLocked = scrollY.value >= heroCoverHeight;
+    return {
+      opacity: isLocked ? 1 : 0,
+      transform: [{ translateY: isLocked ? 0 : -300 }],
+    };
+  });
 
   const drawerProgress = useSharedValue(0);
 
@@ -376,13 +465,52 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
 
-  const animatedHeroContainerStyle = useAnimatedStyle(() => ({
-    height: Math.round(screenHeight * 0.70),
-  }));
+  const animatedHeroImageStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    if (y < 0) {
+      // Overscroll pull-down: scale up smoothly and anchor to top
+      const scale = interpolate(y, [-heroCoverHeight, 0], [2, 1], 'clamp');
+      const translateY = y / 2;
+      return {
+        transform: [{ translateY }, { scale }],
+      };
+    }
+    // Normal scroll: translate down at 38% speed for luxurious parallax depth
+    const translateY = y * 0.38;
+    return {
+      transform: [{ translateY }, { scale: 1 }],
+    };
+  });
 
-  const animatedTitleContainerStyle = useAnimatedStyle(() => ({
-    bottom: 30,
-  }));
+  const animatedTitleContainerStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    if (y < 0) {
+      return {
+        opacity: 1,
+        transform: [{ translateY: 0 }],
+      };
+    }
+    // Subtle parallax drift + gentle fade-out before cover leaves view
+    const translateY = interpolate(y, [0, heroCoverHeight * 0.6], [0, -35], 'clamp');
+    const opacity = interpolate(y, [0, heroCoverHeight * 0.45], [1, 0], 'clamp');
+    return {
+      opacity,
+      transform: [{ translateY }],
+    };
+  });
+
+  const animatedCoverLogoStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    if (y < 0) {
+      return { opacity: 1, transform: [{ translateY: 0 }] };
+    }
+    const opacity = interpolate(y, [0, heroCoverHeight * 0.35], [1, 0], 'clamp');
+    const translateY = interpolate(y, [0, heroCoverHeight * 0.35], [0, -15], 'clamp');
+    return {
+      opacity,
+      transform: [{ translateY }],
+    };
+  });
 
   const loadMorePhotosRef = useRef<(() => void) | null>(null);
   const prefetchedUrlsRef = useRef<Set<string>>(new Set());
@@ -392,6 +520,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const handleViewportScroll = useCallback((offsetY: number, layoutHeight: number, contentHeight: number) => {
     currentYRef.current = offsetY;
+    if (activeTab && activeTab.trim().toUpperCase() !== 'CINEMA') {
+      tabOffsetsRef.current[activeTab.trim().toUpperCase()] = offsetY;
+    }
 
     const heroHeight = Math.round(screenHeight * 0.70);
     const relativeY = Math.max(0, offsetY - heroHeight);
@@ -413,17 +544,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [hasMorePhotos]);
 
-  const isScrollingRef = useRef<boolean>(false);
-
-  const handleScrollState = useCallback((isScrolling: boolean) => {
-    isScrollingRef.current = isScrolling;
-  }, []);
-
   const scrollHandler = useAnimatedScrollHandler({
-    onBeginDrag: () => {
-      'worklet';
-      runOnJS(handleScrollState)(true);
-    },
     onScroll: (event) => {
       'worklet';
       scrollY.value = event.contentOffset.y;
@@ -432,14 +553,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         event.layoutMeasurement.height,
         event.contentSize.height
       );
-    },
-    onEndDrag: () => {
-      'worklet';
-      runOnJS(handleScrollState)(false);
-    },
-    onMomentumEnd: () => {
-      'worklet';
-      runOnJS(handleScrollState)(false);
     },
   });
 
@@ -517,87 +630,32 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     transform: [{ translateX: screenSwipeX.value }],
   }));
 
-  const fetchPhotos = async () => {
+  const fetchPhotosFallback = async () => {
     try {
       if (!eventSlug) return;
+      const familyToken = useAuthStore.getState().token;
+      const currentPasscode = useAuthStore.getState().passcode;
 
-      // 0. Check Stale-While-Revalidate (SWR) cache for 0ms instant gallery launch
-      const cached = useAuthStore.getState().getGalleryCache(eventSlug);
-      if (cached && cached.photos && cached.photos.length > 0) {
-        const normalizedPhotos = cached.photos.map(mapPhotoItem);
-        setAllPhotos(normalizedPhotos);
-        allPhotosOffsetRef.current = normalizedPhotos.length;
-        setAllPhotosOffset(normalizedPhotos.length);
-        if (cached.details) setEventDetailsData(cached.details);
-        if (cached.total !== undefined) setTotalAllPhotosCount(cached.total);
-        if (cached.matched) setPhotos(cached.matched.map(mapPhotoItem));
-        if (cached.headers) eventHeadersRef.current = cached.headers;
-        if (typeof cached.hasFullAccess === 'boolean') setGuestAccessLevel(cached.hasFullAccess);
-        const tabCacheData = cached.tabCache;
-        if (tabCacheData) {
-          const normalizedTabCache: Record<string, Photo[]> = {};
-          Object.keys(tabCacheData).forEach((k) => {
-            normalizedTabCache[k] = (tabCacheData[k] || []).map(mapPhotoItem);
-          });
-          setTabCache(normalizedTabCache);
-
-          // Preload cinema videos immediately on Frame 1 from SWR cache!
-          const cachedCinema = normalizedTabCache['CINEMA'];
-          if (cachedCinema && cachedCinema.length > 0) {
-            const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
-            const prioritizedCinema = [...cachedCinema]
-              .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
-              .sort((a, b) => b.priority - a.priority);
-
-            prioritizedCinema.forEach(({ video: v, priority }, queueIdx) => {
-              const vUrl = v.videoUrl || v.fullUri || v.r2Url;
-              if (vUrl) {
-                const headline = formatCinemaDisplayTitle(cleanTitle, v);
-                const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
-                const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
-
-                if (queueIdx === 0) {
-                  videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
-                  videoDownloadManager.queue(vUrl, priority);
-                } else {
-                  setTimeout(() => {
-                    videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
-                    videoDownloadManager.queue(vUrl, priority);
-                  }, queueIdx * 1500);
-                }
-              }
-            });
-          }
-        }
-        setIsLoading(false); // 0ms INSTANT OPEN ON FRAME 1!
-      } else {
-        setIsLoading(true);
-        setAllPhotos([]);
-        setAllPhotosOffset(0);
-        setHasMorePhotos(true);
-        setTotalAllPhotosCount(null);
-      }
-
-      // Fetch event metadata for cover screen
+      // 1. Fetch event metadata
+      let fetchedEventDetails: any = null;
       try {
         const eventRes = await api.get(`/api/gallery/public/events/${eventSlug}`);
         if (eventRes.data) {
+          fetchedEventDetails = eventRes.data;
           setEventDetailsData(eventRes.data);
-          const c = eventRes.data.coverUrl || eventRes.data.cover_url || eventRes.data.bannerUrl;
+          const c = eventRes.data.coverPhotoMobileUrl || eventRes.data.coverPhotoUrl || eventRes.data.coverUrl || eventRes.data.bannerUrl;
           if (c) Image.prefetch(c);
         }
       } catch (e: any) {
         if (e?.response?.status === 404) {
+          useAuthStore.getState().clearGalleryCache(eventSlug);
           onChangeEvent();
           return;
         }
-        console.warn('Failed to fetch event details:', e);
+        console.warn('Failed to fetch event details in fallback:', e);
       }
 
-      const familyToken = useAuthStore.getState().token;
-      const currentPasscode = useAuthStore.getState().passcode;
-
-      // 1. SSO Token Exchange: Obtain event guest token for this celebration
+      // 2. SSO Token exchange for guest token
       try {
         const ssoRes = await api.post(
           `/api/gallery/public/events/${eventSlug}/auth-from-family`,
@@ -606,7 +664,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         );
         if (ssoRes.data?.token) {
           eventHeadersRef.current = { Authorization: `Bearer ${ssoRes.data.token}` };
-          console.log('[MYCIRCLE SSO DEBUG 🔑] Full ssoRes.data response:', JSON.stringify(ssoRes.data));
           if (ssoRes.data?.guest) {
             const g = ssoRes.data.guest;
             setEventGuest(g);
@@ -614,163 +671,323 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               setGuestAccessLevel(g.hasFullAccess);
             }
           }
-          // Fetch detailed guest profile from server (which includes displayRole from database)
+          // Fetch guest profile
           guestApi.get(`/api/gallery/public/events/${eventSlug}/profile`, {
             headers: eventHeadersRef.current
           }).then((profRes) => {
             if (profRes.data?.profile) {
-              console.log('[MYCIRCLE PROFILE FETCH ✅] Received guest profile:', JSON.stringify(profRes.data.profile));
               setEventGuest((prev: any) => ({ ...prev, ...profRes.data.profile }));
             }
-          }).catch((pErr) => {
-            console.warn('[MYCIRCLE PROFILE FETCH ⚠️] Profile fetch error:', pErr);
-          });
+          }).catch(() => {});
         } else if (familyToken) {
           eventHeadersRef.current = { Authorization: `Bearer ${familyToken}` };
         }
       } catch (e: any) {
-        if (e?.response?.status === 404) {
+        if (e?.response?.status === 403) {
+          useAuthStore.getState().clearGalleryCache(eventSlug);
+          Alert.alert(
+            'Access Revoked',
+            e?.response?.data?.error || 'You no longer have access to this celebration.',
+            [{ text: 'OK', onPress: () => onChangeEvent() }]
+          );
           onChangeEvent();
           return;
         }
         if (e?.response?.status === 401) {
-          console.warn('[MYCIRCLE SSO] Circle session expired or invalid (401). Redirecting to Login screen.');
+          useAuthStore.getState().clearGalleryCache(eventSlug);
           await useAuthStore.getState().logout();
           onLogout?.();
           return;
         }
-        const errDetail = e?.response?.data?.error || (typeof e?.response?.data === 'string' ? e?.response?.data : JSON.stringify(e?.response?.data)) || e?.message;
-        console.warn('SSO token exchange failed:', errDetail);
         if (familyToken) {
           eventHeadersRef.current = { Authorization: `Bearer ${familyToken}` };
         }
       }
 
-      const eventHeaders = eventHeadersRef.current;
+      const eventHeaders = eventHeadersRef.current.Authorization
+        ? eventHeadersRef.current
+        : (familyToken ? { Authorization: `Bearer ${familyToken}` } : {});
 
+      // 3. Parallel photo fetch
+      const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
+        guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
+          return { data: [], status: e?.response?.status };
+        }),
+        guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${PAGE_SIZE}&offset=0`, { headers: eventHeaders }).catch((e) => {
+          return { data: [], status: e?.response?.status };
+        }),
+        guestApi.get(`/api/gallery/public/events/${eventSlug}/favorites`, { headers: eventHeaders }).catch((e) => {
+          return { data: [], status: e?.response?.status };
+        }),
+        guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=60&offset=0`, { headers: eventHeaders }).catch((e) => {
+          return { data: [], status: e?.response?.status };
+        }),
+      ]);
 
+      if (allRes?.status === 401 && matchedRes?.status === 401) {
+        useAuthStore.getState().clearGalleryCache(eventSlug);
+        await useAuthStore.getState().logout();
+        onLogout?.();
+        return;
+      }
 
-      allPhotosOffsetRef.current = 0;
+      const matchedList = matchedRes.data?.photos || matchedRes.data?.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
+      const mappedMatched = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
+      setPhotos(mappedMatched);
 
-      // 2. Fetch matched photos, favorites & first page of all photos IN PARALLEL using Promise.all
+      const favList = favRes.data?.photos || (Array.isArray(favRes.data) ? favRes.data : []);
+      const mappedFavs = Array.isArray(favList) ? favList.map(mapPhotoItem) : [];
+
+      const cinemaList = cinemaRes.data?.photos || (Array.isArray(cinemaRes.data) ? cinemaRes.data : []);
+      const mappedCinema = Array.isArray(cinemaList) ? cinemaList.map(mapPhotoItem) : [];
+
+      const newTabCache: Record<string, Photo[]> = {};
+      if (mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
+      if (mappedCinema.length > 0) newTabCache['CINEMA'] = mappedCinema;
+
+      setTabCache((prev) => ({
+        ...prev,
+        ...newTabCache,
+      }));
+
+      // Cinema video preloading (top 3 highest priority)
+      if (mappedCinema.length > 0) {
+        const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
+        const prioritizedCinema = [...mappedCinema]
+          .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
+          .sort((a, b) => b.priority - a.priority);
+
+        prioritizedCinema.slice(0, 3).forEach(({ video: v, priority }, queueIdx) => {
+          const vUrl = v.videoUrl || v.fullUri || v.r2Url;
+          if (vUrl) {
+            const headline = formatCinemaDisplayTitle(cleanTitle, v);
+            const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
+            const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
+
+            if (queueIdx === 0) {
+              videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+              videoDownloadManager.queue(vUrl, priority);
+            } else {
+              setTimeout(() => {
+                videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+                videoDownloadManager.queue(vUrl, priority);
+              }, queueIdx * 1500);
+            }
+          }
+        });
+      }
+
+      const allList = allRes.data?.photos || (Array.isArray(allRes.data) ? allRes.data : []);
+      const mappedPhotos = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
+      const total = typeof allRes.data?.total === 'number' ? allRes.data.total : mappedPhotos.length;
+      setTotalAllPhotosCount(total);
+      setAllPhotos((prev) => {
+        if (prev.length > 0 && prev.length === mappedPhotos.length && prev[0]?.id === mappedPhotos[0]?.id && prev[prev.length - 1]?.id === mappedPhotos[mappedPhotos.length - 1]?.id) {
+          return prev;
+        }
+        return mappedPhotos;
+      });
+      allPhotosOffsetRef.current = mappedPhotos.length;
+      setAllPhotosOffset(mappedPhotos.length);
+      setHasMorePhotos(mappedPhotos.length < total);
+
+      // Save to cache
+      useAuthStore.getState().setGalleryCache(eventSlug, {
+        details: fetchedEventDetails || undefined,
+        photos: mappedPhotos,
+        headers: eventHeadersRef.current,
+        total: total,
+        hasFullAccess: guestAccessLevel ?? true,
+        matched: mappedMatched,
+        favorites: mappedFavs,
+        tabCache: {
+          ...(mappedFavs.length > 0 ? { 'MY FAVOURITES': mappedFavs } : {}),
+          ...(mappedCinema.length > 0 ? { 'CINEMA': mappedCinema } : {}),
+        },
+      });
+
+      scheduleBatchPrefetch(mappedPhotos);
+    } catch (e: any) {
+      console.warn('[MYCIRCLE FALLBACK ⚠️] Photo fetch error:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchPhotos = async () => {
+    try {
+      if (!eventSlug) return;
+
+      const familyToken = useAuthStore.getState().token;
+      const currentPasscode = useAuthStore.getState().passcode;
+      const authHeader = eventHeadersRef.current.Authorization || (familyToken ? `Bearer ${familyToken}` : undefined);
+
+      if (!authHeader) {
+        setIsLoading(false);
+        return;
+      }
+
+      console.log(`[MYCIRCLE REVALIDATE 🚀] Calling /bundle for event '${eventSlug}'...`);
+
+      let bundleRes: any;
       try {
-        const fetchStartTime = Date.now();
-        console.log(`[MYCIRCLE DEBUG 🚀] Starting parallel photo fetch for event '${eventSlug}'...`);
-        const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
-          guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
-            console.warn('[MYCIRCLE DEBUG ⚠️] Matched photos fetch error:', e?.response?.status);
-            return { data: [], status: e?.response?.status };
-          }),
-          guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${PAGE_SIZE}&offset=0`, { headers: eventHeaders }).catch((e) => {
-            console.warn('[MYCIRCLE DEBUG ⚠️] All photos fetch error:', e?.response?.status);
-            return { data: [], status: e?.response?.status };
-          }),
-          guestApi.get(`/api/gallery/public/events/${eventSlug}/favorites`, { headers: eventHeaders }).catch((e) => {
-            console.warn('[MYCIRCLE DEBUG ⚠️] Favorites fetch error:', e?.response?.status);
-            return { data: [], status: e?.response?.status };
-          }),
-          guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=60&offset=0`, { headers: eventHeaders }).catch((e) => {
-            console.warn('[MYCIRCLE DEBUG ⚠️] Cinema photos fetch error:', e?.response?.status);
-            return { data: [], status: e?.response?.status };
-          }),
-        ]);
+        bundleRes = await guestApi.post(
+          `/api/gallery/public/events/${eventSlug}/bundle`,
+          { code: currentPasscode || undefined },
+          { headers: { Authorization: authHeader } }
+        );
+      } catch (err: any) {
+        const status = err?.response?.status;
+        const errData = err?.response?.data;
+        const errCode = errData?.code;
 
-        if (allRes?.status === 401 && matchedRes?.status === 401) {
-          console.warn('[MYCIRCLE] Photo endpoints returned 401 Unauthorized. Session expired or invalid. Navigating to Login.');
-          await useAuthStore.getState().logout();
-          onLogout?.();
+        console.warn(`[MYCIRCLE BUNDLE ⚠️] Status: ${status}, Code: ${errCode}`, errData);
+
+        // Security Fundamental 1: Guest was blocked or removed by admin
+        if (status === 403) {
+          useAuthStore.getState().clearGalleryCache(eventSlug);
+          Alert.alert(
+            'Access Revoked',
+            errData?.error || 'You no longer have access to this celebration.',
+            [{ text: 'OK', onPress: () => onChangeEvent() }]
+          );
+          onChangeEvent();
           return;
         }
 
-        const fetchDuration = Date.now() - fetchStartTime;
-        const matchedList = matchedRes.data.photos || matchedRes.data.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
-        setPhotos(Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : []);
-
-        const favList = favRes.data.photos || (Array.isArray(favRes.data) ? favRes.data : []);
-        let favMapped: Photo[] = [];
-        if (Array.isArray(favList) && favList.length > 0) {
-          favMapped = favList.map(mapPhotoItem);
-          setTabCache((prev) => ({ ...prev, 'MY FAVOURITES': favMapped }));
+        // Security Fundamental 2: Token expired or invalid
+        if (status === 401) {
+          useAuthStore.getState().clearGalleryCache(eventSlug);
+          Alert.alert(
+            'Session Expired',
+            'Your session has expired. Please sign in again.',
+            [{
+              text: 'OK',
+              onPress: async () => {
+                await useAuthStore.getState().logout();
+                onLogout?.();
+              },
+            }]
+          );
+          return;
         }
 
-        // Cinema Tab Permanent Pre-buffering:
-        // Automatically fetches all cinema videos when gallery opens and starts buffering!
-        const cinemaList = cinemaRes.data.photos || (Array.isArray(cinemaRes.data) ? cinemaRes.data : []);
-        let cinemaMapped: Photo[] = [];
-        if (Array.isArray(cinemaList) && cinemaList.length > 0) {
-          cinemaMapped = cinemaList.map(mapPhotoItem);
-          setTabCache((prev) => ({ ...prev, 'CINEMA': cinemaMapped }));
-          const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
-          const prioritizedCinema = [...cinemaMapped]
-            .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
-            .sort((a, b) => b.priority - a.priority);
+        // Route not found (404) or server error on /bundle:
+        // Do NOT eject user! Fall back seamlessly to standard SSO and parallel photo fetch
+        console.log('[MYCIRCLE BUNDLE] /bundle endpoint not available on server (404/error). Seamlessly falling back to standard endpoints...');
+        await fetchPhotosFallback();
+        return;
+      }
 
-          prioritizedCinema.forEach(({ video: v, priority }, queueIdx) => {
-            const vUrl = v.videoUrl || v.fullUri || v.r2Url;
-            if (vUrl) {
-              const headline = formatCinemaDisplayTitle(cleanTitle, v);
-              const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
-              const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
+      const bundleData = bundleRes?.data;
+      if (!bundleData || !bundleData.success) {
+        await fetchPhotosFallback();
+        return;
+      }
 
-              if (queueIdx === 0) {
+      // Silent token rotation from server
+      if (bundleData.token) {
+        eventHeadersRef.current = { Authorization: `Bearer ${bundleData.token}` };
+      }
+
+      // 1. Process Event Details
+      if (bundleData.event) {
+        setEventDetailsData(bundleData.event);
+        const c = bundleData.event.coverPhotoMobileUrl || bundleData.event.coverPhotoUrl || bundleData.event.coverUrl || bundleData.event.bannerUrl;
+        if (c) Image.prefetch(c);
+      }
+
+      // 2. Process Guest Access Level (Partial vs Full)
+      const newFullAccess = bundleData.guest ? Boolean(bundleData.guest.hasFullAccess) : false;
+      const oldFullAccess = guestAccessLevel;
+      setGuestAccessLevel(newFullAccess);
+
+      if (bundleData.guest) {
+        setEventGuest(bundleData.guest);
+      }
+
+      // Security Fundamental 3: Guest was demoted from Full to Partial!
+      // Drop ALL tab, switch immediately to HIGHLIGHTS
+      if (oldFullAccess === true && newFullAccess === false) {
+        console.log(`[MYCIRCLE ACCESS 🔒] Access downgraded from Full to Partial. Switching to HIGHLIGHTS.`);
+        setActiveTab('HIGHLIGHTS');
+      }
+
+      // 3. Process Photos
+      const mappedPhotos = Array.isArray(bundleData.photos) ? bundleData.photos.map(mapPhotoItem) : [];
+      const mappedMatched = Array.isArray(bundleData.matched) ? bundleData.matched.map(mapPhotoItem) : [];
+      const mappedFavs = Array.isArray(bundleData.favorites) ? bundleData.favorites.map(mapPhotoItem) : [];
+      const mappedCinema = Array.isArray(bundleData.cinema) ? bundleData.cinema.map(mapPhotoItem) : [];
+
+      setPhotos(mappedMatched);
+
+      const newTabCache: Record<string, Photo[]> = {};
+      if (mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
+      if (mappedCinema.length > 0) newTabCache['CINEMA'] = mappedCinema;
+
+      setTabCache((prev) => ({
+        ...prev,
+        ...newTabCache,
+      }));
+
+      // Cinema video preloading (top 3 highest priority)
+      if (mappedCinema.length > 0) {
+        const cleanCouple = cleanTitle?.replace(/\s*['’]s\s*(wedding|marriage|celebration).*$/i, '').trim() || cleanTitle || '';
+        const prioritizedCinema = [...mappedCinema]
+          .map((v, idx) => ({ video: v, priority: getCinemaDownloadPriority(v, idx) }))
+          .sort((a, b) => b.priority - a.priority);
+
+        prioritizedCinema.slice(0, 3).forEach(({ video: v, priority }, queueIdx) => {
+          const vUrl = v.videoUrl || v.fullUri || v.r2Url;
+          if (vUrl) {
+            const headline = formatCinemaDisplayTitle(cleanTitle, v);
+            const cat = formatCinemaCategoryTitleCase(v.cinemaCategory || v.category);
+            const meta = { title: headline, artist: cat, artwork: v.thumbnailUrl };
+
+            if (queueIdx === 0) {
+              videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
+              videoDownloadManager.queue(vUrl, priority);
+            } else {
+              setTimeout(() => {
                 videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
                 videoDownloadManager.queue(vUrl, priority);
-              } else {
-                setTimeout(() => {
-                  videoPreloadManager.preload(vUrl, v.thumbnailUrl, meta);
-                  videoDownloadManager.queue(vUrl, priority);
-                }, queueIdx * 1500);
-              }
+              }, queueIdx * 1500);
             }
-          });
-          console.log(`[CINEMA INSTANT PRELOAD 🎬] Pre-buffering ${cinemaMapped.length} cinema videos (Director's Cut & Candid Diaries prioritized)!`);
-        }
-
-        const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
-        const mapped = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
-        const total = typeof allRes.data.total === 'number' ? allRes.data.total : mapped.length;
-        setTotalAllPhotosCount(total);
-        setAllPhotos((prev) => {
-          if (prev.length > 0 && prev.length === mapped.length && prev[0]?.id === mapped[0]?.id && prev[prev.length - 1]?.id === mapped[mapped.length - 1]?.id) {
-            return prev; // Keep exact reference! ZERO re-render flicker!
           }
-          return mapped;
         });
-        allPhotosOffsetRef.current = mapped.length;
-        setAllPhotosOffset(mapped.length);
-        const hasMore = mapped.length < total;
-        setHasMorePhotos(hasMore);
-
-        useAuthStore.getState().setGalleryCache(eventSlug, {
-          details: eventDetails || undefined,
-          photos: mapped,
-          headers: eventHeaders,
-          total: total,
-          hasFullAccess: guestAccessLevel ?? true,
-          matched: Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [],
-          tabCache: {
-            ...(favMapped.length > 0 ? { 'MY FAVOURITES': favMapped } : {}),
-            ...(cinemaMapped.length > 0 ? { 'CINEMA': cinemaMapped } : {}),
-          },
-        });
-
-        console.log(`[MYCIRCLE DEBUG ✅] Initial Fetch Done in ${fetchDuration}ms | Loaded: ${mapped.length} / ${total} photos | HasMore: ${hasMore}`);
-        console.log(`[MYCIRCLE STORE DEBUG 📦] userEvents count: ${userEvents.length} | userEvents:`, JSON.stringify(userEvents));
-        console.log(`[MYCIRCLE USER ROLE 👤] User: "${profile?.name || eventGuest?.name || 'Guest'}" (${profile?.email || eventGuest?.email || 'N/A'}) | GlobalRole: "${profile?.displayRole || 'NONE'}" | EventRole: "${eventGuest?.displayRole || 'NONE'}" | isBrideOrGroom: ${isBrideOrGroom}`);
-
-        // Smooth chunked background prefetch of initial batch into native image cache
-        scheduleBatchPrefetch(mapped);
-
-        if (hasMore) {
-          setTimeout(() => {
-            loadMorePhotos();
-          }, 100);
-        }
-      } catch (e: any) {
-        console.warn('[MYCIRCLE DEBUG ⚠️] Parallel photo fetch error:', e);
       }
+
+      const total = typeof bundleData.total === 'number' ? bundleData.total : mappedPhotos.length;
+      setTotalAllPhotosCount(total);
+      setAllPhotos((prev) => {
+        if (prev.length > 0 && prev.length === mappedPhotos.length && prev[0]?.id === mappedPhotos[0]?.id && prev[prev.length - 1]?.id === mappedPhotos[mappedPhotos.length - 1]?.id) {
+          return prev; // Reference stability! ZERO re-render flicker!
+        }
+        return mappedPhotos;
+      });
+      allPhotosOffsetRef.current = mappedPhotos.length;
+      setAllPhotosOffset(mappedPhotos.length);
+      setHasMorePhotos(Boolean(bundleData.hasMore));
+
+      // Persist to disk/memory cache for future 0ms instant opens
+      useAuthStore.getState().setGalleryCache(eventSlug, {
+        details: bundleData.event || undefined,
+        photos: mappedPhotos,
+        headers: eventHeadersRef.current,
+        total: total,
+        hasFullAccess: newFullAccess,
+        matched: mappedMatched,
+        favorites: mappedFavs,
+        tabCache: {
+          ...(mappedFavs.length > 0 ? { 'MY FAVOURITES': mappedFavs } : {}),
+          ...(mappedCinema.length > 0 ? { 'CINEMA': mappedCinema } : {}),
+        },
+      });
+
+      // Smooth chunked background prefetch of initial batch into native image cache
+      scheduleBatchPrefetch(mappedPhotos);
     } catch (err) {
-      console.warn('[MYCIRCLE DEBUG ⚠️] Failed to fetch gallery photos', err);
+      console.warn('[MYCIRCLE REVALIDATE ⚠️] fetchPhotos error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -867,15 +1084,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     fetchPhotos();
   }, [eventSlug]);
 
-  const [guestAccessLevel, setGuestAccessLevel] = useState<boolean | null>(() => {
-    if (!eventSlug) return null;
-    const cached = useAuthStore.getState().getGalleryCache(eventSlug);
-    if (cached && typeof cached.hasFullAccess === 'boolean') {
-      return cached.hasFullAccess;
-    }
-    return null;
-  });
-  const hasFullAccess = guestAccessLevel ?? (profile?.hasFullAccess ?? false);
 
   const isBrideOrGroom = React.useMemo(() => {
     // 1. Check global user profile (global role, if set)
@@ -951,8 +1159,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return false;
   }, [profile, userEvents, eventSlug, eventGuest, eventDetails]);
 
-  const [tabCache, setTabCache] = useState<Record<string, Photo[]>>({});
-  const [isTabLoading, setIsTabLoading] = useState(false);
 
   // Load locked photo IDs: Populate from API-returned photos (isPrivate flag) when photos load,
   // and use AsyncStorage as a local cache for optimistic UI before the first API round-trip.
@@ -1072,7 +1278,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       if (!hasAnyInAll) {
         setIsTabLoading(true);
       }
-      const eventHeaders = eventHeadersRef.current;
+      const familyToken = useAuthStore.getState().token;
+      const eventHeaders = eventHeadersRef.current.Authorization
+        ? eventHeadersRef.current
+        : (familyToken ? { Authorization: `Bearer ${familyToken}` } : {});
       const res = await guestApi.get(
         `/api/gallery/public/events/${eventSlug}/photos?limit=60&tab=${encodeURIComponent(tabName)}`,
         { headers: eventHeaders }
@@ -1239,6 +1448,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (prevTabRef.current !== activeTab) {
       const prevTab = prevTabRef.current;
       prevTabRef.current = activeTab;
+
+      // On initial load / mount, establish activeTab ref without executing a scroll reset
+      if (prevTab === null) {
+        return;
+      }
 
       // When entering or exiting CINEMA, do not touch scroll: Photos gallery is preserved underneath!
       if ((prevTab && prevTab.trim().toUpperCase() === 'CINEMA') || activeTab.trim().toUpperCase() === 'CINEMA') {
@@ -1893,12 +2107,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     eventDetails?.coverPhoto ||
     firstPhotoUrl;
 
-  const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
-    .replace(/'s\s+Wedding/gi, '')
-    .replace('&', '·')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
 
   const locationText = (eventDetails?.location || eventDetails?.city || '').toUpperCase();
   const dateText = eventDetails?.date
@@ -1907,31 +2115,34 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const renderHeroCover = useCallback(() => {
     return (
-      <Animated.View style={[styles.heroContainer, animatedHeroContainerStyle]}>
-        {coverUrl ? (
-          <Image
-            source={{ uri: coverUrl }}
-            style={styles.heroImage}
-            contentFit="cover"
-            contentPosition="center"
-            priority="high"
-            cachePolicy="memory-disk"
-            transition={200}
-          />
-        ) : (
-          <View style={[styles.heroImage, { backgroundColor: '#1c1a18', justifyContent: 'center', alignItems: 'center' }]}>
-            <ActivityIndicator size="small" color="#ffffff" />
-          </View>
-        )}
+      <View style={styles.heroContainer}>
+        {/* Parallax Hero Image Wrapper */}
+        <Animated.View style={[styles.heroImageWrapper, animatedHeroImageStyle]}>
+          {coverUrl ? (
+            <Image
+              source={{ uri: coverUrl }}
+              style={styles.heroImage}
+              contentFit="cover"
+              contentPosition="center"
+              priority="high"
+              cachePolicy="memory-disk"
+              transition={200}
+            />
+          ) : (
+            <View style={[styles.heroImage, { backgroundColor: '#1c1a18', justifyContent: 'center', alignItems: 'center' }]}>
+              <ActivityIndicator size="small" color="#ffffff" />
+            </View>
+          )}
+        </Animated.View>
 
-        {/* White Brand Logo on Cover */}
-        <View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }]} pointerEvents="none">
+        {/* White Brand Logo on Cover with Parallax Fade */}
+        <Animated.View style={[styles.coverHeaderLogoContainer, { top: insets.top + 6 }, animatedCoverLogoStyle]} pointerEvents="none">
           <Image
             source={require('../../../assets/images/logo-header-white.png')}
             style={styles.coverHeaderLogo}
             contentFit="contain"
           />
-        </View>
+        </Animated.View>
 
         {/* Vignette Gradient Overlay */}
         <LinearGradient
@@ -1940,17 +2151,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           style={styles.heroOverlay}
         />
 
-        {/* Cover Title Container */}
+        {/* Cover Title Container with Parallax Drift & Fade */}
         <Animated.View style={[styles.titleContainer, animatedTitleContainerStyle]}>
           {locationText ? <Text style={styles.storyLocation}>{locationText}</Text> : null}
           <Text style={styles.storyTitle}>{cleanTitle}</Text>
           {dateText ? <Text style={styles.storyDate}>{dateText}</Text> : null}
         </Animated.View>
-      </Animated.View>
+      </View>
     );
-  }, [coverUrl, cleanTitle, locationText, dateText, insets, animatedHeroContainerStyle, animatedTitleContainerStyle]);
+  }, [coverUrl, cleanTitle, locationText, dateText, insets, animatedHeroImageStyle, animatedCoverLogoStyle, animatedTitleContainerStyle]);
 
-  const renderStickyHeader = useCallback(() => {
+  const renderTabHeaderInner = useCallback(() => {
     let activeTabCount: number | null = null;
     if (currentPhotoTab.toUpperCase().includes('LOCKED')) {
       activeTabCount = activeList.length;
@@ -1966,6 +2177,76 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       activeTabCount = eventDetails?.tabCounts?.[normKey] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === normKey).length;
     }
 
+    const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
+    const isDownloadableTab = allowBulkDownloads && (
+      isBrideOrGroom || (
+        currentPhotoTab.trim().toUpperCase().includes('MY PHOTO') ||
+        currentPhotoTab.trim().toUpperCase().includes('MY FAVOURITES') ||
+        currentPhotoTab.trim().toUpperCase().includes('MY FAVORITE')
+      )
+    );
+
+    return (
+      <View style={styles.stickyHeaderContainerInner}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            openDrawerWithAnimation();
+          }}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={styles.compactTabHeaderBarCentered}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+            <Text
+              style={styles.compactTabActiveTitleCentered}
+              numberOfLines={1}
+            >
+              {currentPhotoTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
+            </Text>
+            <Text style={styles.downArrowIcon}>▾</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Right Corner Download Button (Strictly when allowBulkDownloads is true; ALL tabs for BRIDE or GROOM; MY PHOTOS & MY FAVOURITES for all other guests) */}
+        {isDownloadableTab ? (
+          <TouchableOpacity
+            activeOpacity={0.75}
+            disabled={isBatchDownloading}
+            onPress={downloadCurrentTabPhotos}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.headerRightDownloadButton}
+          >
+            {isBatchDownloading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
+                <Text style={styles.headerRightDownloadText}>
+                  {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
+                </Text>
+              </View>
+            ) : (
+              <Feather name="download" size={16} color="#3a3632" />
+            )}
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }, [
+    currentPhotoTab,
+    activeList.length,
+    photos.length,
+    favoritesCount,
+    eventDetails,
+    totalAllPhotosCount,
+    allPhotos,
+    isBrideOrGroom,
+    isBatchDownloading,
+    batchDownloadProgress,
+    downloadCurrentTabPhotos,
+    openDrawerWithAnimation,
+  ]);
+
+  const renderStickyHeader = useCallback(() => {
     return (
       <View
         style={[
@@ -1978,65 +2259,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           },
         ]}
       >
-        <View style={styles.stickyHeaderContainerInner}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            delayPressIn={60}
-            onPress={() => {
-              if (isScrollingRef.current) return;
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              openDrawerWithAnimation();
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={styles.compactTabHeaderBarCentered}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-              <Text
-                style={styles.compactTabActiveTitleCentered}
-                numberOfLines={1}
-              >
-                {currentPhotoTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
-              </Text>
-              <Text style={styles.downArrowIcon}>▾</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Right Corner Download Button (Strictly when allowBulkDownloads is true; ALL tabs for BRIDE or GROOM; MY PHOTOS & MY FAVOURITES for all other guests) */}
-          {(() => {
-            const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
-            if (!allowBulkDownloads) return null;
-
-            const isDownloadableTab = isBrideOrGroom || (
-              currentPhotoTab.trim().toUpperCase().includes('MY PHOTO') ||
-              currentPhotoTab.trim().toUpperCase().includes('MY FAVOURITES') ||
-              currentPhotoTab.trim().toUpperCase().includes('MY FAVORITE')
-            );
-            if (!isDownloadableTab) return null;
-            return (
-              <TouchableOpacity
-                activeOpacity={0.75}
-                disabled={isBatchDownloading}
-                onPress={downloadCurrentTabPhotos}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={styles.headerRightDownloadButton}
-              >
-                {isBatchDownloading ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <ActivityIndicator size="small" color="#3a3632" style={{ transform: [{ scale: 0.75 }] }} />
-                    <Text style={styles.headerRightDownloadText}>
-                      {batchDownloadProgress ? `${batchDownloadProgress.current}/${batchDownloadProgress.total}` : ''}
-                    </Text>
-                  </View>
-                ) : (
-                  <Feather name="download" size={16} color="#3a3632" />
-                )}
-              </TouchableOpacity>
-            );
-          })()}
-        </View>
+        {renderTabHeaderInner()}
       </View>
     );
-  }, [currentPhotoTab, activeList.length, photos.length, favoritesCount, eventDetails, totalAllPhotosCount, allPhotos, isBatchDownloading, batchDownloadProgress, downloadCurrentTabPhotos, openDrawerWithAnimation, insets, isBrideOrGroom]);
+  }, [renderTabHeaderInner, insets.top]);
 
   const renderFooter = useCallback(() => {
     if (!isEndOfTabReached) return <View style={{ height: 40 }} />;
@@ -2094,21 +2320,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
             {/* ── Base Layer: Photos Gallery View (Remains mounted underneath Cinema) ── */}
             <View style={StyleSheet.absoluteFillObject} pointerEvents={isCinema ? 'none' : 'auto'}>
-              {/* Borderless Editorial Back Button */}
-              {!isCinema && (
-                <Pressable
-                  style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
-                  onPress={handleBackAction}
-                  hitSlop={16}
-                >
-                  <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
-                </Pressable>
-              )}
-
               <MasonryFlashList
                 mainScrollRef={mainScrollRef}
                 data={displayData as any}
-                numColumns={2}
+                numColumns={galleryColumns}
+                onNumColumnsChange={handleGalleryColumnsChange}
+                enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
+                minColumns={1}
+                maxColumns={5}
                 onScroll={scrollHandler}
                 scrollSharedValue={scrollY}
                 onEndReached={loadMorePhotos}
@@ -2123,7 +2342,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                     tintColor="#ffffff"
                   />
                 }
-                renderItem={({ item, index, isColumn0 }) => (
+                renderItem={({ item, index, isColumn0, columnIndex, numColumns }) => (
                   item.isSkeleton ? (
                     <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
                   ) : (
@@ -2131,6 +2350,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                       img={item}
                       index={index}
                       isColumn0={isColumn0}
+                      columnIndex={columnIndex}
+                      numColumns={numColumns}
                       isHighPriority={index < 12}
                       onSelect={(bounds) => openLightbox(item, bounds)}
                       onRegisterRef={(id, ref) => {
@@ -2143,6 +2364,30 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   )
                 )}
               />
+
+              {/* Floating Sticky Tab Header (Takes over smoothly when scrolled past hero cover, outside ScrollView to ensure 100% touch responsiveness) */}
+              <Animated.View
+                style={[
+                  styles.floatingHeaderContainer,
+                  {
+                    paddingTop: Math.max(insets.top + 4, 28),
+                  },
+                  floatingHeaderAnimatedStyle,
+                ]}
+              >
+                {renderTabHeaderInner()}
+              </Animated.View>
+
+              {/* Borderless Editorial Back Button */}
+              {!isCinema && (
+                <Pressable
+                  style={[styles.editorialBackButton, { top: Math.max(insets.top + 10, 42) }]}
+                  onPress={handleBackAction}
+                  hitSlop={16}
+                >
+                  <Animated.Text style={[styles.editorialBackText, animatedBackTextStyle]}>← BACK</Animated.Text>
+                </Pressable>
+              )}
 
               {/* iOS Underlay Dimming Overlay (Fades from 0.15 to 0 as Cinema slides away) */}
               <Animated.View
@@ -2267,7 +2512,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 return (
                   <TouchableOpacity
                     key={`drawer-tab-${tabName}-${tabIdx}`}
-                    delayPressIn={60}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
                       changeTabWithScrollMemory(tabName);
@@ -2376,6 +2620,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 24,
     zIndex: 100,
+    elevation: 10,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
@@ -2397,6 +2642,13 @@ const styles = StyleSheet.create({
     position: 'relative',
     backgroundColor: '#1c1a18',
     overflow: 'hidden',
+  },
+  heroImageWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: -Math.round(screenHeight * 0.70 * 0.1),
+    height: Math.round(screenHeight * 0.70 * 1.25),
   },
   heroImage: {
     width: '100%',
@@ -2563,6 +2815,17 @@ const styles = StyleSheet.create({
   stickyHeaderContainer: {
     backgroundColor: '#ffffff',
     zIndex: 10,
+  },
+  floatingHeaderContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e5e5ea',
+    zIndex: 90,
+    elevation: 8,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,

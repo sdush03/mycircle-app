@@ -100,7 +100,7 @@ function RootLayoutContent() {
 
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const isCollapsed = useAuthStore((state) => state.isTabBarCollapsed);
-  const token = useAuthStore((state) => state.token);
+  const isAuthenticated = useAuthStore((state) => !!state.token);
   const profile = useAuthStore((state) => state.profile);
   const isPhoneSkipped = Platform.OS === 'ios' && useAuthStore((state) => state.isPhoneSkipped);
   const isLoading = useAuthStore((state) => state.isLoading);
@@ -204,7 +204,7 @@ function RootLayoutContent() {
   // Uses a ref flag so it never reruns due to profile state changes.
   const selfieFetchedRef = React.useRef(false);
   useEffect(() => {
-    if (!token) { selfieFetchedRef.current = false; return; }
+    if (!isAuthenticated) { selfieFetchedRef.current = false; return; }
     if (selfieFetchedRef.current) return;
     selfieFetchedRef.current = true;
 
@@ -215,8 +215,9 @@ function RootLayoutContent() {
         const profileData = res.data?.profile || {};
 
         if (rawSelfieUrl) {
+          const currentToken = useAuthStore.getState().token;
           const fullUrl = rawSelfieUrl.startsWith('http') ? rawSelfieUrl : `${API_BASE_URL}${rawSelfieUrl}`;
-          const headers: Record<string, string> = rawSelfieUrl.startsWith('http') ? {} : { Authorization: `Bearer ${token}` };
+          const headers: Record<string, string> = rawSelfieUrl.startsWith('http') ? {} : { Authorization: `Bearer ${currentToken}` };
           const imgRes = await fetch(fullUrl, { headers });
           if (imgRes.ok) {
             const arrayBuffer = await imgRes.arrayBuffer();
@@ -238,7 +239,7 @@ function RootLayoutContent() {
     };
 
     fetchSelfie();
-  }, [token]);
+  }, [isAuthenticated]);
 
   const topInset = insets.top;
   const headerHeight = 52 + topInset;
@@ -348,7 +349,7 @@ function RootLayoutContent() {
   }
 
   // 2. Render LoginView directly when unauthenticated (prevents underlying Home screen from mounting/glimpsing)
-  if (!token) {
+  if (!isAuthenticated) {
     return <LoginView onSuccess={() => {}} startAnimation={isSplashHidden} />;
   }
 

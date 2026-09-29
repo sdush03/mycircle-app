@@ -8,7 +8,9 @@ import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 export interface MasonryCardProps {
   img: any;
   index: number;
-  isColumn0: boolean;
+  isColumn0?: boolean;
+  columnIndex?: number;
+  numColumns?: number;
   isHighPriority?: boolean;
   onSelect: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
   onRegisterRef?: (cardId: string, ref: View | null) => void;
@@ -18,11 +20,11 @@ export interface MasonryCardProps {
 const DEFAULT_NEUTRAL_BLURHASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
 
 export const MasonryCard = React.memo(function MasonryCard({ 
-  img, index, isColumn0, isHighPriority, onSelect, onRegisterRef, onToggleLike
+  img, index, isColumn0, columnIndex, numColumns = 2, isHighPriority, onSelect, onRegisterRef, onToggleLike
 }: MasonryCardProps) {
   const cardRef = useRef<View>(null);
-  const cardId = String(img.id || img.uri || `idx-${index}`);
-  const primaryUri = typeof img === 'object' && img.uri ? img.uri : (typeof img === 'string' ? img : '');
+  const cardId = String(img?.id || img?.uri || `idx-${index}`);
+  const primaryUri = typeof img === 'object' && img?.uri ? img.uri : (typeof img === 'string' ? img : '');
   const fallbackUri = typeof img === 'object' && img.fullUri ? img.fullUri : '';
   const blurUri = typeof img === 'object' && img.blurUri ? img.blurUri : null;
   const blurhash = typeof img === 'object' && (img.blurhash || img.blur_hash || img.blurHash)
@@ -31,7 +33,8 @@ export const MasonryCard = React.memo(function MasonryCard({
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
 
-  const cardAspect = getPhotoCardAspect(img, index, isColumn0);
+  const colIdx = typeof columnIndex === 'number' ? columnIndex : (isColumn0 ? 0 : 1);
+  const cardAspect = getPhotoCardAspect(img, index, colIdx, numColumns);
 
   const isLiked = typeof img === 'object' && !!img.isLiked;
   const likeCount = typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0;
@@ -152,26 +155,36 @@ export const MasonryCard = React.memo(function MasonryCard({
       {/* Centered Play Badge for Video Media */}
       {isVideo ? (
         <View style={cardStyles.playIconContainer} pointerEvents="none">
-          <View style={cardStyles.playIconCircle}>
-            <Ionicons name="play" size={18} color="#ffffff" style={{ marginLeft: 2 }} />
+          <View style={[
+            cardStyles.playIconCircle,
+            numColumns >= 5 ? { width: 22, height: 22, borderRadius: 11 } :
+            numColumns === 4 ? { width: 28, height: 28, borderRadius: 14 } :
+            numColumns === 3 ? { width: 36, height: 36, borderRadius: 18 } : undefined
+          ]}>
+            <Ionicons
+              name="play"
+              size={numColumns >= 5 ? 11 : (numColumns === 4 ? 14 : (numColumns === 3 ? 16 : 18))}
+              color="#ffffff"
+              style={{ marginLeft: 1 }}
+            />
           </View>
         </View>
       ) : null}
 
       {/* Bottom-Right Heart & Count Badge (Matching Web) */}
-      {(onToggleLike || isLiked || likeCount > 0) ? (
+      {(numColumns >= 4 ? isLiked : (onToggleLike || isLiked || likeCount > 0)) ? (
         <Pressable
-          style={cardStyles.heartOverlay}
+          style={[cardStyles.heartOverlay, numColumns >= 4 && { bottom: 2, right: 3, paddingHorizontal: 0, paddingVertical: 0 }]}
           onPress={handleHeartPress}
           hitSlop={10}
         >
           <Ionicons
             name={isLiked ? 'heart' : 'heart-outline'}
-            size={18}
+            size={numColumns >= 5 ? 11 : (numColumns === 4 ? 13 : 18)}
             color={isLiked ? '#ef4444' : '#ffffff'}
             style={cardStyles.heartShadow}
           />
-          {likeCount > 0 ? (
+          {likeCount > 0 && numColumns < 4 ? (
             <Text style={cardStyles.likeCountText}>{likeCount}</Text>
           ) : null}
         </Pressable>
@@ -182,6 +195,8 @@ export const MasonryCard = React.memo(function MasonryCard({
   return (
     prevProps.index === nextProps.index &&
     prevProps.isColumn0 === nextProps.isColumn0 &&
+    prevProps.columnIndex === nextProps.columnIndex &&
+    prevProps.numColumns === nextProps.numColumns &&
     prevProps.isHighPriority === nextProps.isHighPriority &&
     prevProps.img?.id === nextProps.img?.id &&
     prevProps.img?.uri === nextProps.img?.uri &&

@@ -191,7 +191,6 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
       p.showNowPlayingNotification = false;
       p.bufferOptions = {
         waitsToMinimizeStalling: true,
-        preferredForwardBufferDuration: 0,
       };
     try {
       p.play();
@@ -329,7 +328,7 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
         style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
         contentFit="cover"
         nativeControls={false}
-        surfaceType="textureView"
+        surfaceType="surfaceView"
         fullscreenOptions={{ enable: false }}
         showsTimecodes={false}
         allowsVideoFrameAnalysis={false}

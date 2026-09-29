@@ -1,54 +1,77 @@
 /**
- * MasonryFlashList — True View Recycling Masonry Grid
+ * MasonryFlashList — True View Recycling Masonry Grid with Apple Photos FLIP Transition
  *
  * Architecture:
- * - POOL_PER_COL fixed native View "slots" per column (e.g. 30 = 60 total Views for 10,000 photos)
- * - Slots have STABLE KEYS ("c0-0"…"c0-29", "c1-0"…"c1-29") → native View is NEVER destroyed
- * - Slot assignment is STABLE: we only reassign a slot when its current item scrolls off-screen
- *   This prevents the "teleport + content swap" glitch of naive recycling
- * - Columns are absolute-positioned at exact pixel offsets → no flex distortion of COL_WIDTH
- * - onEndReached fires via contentSize reported by the native scroll event
+ * - Dynamic column density (1 col: editorial feed, 2 cols: masonry, 3 cols: compact grid)
+ * - Apple Photos FLIP Layout Flight Transition:
+ *   - Pinch Focal Anchor: When you pinch with two fingers, the photo directly between your
+ *     fingers is tracked (focalX, focalY). That photo stays pinned directly under your fingers.
+ *   - Multi-Element Flight Animation: During column changes, every visible photo smoothly
+ *     floats, slides, and resizes from its starting grid slot to its new column slot.
+ *   - Column Addition (2 -> 3): Photos glide over into Column 3, and new photos smoothly fade in.
+ *   - Column Removal (3 -> 2): Photos glide back into 2 columns, and Column 3 smoothly collapses.
+ * - Frame-0 Pre-calculated Hand-off:
+ *   - When the 320ms animation finishes, the recycled grid seamlessly unhides at the exact
+ *     matching scroll offset and slots with zero jump and zero white flash.
+ * - Lightweight View Recycling:
+ *   - Maintains ~60–80 recycled native views in memory for lists of 10,000+ photos.
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, View, Dimensions, Animated as RNAnimated } from 'react-native';
-import Animated, { useAnimatedReaction, runOnJS } from 'react-native-reanimated';
+import { StyleSheet, View, Text, Dimensions } from 'react-native';
+import Animated, {
+  useAnimatedReaction,
+  runOnJS,
+  runOnUI,
+  scrollTo,
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  interpolate,
+  Easing,
+} from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
-import { getPhotoAspect, getPhotoCardAspect } from '../../utils/photoDimensionCache';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
+import { getPhotoCardAspect } from '../../utils/photoDimensionCache';
 import { analyticsService } from '../../services/analyticsService';
+import { FONT_JOST_MEDIUM } from '../../constants/fonts';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Layout constants — must match what the user approved:
-//   9px  ← screen edge → card
-//   6px  ← gap between columns →
-//   9px  ← card → screen edge
-// Total horizontal consumed: 9 + COL_WIDTH + 6 + COL_WIDTH + 9 = 24 + 2*COL_WIDTH = SCREEN_WIDTH
-const COL_WIDTH = Math.floor((SCREEN_WIDTH - 24) / 2);
-const CARD_GAP = 6;                            // vertical gap between cards
-
-// Pool: max simultaneous native Views per column.
-// Pool: max simultaneous native Views per column.
-// 60 slots × 2 columns = 120 total Views regardless of list size (vs 10,000+)
-const POOL_PER_COL = 60;
-
-// How many px beyond the viewport to keep rendered (pre-fetch buffer).
+// Layout constants:
+const HORIZONTAL_MARGIN = 9;
+const CARD_GAP = 6;
 const OVERSCAN = 1500;
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
-interface ColumnItem<T> {
+export interface ColumnItem<T> {
   item: T;
   originalIndex: number;
-  topY: number;    // absolute Y within the column (0-based from column top)
-  height: number;  // card height in px  (gap is NOT included — it's in the topY spacing)
+  topY: number;
+  height: number;
+  colIndex: number;
+}
+
+export interface ColumnData<T> {
+  items: ColumnItem<T>[];
+  height: number;
+}
+
+export interface MasonryLayout<T> {
+  numColumns: number;
+  columns: ColumnData<T>[];
+  maxHeight: number;
+  colWidth: number;
+  itemMap: Map<string | number, ColumnItem<T>>;
 }
 
 interface SlotState {
-  colItemIdx: number; // index into the column's ColumnItem array;  -1 = parked off-screen
-  top: number;        // absolute Y to position this slot at (= its item's topY)
-  height: number;     // the card height this slot should render
-  itemId?: string | number; // unique ID of item assigned to this slot
+  colItemIdx: number;
+  top: number;
+  height: number;
+  itemId?: string | number;
 }
 
 function getItemId<T>(item: ColumnItem<T> | undefined): string | number | undefined {
@@ -60,64 +83,113 @@ function getItemId<T>(item: ColumnItem<T> | undefined): string | number | undefi
   return item.originalIndex;
 }
 
+export interface TransitionCardData<T> {
+  id: string | number;
+  item: T;
+  originalIndex: number;
+  targetCol: number;
+  startX: number;
+  startY: number;
+  startW: number;
+  startH: number;
+  startOpacity: number;
+  endX: number;
+  endY: number;
+  endW: number;
+  endH: number;
+  endOpacity: number;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface MasonryFlashListProps<T = any> {
   data: T[];
   numColumns?: number;
-  renderItem: (info: { item: T; index: number; isColumn0: boolean }) => React.ReactElement;
+  onNumColumnsChange?: (columns: number) => void;
+  enablePinchToZoom?: boolean;
+  minColumns?: number;
+  maxColumns?: number;
+  renderItem: (info: {
+    item: T;
+    index: number;
+    isColumn0: boolean;
+    columnIndex?: number;
+    numColumns?: number;
+  }) => React.ReactElement;
   keyExtractor?: (item: T, index: number) => string;
   renderHeroCover?: () => React.ReactElement | null;
   renderStickyHeader?: () => React.ReactElement | null;
   ListFooterComponent?: React.ReactNode | (() => React.ReactElement | null);
-  /** The parent's Reanimated scroll handler — passed directly to Animated.ScrollView */
   onScroll?: any;
   scrollEventThrottle?: number;
-  /** Parent's scrollY SharedValue — MasonryFlashList reacts to this for slot recycling */
   scrollSharedValue?: SharedValue<number>;
   onEndReached?: () => void;
   onEndReachedThreshold?: number;
   mainScrollRef?: any;
   contentContainerStyle?: any;
   refreshControl?: any;
+  isPinchingShared?: SharedValue<boolean>;
 }
 
-// ─── Layout computation ───────────────────────────────────────────────────────
+// ─── Dynamic Layout Computation ───────────────────────────────────────────────
 
-function buildColumns<T>(data: T[]): {
-  column0: ColumnItem<T>[];
-  column1: ColumnItem<T>[];
-  col0Height: number;
-  col1Height: number;
-} {
-  const col0: ColumnItem<T>[] = [];
-  const col1: ColumnItem<T>[] = [];
-  let y0 = 0;
-  let y1 = 0;
+export function buildMasonryLayout<T>(
+  data: T[],
+  numColumns: number = 2,
+  screenWidth: number = SCREEN_WIDTH,
+): MasonryLayout<T> {
+  const safeCols = Math.max(1, Math.min(5, numColumns || 2));
+  const totalGaps = CARD_GAP * Math.max(0, safeCols - 1);
+  const colWidth = Math.max(30, Math.floor((screenWidth - (HORIZONTAL_MARGIN * 2) - totalGaps) / safeCols));
+
+  const columns: ColumnData<T>[] = Array.from({ length: safeCols }, () => ({
+    items: [],
+    height: 0,
+  }));
+  const itemMap = new Map<string | number, ColumnItem<T>>();
+
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    return { numColumns: safeCols, columns, maxHeight: 0, colWidth, itemMap };
+  }
 
   data.forEach((item: any, idx: number) => {
-    const isCol0 = y0 <= y1;
-    const aspect = getPhotoCardAspect(item, idx, isCol0);
-    const cardHeight = Math.max(80, Math.min(600, Math.round(COL_WIDTH / aspect)));
+    if (!item) return;
 
-    // Waterfall: always place next card in the shorter column
-    if (isCol0) {
-      col0.push({ item, originalIndex: idx, topY: y0, height: cardHeight });
-      y0 += cardHeight + CARD_GAP;
-    } else {
-      col1.push({ item, originalIndex: idx, topY: y1, height: cardHeight });
-      y1 += cardHeight + CARD_GAP;
+    let shortestCol = 0;
+    for (let c = 1; c < safeCols; c++) {
+      if (columns[c].height < columns[shortestCol].height) {
+        shortestCol = c;
+      }
+    }
+
+    const aspect = getPhotoCardAspect(item, idx, shortestCol, safeCols);
+    const maxCardH = safeCols === 1 ? Math.round(SCREEN_HEIGHT * 0.72) : (safeCols >= 4 ? 300 : 600);
+    const minCardH = safeCols === 1 ? 160 : (safeCols >= 4 ? 40 : (safeCols === 3 ? 60 : 80));
+    const cardHeight = Math.max(minCardH, Math.min(maxCardH, Math.round(colWidth / (aspect || 0.75))));
+
+    const topY = columns[shortestCol].height;
+    const colItem: ColumnItem<T> = {
+      item,
+      originalIndex: idx,
+      topY,
+      height: cardHeight,
+      colIndex: shortestCol,
+    };
+
+    columns[shortestCol].items.push(colItem);
+    columns[shortestCol].height += cardHeight + CARD_GAP;
+
+    const id = getItemId(colItem);
+    if (id !== undefined) {
+      itemMap.set(id, colItem);
     }
   });
 
-  return { column0: col0, column1: col1, col0Height: y0, col1Height: y1 };
+  const maxHeight = Math.max(0, ...columns.map((c) => c.height));
+  return { numColumns: safeCols, columns, maxHeight, colWidth, itemMap };
 }
 
-// ─── Slot assignment ────────────────────────────────────────────────────────────────
-// KEY PROPERTIES:
-// 1. We never reassign a slot whose current item is still visible AND HAS THE SAME ITEM ID.
-// 2. When data changes (e.g. skeletons -> real photos), slot item IDs mismatch and are cleanly recycled.
-// 3. We preserve slot OBJECT REFERENCES when values haven’t changed so React.memo bails out.
+// ─── Slot Assignment ──────────────────────────────────────────────────────────
 
 function assignSlots<T>(
   items: ColumnItem<T>[],
@@ -126,12 +198,14 @@ function assignSlots<T>(
   poolSize: number,
   headerHeight: number = 0,
 ): SlotState[] {
-  // Translate ScrollView scroll position to Grid Y coordinates
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return prevSlots;
+  }
+
   const gridScrollY = Math.max(0, scrollY - headerHeight);
   const minY = gridScrollY - OVERSCAN;
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
 
-  // 1. Find all visible item indices inside the overscan range
   const visibleSet = new Set<number>();
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
@@ -140,9 +214,6 @@ function assignSlots<T>(
     }
   }
 
-  // 2. Walk current slots:
-  //    - Slots showing a still-visible item WITH THE SAME ITEM ID → KEEP as-is
-  //    - Slots showing off-screen items OR replaced data → RECYCLE
   const next = prevSlots.slice();
   const occupied = new Set<number>();
   const free: number[] = [];
@@ -155,7 +226,6 @@ function assignSlots<T>(
       getItemId(items[colItemIdx]) === itemId
     ) {
       occupied.add(colItemIdx);
-      // Sync top and height if item position or layout height updated
       const currentItem = items[colItemIdx];
       if (next[s].top !== currentItem.topY || next[s].height !== currentItem.height) {
         next[s] = {
@@ -170,8 +240,6 @@ function assignSlots<T>(
     }
   }
 
-  // 3. Collect unassigned items and SORT BY VIEWPORT CENTER PROXIMITY
-  //    This guarantees on-screen items get slots FIRST before off-screen overscan items!
   const unassigned: number[] = [];
   for (let i = 0; i < items.length; i++) {
     if (visibleSet.has(i) && !occupied.has(i)) {
@@ -188,7 +256,6 @@ function assignSlots<T>(
     return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
   });
 
-  // 4. Assign free slots to unassigned items (on-screen center items get assigned FIRST)
   let fi = 0;
   for (const itemIdx of unassigned) {
     if (fi >= free.length) break;
@@ -204,7 +271,6 @@ function assignSlots<T>(
     }
   }
 
-  // 5. Park remaining free slots off-screen
   while (fi < free.length) {
     const slotIdx = free[fi++];
     if (next[slotIdx].colItemIdx !== -1) {
@@ -212,68 +278,402 @@ function assignSlots<T>(
     }
   }
 
-  // 6. Bail out if every slot reference is identical
   for (let s = 0; s < next.length; s++) {
     if (next[s] !== prevSlots[s]) return next;
   }
   return prevSlots;
 }
 
-
-// ─── Initial slot state (no scroll yet — show items near top) ─────────────────
-// IMPORTANT: use Array.from (not Array.fill) so every slot gets its OWN object
-// reference. Shared references break the reference-equality check in assignSlots.
-
-function initialSlots<T>(items: ColumnItem<T>[], poolSize: number, headerHeight: number = 0): SlotState[] {
-  const base: SlotState[] = Array.from({ length: poolSize }, (): SlotState => ({
-    colItemIdx: -1,
-    top: -30000,
-    height: 0,
-    itemId: undefined,
-  }));
-  return assignSlots(items, 0, base, poolSize, headerHeight);
+function computeAllColumnSlots<T>(
+  layout: MasonryLayout<T>,
+  scrollY: number,
+  poolSize: number,
+  headerHeight: number,
+): SlotState[][] {
+  if (!layout || !layout.columns) return [];
+  return layout.columns.map((col) => {
+    const base: SlotState[] = Array.from({ length: poolSize }, (): SlotState => ({
+      colItemIdx: -1,
+      top: -30000,
+      height: 0,
+      itemId: undefined,
+    }));
+    return assignSlots(col.items, scrollY, base, poolSize, headerHeight);
+  });
 }
 
-// ─── SlotView — hides the 1-frame flash when a slot is recycled to a new item ──
+// ─── Apple Photos Focal-Point Touch Anchor ────────────────────────────────────
+
+function findFocalAnchorItem<T>(
+  layout: MasonryLayout<T>,
+  currentScrollY: number,
+  headerHeight: number,
+  focalX: number,
+  screenFocalY: number,
+): ColumnItem<T> | null {
+  if (!layout || !layout.columns || layout.columns.length === 0) return null;
+
+  const contentX = focalX - HORIZONTAL_MARGIN;
+  const contentY = currentScrollY + screenFocalY - headerHeight;
+
+  if (contentY < 0) {
+    return null; // Finger touch is above photos in the header area
+  }
+
+  // 1. Check column closest to contentX:
+  const colW = layout.colWidth;
+  const gap = CARD_GAP;
+  const cIdx = Math.max(0, Math.min(layout.columns.length - 1, Math.floor(contentX / (colW + gap))));
+
+  const col = layout.columns[cIdx];
+  if (col && col.items && col.items.length > 0) {
+    for (let i = 0; i < col.items.length; i++) {
+      const it = col.items[i];
+      if (contentY >= it.topY && contentY <= it.topY + it.height + gap) {
+        return it;
+      }
+    }
+  }
+
+  // 2. Fallback: find item in any column with center closest to (focalX, contentY):
+  let bestItem: ColumnItem<T> | null = null;
+  let bestDist = Infinity;
+
+  for (let c = 0; c < layout.columns.length; c++) {
+    const column = layout.columns[c];
+    if (!column || !column.items) continue;
+    const colCenterX = HORIZONTAL_MARGIN + c * (colW + gap) + colW / 2;
+
+    for (let i = 0; i < column.items.length; i++) {
+      const it = column.items[i];
+      const itCenterY = it.topY + it.height / 2;
+      const dx = colCenterX - focalX;
+      const dy = itCenterY - contentY;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestItem = it;
+      }
+    }
+  }
+
+  return bestItem;
+}
+
+function computeFocalAnchoredScrollY<T>(
+  currentScrollY: number,
+  headerHeight: number,
+  screenHeight: number,
+  focalX: number,
+  screenFocalY: number,
+  currentLayout: MasonryLayout<T>,
+  targetLayout: MasonryLayout<T>,
+): number {
+  const contentY = currentScrollY + screenFocalY - headerHeight;
+  if (contentY < 0) {
+    return currentScrollY;
+  }
+
+  const anchorItem = findFocalAnchorItem(currentLayout, currentScrollY, headerHeight, focalX, screenFocalY);
+  if (!anchorItem) {
+    return currentScrollY;
+  }
+
+  // Anchor item's center Y in current layout:
+  const anchorItemCenterY = anchorItem.topY + anchorItem.height / 2;
+  // Its exact screen Y coordinate:
+  const anchorItemScreenY = headerHeight + anchorItemCenterY - currentScrollY;
+
+  // Find same item in target layout:
+  const itemId = getItemId(anchorItem);
+  let targetItem: ColumnItem<T> | undefined;
+
+  if (itemId !== undefined) {
+    targetItem = targetLayout.itemMap.get(itemId);
+  }
+  if (!targetItem) {
+    for (let c = 0; c < targetLayout.columns.length; c++) {
+      const col = targetLayout.columns[c];
+      if (!col || !col.items) continue;
+      const found = col.items.find((it) => it.originalIndex === anchorItem.originalIndex);
+      if (found) {
+        targetItem = found;
+        break;
+      }
+    }
+  }
+
+  if (!targetItem) {
+    return currentScrollY;
+  }
+
+  // Align targetItem so its center lands at the EXACT SAME anchorItemScreenY:
+  const targetItemCenterY = targetItem.topY + targetItem.height / 2;
+  const desiredScrollY = headerHeight + targetItemCenterY - anchorItemScreenY;
+  const maxScroll = Math.max(0, targetLayout.maxHeight + headerHeight - screenHeight);
+
+  return Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
+}
+
+// ─── Apple Photos Multi-Element Flight Cards Builder ──────────────────────────
+
+function buildTransitionCards<T>(
+  fromLayout: MasonryLayout<T>,
+  fromScrollY: number,
+  toLayout: MasonryLayout<T>,
+  toScrollY: number,
+  headerHeight: number,
+): TransitionCardData<T>[] {
+  const cardsMap = new Map<string | number, TransitionCardData<T>>();
+
+  // Screen visible bounds with edge padding to smoothly catch entering/leaving cards
+  const screenMinY = -60;
+  const screenMaxY = SCREEN_HEIGHT + 60;
+
+  // 1. Process items visible in fromLayout:
+  fromLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
+      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+      const startY = headerHeight + item.topY - fromScrollY;
+      const startW = fromLayout.colWidth;
+      const startH = item.height;
+
+      // Only track items currently visible on the screen in fromLayout:
+      const isVisibleInFrom =
+        startY + startH >= screenMinY && startY <= screenMaxY;
+
+      if (!isVisibleInFrom) {
+        return;
+      }
+
+      const id = getItemId(item);
+      if (id === undefined) return;
+
+      // Find where this item lands in toLayout:
+      const targetItem = toLayout.itemMap.get(id);
+      let endX = startX;
+      let endY = startY;
+      let endW = startW;
+      let endH = startH;
+      let startOpacity = 1;
+      let endOpacity = 1;
+      let targetCol = cIdx;
+
+      if (targetItem) {
+        targetCol = targetItem.colIndex;
+        const targetEndX = HORIZONTAL_MARGIN + targetItem.colIndex * (toLayout.colWidth + CARD_GAP);
+        const targetEndY = headerHeight + targetItem.topY - toScrollY;
+        const targetEndW = toLayout.colWidth;
+        const targetEndH = targetItem.height;
+
+        const isVisibleInTo =
+          targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
+
+        if (isVisibleInTo) {
+          // Scenario A: Visible on screen in both layouts -> Physical FLIP flight into new column!
+          endX = targetEndX;
+          endY = targetEndY;
+          endW = targetEndW;
+          endH = targetEndH;
+          endOpacity = 1;
+        } else {
+          // Scenario B: Visible before, but exits the viewport in the new column density ->
+          // Gently fade out in place with slight scale down (NO supersonic rocket off-screen)!
+          endX = startX;
+          endY = startY + 15;
+          endW = startW * 0.92;
+          endH = startH * 0.92;
+          endOpacity = 0;
+        }
+      } else {
+        // Fallback: fade out in place
+        endX = startX;
+        endY = startY;
+        endW = startW;
+        endH = startH;
+        endOpacity = 0;
+      }
+
+      cardsMap.set(id, {
+        id,
+        item: item.item,
+        originalIndex: item.originalIndex,
+        targetCol,
+        startX,
+        startY,
+        startW,
+        startH,
+        startOpacity,
+        endX,
+        endY,
+        endW,
+        endH,
+        endOpacity,
+      });
+    });
+  });
+
+  // 2. Process items visible in toLayout that were NOT visible in fromLayout:
+  toLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
+      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+      const targetEndY = headerHeight + item.topY - toScrollY;
+      const targetEndW = toLayout.colWidth;
+      const targetEndH = item.height;
+
+      const isVisibleInTo =
+        targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
+
+      if (!isVisibleInTo) return;
+
+      const id = getItemId(item);
+      if (id === undefined || cardsMap.has(id)) return;
+
+      // Scenario C: Newly appearing on screen in toLayout ->
+      // Smoothly fade in right in its target slot with a gentle scale up (NO supersonic rocket from 4,000px away)!
+      const startW = targetEndW * 0.92;
+      const startH = targetEndH * 0.92;
+      const startX = targetEndX + (targetEndW - startW) / 2;
+      const startY = targetEndY + 15;
+
+      cardsMap.set(id, {
+        id,
+        item: item.item,
+        originalIndex: item.originalIndex,
+        targetCol: cIdx,
+        startX,
+        startY,
+        startW,
+        startH,
+        startOpacity: 0,
+        endX: targetEndX,
+        endY: targetEndY,
+        endW: targetEndW,
+        endH: targetEndH,
+        endOpacity: 1,
+      });
+    });
+  });
+
+  return Array.from(cardsMap.values());
+}
+
+
+
+// ─── Animating Flight Card Component ──────────────────────────────────────────
+
+interface AnimatingCardProps {
+  card: TransitionCardData<any>;
+  progress: SharedValue<number>;
+  renderItem: (info: {
+    item: any;
+    index: number;
+    isColumn0: boolean;
+    columnIndex?: number;
+    numColumns?: number;
+  }) => React.ReactElement;
+  toCols: number;
+}
+
+const AnimatingCard = React.memo(function AnimatingCard({
+  card,
+  progress,
+  renderItem: renderFn,
+  toCols,
+}: AnimatingCardProps) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const p = progress.value;
+    const x = interpolate(p, [0, 1], [card.startX, card.endX]);
+    const y = interpolate(p, [0, 1], [card.startY, card.endY]);
+    const w = interpolate(p, [0, 1], [card.startW, card.endW]);
+    const h = interpolate(p, [0, 1], [card.startH, card.endH]);
+    const opacity = interpolate(p, [0, 1], [card.startOpacity, card.endOpacity]);
+
+    return {
+      position: 'absolute',
+      left: x,
+      top: y,
+      width: w,
+      height: h,
+      opacity,
+      overflow: 'hidden',
+    };
+  });
+
+  return (
+    <Animated.View style={animatedStyle}>
+      {renderFn({
+        item: card.item,
+        index: card.originalIndex,
+        isColumn0: card.targetCol === 0,
+        columnIndex: card.targetCol,
+        numColumns: toCols,
+      })}
+    </Animated.View>
+  );
+});
+
+// ─── SlotView ─────────────────────────────────────────────────────────────────
 
 interface SlotViewProps {
   slot: SlotState;
   item: any;
   originalIndex: number;
   isColumn0: boolean;
-  renderItem: (info: { item: any; index: number; isColumn0: boolean }) => React.ReactElement;
+  columnIndex: number;
+  numColumns: number;
+  renderItem: (info: {
+    item: any;
+    index: number;
+    isColumn0: boolean;
+    columnIndex?: number;
+    numColumns?: number;
+  }) => React.ReactElement;
 }
 
 const SlotView = React.memo(
-  function SlotView({ slot, item, originalIndex, isColumn0, renderItem: renderFn }: SlotViewProps) {
-    useEffect(() => {
-      if (item) {
-        const mediaId = item.id || item.uri || item.r2Url;
-        const isVideo = Boolean(item.isVideo || item.type === 'VIDEO' || item.tab === 'Cinema' || item.videoUrl);
-        const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
-        const url = item.r2Url || item.fullUri || item.uri || item.photoUrl;
-        analyticsService.trackImpression(mediaId, mediaType, 'GRID', url);
-      }
-    }, [item]);
-
+  function SlotView({
+    slot,
+    item,
+    originalIndex,
+    isColumn0,
+    columnIndex,
+    numColumns,
+    renderItem: renderFn,
+  }: SlotViewProps) {
     return (
       <View style={[styles.slot, { top: slot.top, height: slot.height }]}>
-        {item ? renderFn({ item, index: originalIndex, isColumn0 }) : null}
+        {item
+          ? renderFn({
+              item,
+              index: originalIndex,
+              isColumn0,
+              columnIndex,
+              numColumns,
+            })
+          : null}
       </View>
     );
   },
   (prev, next) =>
-    prev.slot          === next.slot &&
-    prev.item          === next.item &&
+    prev.slot === next.slot &&
+    prev.item === next.item &&
     prev.originalIndex === next.originalIndex &&
-    prev.isColumn0     === next.isColumn0 &&
-    prev.renderItem    === next.renderItem,
+    prev.isColumn0 === next.isColumn0 &&
+    prev.columnIndex === next.columnIndex &&
+    prev.numColumns === next.numColumns &&
+    prev.renderItem === next.renderItem,
 );
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function MasonryFlashList<T = any>({
   data,
+  numColumns: numColumnsProp = 2,
+  onNumColumnsChange,
+  enablePinchToZoom = true,
+  minColumns = 1,
+  maxColumns = 5,
   renderItem,
   keyExtractor,
   renderHeroCover,
@@ -286,60 +686,148 @@ export function MasonryFlashList<T = any>({
   onEndReachedThreshold = 0.8,
   mainScrollRef,
   refreshControl,
+  isPinchingShared,
 }: MasonryFlashListProps<T>) {
+  // ─── Shared Values ─────────────────────────────────────────────────────────
+  const pinchScale = useSharedValue(1);
+  const focalXShared = useSharedValue(SCREEN_WIDTH / 2);
+  const focalYShared = useSharedValue(SCREEN_HEIGHT / 2);
+  const pinchDirection = useSharedValue(0);
+  const targetColsShared = useSharedValue(numColumnsProp || 2);
+  const transitionProgress = useSharedValue(0);
+  const isPinching = useSharedValue(false);
+  const hasTriggeredHaptic = useSharedValue(false);
+  const currentColsShared = useSharedValue(numColumnsProp || 2);
+  const gridOpacity = useSharedValue(1);
+  const toastOpacity = useSharedValue(0);
 
-  // ─── Pre-compute all card positions (runs once per data change) ────────────
-  const { column0, column1, col0Height, col1Height } = useMemo(
-    () => buildColumns(data),
-    [data],
+  const pendingTargetScrollYRef = useRef(0);
+  const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
+  const pendingTargetLayoutRef = useRef<MasonryLayout<T> | null>(null);
+
+  // ─── Component State ───────────────────────────────────────────────────────
+  const [currentCols, setCurrentCols] = useState<number>(() => {
+    return Math.max(minColumns, Math.min(maxColumns, numColumnsProp || 2));
+  });
+
+  const [isPinchingState, setIsPinchingState] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
+  const [transitionToCols, setTransitionToCols] = useState(numColumnsProp || 2);
+  const [toastText, setToastText] = useState<string | null>(null);
+
+  useEffect(() => {
+    currentColsShared.value = currentCols;
+  }, [currentCols, currentColsShared]);
+
+  useEffect(() => {
+    if (typeof numColumnsProp === 'number' && numColumnsProp !== currentCols && !isTransitioning) {
+      const clamped = Math.max(minColumns, Math.min(maxColumns, numColumnsProp));
+      setCurrentCols(clamped);
+    }
+  }, [numColumnsProp, minColumns, maxColumns, currentCols, isTransitioning]);
+
+  const poolSize = useMemo(() => {
+    return Math.min(50, Math.max(16, Math.ceil(80 / currentCols)));
+  }, [currentCols]);
+
+  const [measuredHeroHeight, setMeasuredHeroHeight] = useState<number>(() => {
+    return renderHeroCover ? Math.round(SCREEN_HEIGHT * 0.70) : 0;
+  });
+  const [measuredStickyHeight, setMeasuredStickyHeight] = useState<number>(() => {
+    return renderStickyHeader ? 107 : 0;
+  });
+  const heroHeightRef = useRef(measuredHeroHeight);
+  const stickyHeightRef = useRef(measuredStickyHeight);
+
+  const headerHeight = useMemo(() => {
+    return (renderHeroCover ? measuredHeroHeight : 0) + (renderStickyHeader ? measuredStickyHeight : 0);
+  }, [renderHeroCover, renderStickyHeader, measuredHeroHeight, measuredStickyHeight]);
+  const headerHeightRef = useRef(headerHeight);
+  headerHeightRef.current = headerHeight;
+
+  const layout = useMemo(
+    () => buildMasonryLayout(data, currentCols, SCREEN_WIDTH),
+    [data, currentCols],
   );
 
-  // Always-fresh refs so the scroll worklet never has a stale closure
-  const col0Ref    = useRef(column0);
-  const col1Ref    = useRef(column1);
-  // Plain ref for current scrollY — updated by updateSlotsFromY on the JS thread.
-  // This avoids reading scrollSharedValue.value from the JS/React context
-  // (which triggers Reanimated warnings and is unreliable outside worklets).
+  const layoutRef = useRef(layout);
+  const dataRef = useRef(data);
   const scrollYRef = useRef(0);
-
-  // ─── Slot updates via SharedValue (no scroll handler interception) ─────────────
-  // The parent's onScroll handler is passed directly to Animated.ScrollView below.
-  // We watch scrollSharedValue (set by the parent) to know when to recycle slots.
-  const lastUpdateRef      = useRef(0);
+  const lastUpdateRef = useRef(0);
+  const lastImpressionCheckRef = useRef(0);
   const endReachedFiredRef = useRef(false);
 
-  // Header height above grid (Hero cover ~70% screen height + Sticky tab bar ~50px)
-  const headerHeight = useMemo(() => {
-    return renderHeroCover ? Math.round(SCREEN_HEIGHT * 0.70) + 50 : 0;
-  }, [renderHeroCover]);
+  const [columnSlots, setColumnSlots] = useState<SlotState[][]>(() => {
+    return computeAllColumnSlots(layout, 0, poolSize, headerHeight);
+  });
+  const columnSlotsRef = useRef(columnSlots);
 
-  // ─── Recycling pool state ─────────────────────────────────────────────────
-  const [slots0, setSlots0] = useState<SlotState[]>(() => initialSlots(column0, POOL_PER_COL, headerHeight));
-  const [slots1, setSlots1] = useState<SlotState[]>(() => initialSlots(column1, POOL_PER_COL, headerHeight));
-
-  // Sync refs and recompute slots whenever data/columns change.
   useEffect(() => {
-    col0Ref.current = column0;
-    col1Ref.current = column1;
+    layoutRef.current = layout;
+    dataRef.current = data;
     const y = scrollYRef.current;
-    setSlots0(prev => assignSlots(column0, y, prev, POOL_PER_COL, headerHeight));
-    setSlots1(prev => assignSlots(column1, y, prev, POOL_PER_COL, headerHeight));
-  }, [column0, column1, headerHeight]);
+    const newSlots = computeAllColumnSlots(layout, y, poolSize, headerHeight);
+    setColumnSlots(newSlots);
+    columnSlotsRef.current = newSlots;
+  }, [layout, poolSize, headerHeight, data]);
 
   useEffect(() => {
     endReachedFiredRef.current = false;
   }, [data]);
 
+  // ─── Slot Updates from Scroll Worklet ──────────────────────────────────────
   const updateSlotsFromY = useCallback((y: number) => {
-    const now = Date.now();
-    if (now - lastUpdateRef.current < 16) return; // 60fps cap
-    lastUpdateRef.current = now;
-    scrollYRef.current = y; // keep ref in sync for useEffect above
-    setSlots0(prev => assignSlots(col0Ref.current, y, prev, POOL_PER_COL, headerHeight));
-    setSlots1(prev => assignSlots(col1Ref.current, y, prev, POOL_PER_COL, headerHeight));
+    if (isPinchingState || isTransitioning) return;
 
-    // Trigger onEndReached when user scrolls within threshold of bottom
-    const totalHeight = Math.max(col0Height, col1Height);
+    const now = Date.now();
+    if (now - lastUpdateRef.current < 16) return;
+    lastUpdateRef.current = now;
+    scrollYRef.current = y;
+
+    const currentLayout = layoutRef.current;
+    if (!currentLayout || !currentLayout.columns) return;
+
+    setColumnSlots((prev) => {
+      let anyChanged = false;
+      const next = currentLayout.columns.map((col, cIdx) => {
+        const prevSlots = (prev && prev[cIdx]) || [];
+        const updated = assignSlots(col.items, y, prevSlots, poolSize, headerHeight);
+        if (updated !== prevSlots) anyChanged = true;
+        return updated;
+      });
+      if (anyChanged) columnSlotsRef.current = next;
+      return anyChanged ? next : prev;
+    });
+
+    // Batch track visible impressions
+    if (now - lastImpressionCheckRef.current > 600) {
+      lastImpressionCheckRef.current = now;
+      const gridY = Math.max(0, y - headerHeight);
+      const viewTop = gridY;
+      const viewBottom = gridY + SCREEN_HEIGHT;
+
+      for (let c = 0; c < currentLayout.columns.length; c++) {
+        const items = currentLayout.columns[c].items;
+        if (!items) continue;
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          if (it.topY + it.height >= viewTop && it.topY <= viewBottom) {
+            const rawItem: any = it.item;
+            if (rawItem && !rawItem.isSkeleton) {
+              const mediaId = rawItem.id || rawItem.uri || rawItem.r2Url;
+              const isVideo = Boolean(rawItem.isVideo || rawItem.type === 'VIDEO' || rawItem.tab === 'Cinema' || rawItem.videoUrl);
+              const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
+              const url = rawItem.r2Url || rawItem.fullUri || rawItem.uri || rawItem.photoUrl;
+              analyticsService.trackImpression(mediaId, mediaType, 'GRID', url);
+            }
+          }
+        }
+      }
+    }
+
+    // Trigger onEndReached
+    const totalHeight = currentLayout.maxHeight;
     if (onEndReached && !endReachedFiredRef.current && totalHeight > 0) {
       const thresholdY = totalHeight - SCREEN_HEIGHT * (1 + onEndReachedThreshold);
       if (y >= thresholdY) {
@@ -347,19 +835,268 @@ export function MasonryFlashList<T = any>({
         onEndReached();
       }
     }
-  }, [col0Height, col1Height, onEndReached, onEndReachedThreshold]);
+  }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize, isPinchingState, isTransitioning]);
 
-  // React to scrollY shared value from parent — fires on UI thread, updates slots via runOnJS
   useAnimatedReaction(
     () => scrollSharedValue?.value ?? 0,
     (y) => {
       'worklet';
-      runOnJS(updateSlotsFromY)(y);
+      if (!isPinching.value && !isTransitioning) {
+        runOnJS(updateSlotsFromY)(y);
+      }
     },
-    [updateSlotsFromY],
+    [updateSlotsFromY, isTransitioning],
   );
 
-  // ─── Footer ───────────────────────────────────────────────────────────────
+  const triggerHaptic = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  }, []);
+
+  const showColumnToast = useCallback((cols: number) => {
+    const label = cols === 1 ? '1 COLUMN' : `${cols} COLUMNS`;
+    setToastText(label);
+    toastOpacity.value = withTiming(1, { duration: 180 });
+    setTimeout(() => {
+      toastOpacity.value = withTiming(0, { duration: 250 }, () => {
+        runOnJS(setToastText)(null);
+      });
+    }, 1400);
+  }, [toastOpacity]);
+
+  // ─── Native Scroll Dispatcher ──────────────────────────────────────────────
+  const performScrollTo = useCallback((targetY: number) => {
+    scrollYRef.current = targetY;
+    if (scrollSharedValue) {
+      scrollSharedValue.value = targetY;
+    }
+    try {
+      if (mainScrollRef?.current) {
+        if (typeof (mainScrollRef.current as any).scrollTo === 'function') {
+          (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+        } else {
+          runOnUI((y: number) => {
+            'worklet';
+            scrollTo(mainScrollRef, 0, y, false);
+          })(targetY);
+        }
+      } else {
+        runOnUI((y: number) => {
+          'worklet';
+          scrollTo(mainScrollRef, 0, y, false);
+        })(targetY);
+      }
+    } catch (_e) {
+      try {
+        runOnUI((y: number) => {
+          'worklet';
+          scrollTo(mainScrollRef, 0, y, false);
+        })(targetY);
+      } catch (_e2) {}
+    }
+  }, [mainScrollRef, scrollSharedValue]);
+
+  // ─── Apple Photos Interactive Flight Transition ───────────────────────────
+  const commitTransition = useCallback((targetCols: number) => {
+    const targetScrollY = pendingTargetScrollYRef.current;
+    const targetSlots = pendingTargetSlotsRef.current;
+    const targetLayout = pendingTargetLayoutRef.current;
+
+    if (targetLayout && targetSlots) {
+      performScrollTo(targetScrollY);
+      setCurrentCols(targetCols);
+      setColumnSlots(targetSlots);
+      columnSlotsRef.current = targetSlots;
+      layoutRef.current = targetLayout;
+    }
+
+    gridOpacity.value = 1;
+    setTransitionCards(null);
+    setIsTransitioning(false);
+    setIsPinchingState(false);
+    transitionProgress.value = 0;
+    pinchDirection.value = 0;
+    onNumColumnsChange?.(targetCols);
+    showColumnToast(targetCols);
+  }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity]);
+
+  const cancelTransition = useCallback(() => {
+    gridOpacity.value = 1;
+    setTransitionCards(null);
+    setIsTransitioning(false);
+    setIsPinchingState(false);
+    transitionProgress.value = 0;
+    pinchDirection.value = 0;
+  }, [gridOpacity, transitionProgress, pinchDirection]);
+
+  const startInteractiveTransition = useCallback((
+    targetCols: number,
+    focalX: number,
+    focalY: number,
+  ) => {
+    if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
+      return;
+    }
+
+    const currentScrollY = scrollSharedValue ? scrollSharedValue.value : scrollYRef.current;
+    const currentHeaderHeight = headerHeightRef.current;
+    const currentLayout = layoutRef.current;
+    const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+    const targetPool = Math.min(50, Math.max(16, Math.ceil(80 / targetCols)));
+
+    // PINCH ANCHOR: Compute targetScrollY based on the exact photo under (focalX, focalY)
+    const targetScrollY = computeFocalAnchoredScrollY(
+      currentScrollY,
+      currentHeaderHeight,
+      SCREEN_HEIGHT,
+      focalX,
+      focalY,
+      currentLayout,
+      targetLayout,
+    );
+
+    // Build the interactive flight transition cards (progress 0 = currentLayout, progress 1 = targetLayout):
+    const cards = buildTransitionCards(
+      currentLayout,
+      currentScrollY,
+      targetLayout,
+      targetScrollY,
+      currentHeaderHeight,
+    );
+
+    const targetSlots = computeAllColumnSlots(targetLayout, targetScrollY, targetPool, currentHeaderHeight);
+
+    pendingTargetScrollYRef.current = targetScrollY;
+    pendingTargetSlotsRef.current = targetSlots;
+    pendingTargetLayoutRef.current = targetLayout;
+
+    setTransitionCards(cards);
+    setTransitionToCols(targetCols);
+    setIsTransitioning(true);
+    gridOpacity.value = 0;
+  }, [currentCols, minColumns, maxColumns, scrollSharedValue, gridOpacity]);
+
+  // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
+  const pinchGesture = useMemo(() => {
+    return Gesture.Pinch()
+      .enabled(enablePinchToZoom && !isTransitioning)
+      .onStart((e) => {
+        'worklet';
+        isPinching.value = true;
+        if (isPinchingShared) isPinchingShared.value = true;
+        focalXShared.value = e.focalX;
+        focalYShared.value = e.focalY;
+        pinchDirection.value = 0;
+        transitionProgress.value = 0;
+        hasTriggeredHaptic.value = false;
+        runOnJS(setIsPinchingState)(true);
+      })
+      .onUpdate((e) => {
+        'worklet';
+        focalXShared.value = e.focalX;
+        focalYShared.value = e.focalY;
+
+        // Detect pinch direction as fingers move:
+        if (pinchDirection.value === 0) {
+          if (e.scale < 0.97 && currentColsShared.value < maxColumns) {
+            pinchDirection.value = 1; // Pinch in -> Add column (e.g. 2 -> 3)
+            targetColsShared.value = currentColsShared.value + 1;
+            runOnJS(startInteractiveTransition)(currentColsShared.value + 1, e.focalX, e.focalY);
+          } else if (e.scale > 1.03 && currentColsShared.value > minColumns) {
+            pinchDirection.value = -1; // Pinch out -> Remove column (e.g. 3 -> 2, 2 -> 1)
+            targetColsShared.value = currentColsShared.value - 1;
+            runOnJS(startInteractiveTransition)(currentColsShared.value - 1, e.focalX, e.focalY);
+          }
+        }
+
+        // Live interactive gesture flight progress directly tracking user's fingers:
+        if (pinchDirection.value === 1) {
+          const p = Math.max(0, Math.min(1, (1 - e.scale) / 0.22));
+          transitionProgress.value = p;
+          if (p >= 0.5 && !hasTriggeredHaptic.value) {
+            hasTriggeredHaptic.value = true;
+            runOnJS(triggerHaptic)();
+          }
+        } else if (pinchDirection.value === -1) {
+          const p = Math.max(0, Math.min(1, (e.scale - 1) / 0.22));
+          transitionProgress.value = p;
+          if (p >= 0.5 && !hasTriggeredHaptic.value) {
+            hasTriggeredHaptic.value = true;
+            runOnJS(triggerHaptic)();
+          }
+        }
+      })
+      .onEnd((e) => {
+        'worklet';
+        isPinching.value = false;
+        if (isPinchingShared) isPinchingShared.value = false;
+
+        if (pinchDirection.value !== 0) {
+          const currentP = transitionProgress.value;
+          const targetCols = targetColsShared.value;
+
+          if (currentP >= 0.38) {
+            // Animate remaining progress to 1 and commit new columns:
+            transitionProgress.value = withTiming(1, {
+              duration: 220,
+              easing: Easing.bezier(0.25, 1, 0.5, 1),
+            }, (finished) => {
+              if (finished) {
+                runOnJS(commitTransition)(targetCols);
+              }
+            });
+          } else {
+            // Cancel transition: animate back to 0:
+            transitionProgress.value = withTiming(0, {
+              duration: 180,
+              easing: Easing.bezier(0.25, 1, 0.5, 1),
+            }, (finished) => {
+              if (finished) {
+                runOnJS(cancelTransition)();
+              }
+            });
+          }
+        } else {
+          runOnJS(setIsPinchingState)(false);
+        }
+      })
+      .onFinalize(() => {
+        'worklet';
+        isPinching.value = false;
+        if (isPinchingShared) isPinchingShared.value = false;
+      });
+  }, [
+    enablePinchToZoom,
+    isTransitioning,
+    isPinchingShared,
+    isPinching,
+    focalXShared,
+    focalYShared,
+    pinchDirection,
+    targetColsShared,
+    transitionProgress,
+    hasTriggeredHaptic,
+    currentColsShared,
+    maxColumns,
+    minColumns,
+    triggerHaptic,
+    startInteractiveTransition,
+    commitTransition,
+    cancelTransition,
+  ]);
+
+  const activePinchAnimatedStyle = useAnimatedStyle(() => {
+    return { transform: [{ scale: 1 }] };
+  });
+
+  const gridVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: gridOpacity.value,
+  }));
+
+  const toastAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: toastOpacity.value,
+    transform: [{ scale: 0.92 + toastOpacity.value * 0.08 }],
+  }));
+
   const renderedFooter = useMemo(() => {
     if (!ListFooterComponent) return null;
     if (typeof ListFooterComponent === 'function') {
@@ -368,74 +1105,144 @@ export function MasonryFlashList<T = any>({
     return ListFooterComponent as React.ReactNode;
   }, [ListFooterComponent]);
 
+  const isScrolledPastHero = !renderHeroCover || scrollYRef.current >= heroHeightRef.current;
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <Animated.ScrollView
-      ref={mainScrollRef}
-      onScroll={onScroll}
-      scrollEventThrottle={scrollEventThrottle}
-      showsVerticalScrollIndicator={false}
-      stickyHeaderIndices={renderStickyHeader ? [1] : undefined}
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      refreshControl={refreshControl}
-    >
-      {/* Child 0: Hero cover — scrolls away naturally */}
-      {renderHeroCover ? renderHeroCover() : null}
+    <View style={styles.container}>
+      <GestureDetector gesture={pinchGesture}>
+        <Animated.View style={[styles.viewport, activePinchAnimatedStyle]}>
+          <Animated.ScrollView
+            ref={mainScrollRef}
+            onScroll={onScroll}
+            scrollEventThrottle={scrollEventThrottle}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={!isPinchingState && !isTransitioning}
+            stickyHeaderIndices={renderStickyHeader ? [1] : undefined}
+            style={styles.scrollView}
+            contentContainerStyle={styles.contentContainer}
+            refreshControl={refreshControl}
+          >
+            {/* Child 0: Hero cover */}
+            {renderHeroCover ? (
+              <View
+                onLayout={(e) => {
+                  const h = Math.round(e.nativeEvent.layout.height);
+                  if (h > 0 && Math.abs(h - heroHeightRef.current) > 2) {
+                    heroHeightRef.current = h;
+                    setMeasuredHeroHeight(h);
+                  }
+                }}
+              >
+                {renderHeroCover()}
+              </View>
+            ) : null}
 
-      {/* Child 1: Sticky tab header — pins to top of screen */}
-      {renderStickyHeader ? renderStickyHeader() : null}
+            {/* Child 1: Sticky tab header */}
+            {renderStickyHeader ? (
+              <View
+                onLayout={(e) => {
+                  const h = Math.round(e.nativeEvent.layout.height);
+                  if (h > 0 && Math.abs(h - stickyHeightRef.current) > 2) {
+                    stickyHeightRef.current = h;
+                    setMeasuredStickyHeight(h);
+                  }
+                }}
+              >
+                {renderStickyHeader()}
+              </View>
+            ) : null}
 
-      {/* Child 2: Masonry grid
-           Columns are in a normal flex row with EXPLICIT heights so the
-           ScrollView correctly measures total content height for scrolling.
-           Slots inside are absolutely positioned within each column. */}
-      <View style={styles.gridRow}>
+            {/* Child 2: Base Recycled Masonry Grid */}
+            <Animated.View style={[styles.gridRow, gridVisibilityStyle]}>
+              {layout.columns.map((col, colIdx) => {
+                const isLastCol = colIdx === layout.columns.length - 1;
+                const slots = columnSlots[colIdx] || [];
 
-        {/* ── Left Column — POOL_PER_COL stable native Views ── */}
-        <View style={[styles.colLeft, { height: col0Height }]}>
-          {slots0.map((slot, sIdx) => {
-            const colItem = slot.colItemIdx >= 0 ? column0[slot.colItemIdx] : null;
-            return (
-              <SlotView
-                key={`c0-${sIdx}`}
-                slot={slot}
-                item={colItem?.item}
-                originalIndex={colItem?.originalIndex ?? 0}
-                isColumn0={true}
-                renderItem={renderItem}
-              />
-            );
-          })}
+                return (
+                  <View
+                    key={`col-${colIdx}`}
+                    style={[
+                      styles.column,
+                      {
+                        width: layout.colWidth,
+                        height: col.height,
+                        marginRight: isLastCol ? 0 : CARD_GAP,
+                        overflow: 'hidden',
+                      },
+                    ]}
+                  >
+                    {slots.map((slot, sIdx) => {
+                      const colItem =
+                        slot.colItemIdx >= 0 && col.items && slot.colItemIdx < col.items.length
+                          ? col.items[slot.colItemIdx]
+                          : null;
+                      return (
+                        <SlotView
+                          key={`slot-${colIdx}-${sIdx}`}
+                          slot={slot}
+                          item={colItem?.item}
+                          originalIndex={colItem?.originalIndex ?? 0}
+                          isColumn0={colIdx === 0}
+                          columnIndex={colIdx}
+                          numColumns={currentCols}
+                          renderItem={renderItem}
+                        />
+                      );
+                    })}
+                  </View>
+                );
+              })}
+            </Animated.View>
+
+            {renderedFooter}
+          </Animated.ScrollView>
+        </Animated.View>
+      </GestureDetector>
+
+      {/* ─── Apple Photos Flight Transition Overlay ─────────────────────── */}
+      {transitionCards && (
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+          {transitionCards.map((card) => (
+            <AnimatingCard
+              key={`trans-${card.id}`}
+              card={card}
+              progress={transitionProgress}
+              renderItem={renderItem}
+              toCols={transitionToCols}
+            />
+          ))}
+
+          {/* Keep sticky header crisp on top of flying cards */}
+          {renderStickyHeader && isScrolledPastHero ? (
+            <View style={styles.stickyHeaderOverlay} pointerEvents="none">
+              {renderStickyHeader()}
+            </View>
+          ) : null}
         </View>
+      )}
 
-        {/* ── Right Column — POOL_PER_COL stable native Views ── */}
-        <View style={[styles.colRight, { height: col1Height }]}>
-          {slots1.map((slot, sIdx) => {
-            const colItem = slot.colItemIdx >= 0 ? column1[slot.colItemIdx] : null;
-            return (
-              <SlotView
-                key={`c1-${sIdx}`}
-                slot={slot}
-                item={colItem?.item}
-                originalIndex={colItem?.originalIndex ?? 0}
-                isColumn0={false}
-                renderItem={renderItem}
-              />
-            );
-          })}
-        </View>
-
-      </View>
-
-      {renderedFooter}
-    </Animated.ScrollView>
+      {/* Floating column change feedback toast */}
+      {toastText && (
+        <Animated.View style={[styles.columnToast, toastAnimatedStyle]} pointerEvents="none">
+          <Text style={styles.columnToastText}>{toastText}</Text>
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  viewport: {
+    flex: 1,
+    overflow: 'hidden',
+  },
   scrollView: {
     flex: 1,
     backgroundColor: '#ffffff',
@@ -444,35 +1251,49 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingBottom: 40,
   },
-  // Two-column flex row — columns have explicit heights so ScrollView measures content correctly
   gridRow: {
     flexDirection: 'row',
-    // 9px outer edge on each side, 6px gap between columns
-    // marginLeft:9, colWidth, marginRight:6(gap), colWidth, marginRight:9
-    // = 9 + COL_WIDTH + 6 + COL_WIDTH + 9 = 24 + 2*COL_WIDTH = SCREEN_WIDTH ✓
-    marginLeft: 9,
-    marginRight: 9,
+    marginLeft: HORIZONTAL_MARGIN,
+    marginRight: HORIZONTAL_MARGIN,
     backgroundColor: '#ffffff',
   },
-  // Left column: explicit width, height set inline as col0Height
-  colLeft: {
-    width: COL_WIDTH,
-    marginRight: 6,           // the 6px gap between columns
+  column: {
     backgroundColor: '#ffffff',
-    // position: 'relative' (default) — serves as positioning context for slots
   },
-  // Right column: explicit width, height set inline as col1Height
-  colRight: {
-    width: COL_WIDTH,
-    backgroundColor: '#ffffff',
-    // position: 'relative' (default) — serves as positioning context for slots
-  },
-  // Each recycled slot: absolutely positioned within its column
   slot: {
     position: 'absolute',
     left: 0,
     right: 0,
     backgroundColor: '#ffffff',
     overflow: 'hidden',
+  },
+  stickyHeaderOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 999,
+  },
+  columnToast: {
+    position: 'absolute',
+    top: 96,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(18, 18, 18, 0.82)',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
+    zIndex: 9999,
+  },
+  columnToastText: {
+    color: '#ffffff',
+    fontSize: 12,
+    letterSpacing: 1.2,
+    fontFamily: FONT_JOST_MEDIUM,
+    textTransform: 'uppercase',
   },
 });

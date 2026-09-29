@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 
 const TOKEN_KEY = 'user_session_token';
 const PROFILE_KEY = 'user_profile_data';
+const GALLERY_CACHE_KEY = '@mycircle_gallery_cache_v1';
 
 export interface GuestProfile {
   id: number;
@@ -49,6 +50,7 @@ interface AuthState {
   setTabBarCollapsed: (collapsed: boolean) => void;
   setUserEvents: (events: any[]) => void;
   setGalleryCache: (eventSlug: string, data: Partial<GalleryCacheEntry>) => void;
+  clearGalleryCache: (eventSlug: string) => void;
   getGalleryCache: (eventSlug: string) => GalleryCacheEntry | null;
   
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
@@ -82,16 +84,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setGalleryCache: (eventSlug, data) => {
     if (!eventSlug) return;
     const current = get().galleryCache[eventSlug] || { timestamp: Date.now() };
-    set((state) => ({
-      galleryCache: {
-        ...state.galleryCache,
-        [eventSlug]: {
-          ...current,
-          ...data,
-          timestamp: Date.now(),
-        },
-      },
-    }));
+    const updatedEntry: GalleryCacheEntry = {
+      ...current,
+      ...data,
+      timestamp: Date.now(),
+    };
+    const newCache = {
+      ...get().galleryCache,
+      [eventSlug]: updatedEntry,
+    };
+    set({ galleryCache: newCache });
+    AsyncStorage.setItem(GALLERY_CACHE_KEY, JSON.stringify(newCache)).catch(() => {});
+  },
+  clearGalleryCache: (eventSlug) => {
+    if (!eventSlug) return;
+    const newCache = { ...get().galleryCache };
+    delete newCache[eventSlug];
+    set({ galleryCache: newCache });
+    AsyncStorage.setItem(GALLERY_CACHE_KEY, JSON.stringify(newCache)).catch(() => {});
   },
   getGalleryCache: (eventSlug) => {
     if (!eventSlug) return null;
@@ -214,6 +224,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       await AsyncStorage.setItem('@mycircle_joined_events_list', JSON.stringify(updatedEvents));
       await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
+      get().clearGalleryCache(String(eventSlugOrId));
       console.log('[LEAVE EVENT 🚪] AsyncStorage updated successfully');
     } catch (storageErr: any) {
       console.warn('[LEAVE EVENT ⚠️] AsyncStorage write failed:', storageErr?.message);
@@ -247,7 +258,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (profile && profile.phoneNumber === 'skipped') {
         profile.phoneNumber = null;
       }
-      set({ token, profile, isLoading: false, isPhoneSkipped: false });
+      
+      // Load persisted gallery cache into memory so Frame 1 gallery launch is instant (0ms) even after cold start
+      let galleryCache: Record<string, GalleryCacheEntry> = {};
+      try {
+        const cachedStr = await AsyncStorage.getItem(GALLERY_CACHE_KEY);
+        if (cachedStr) {
+          const parsed = JSON.parse(cachedStr);
+          if (parsed && typeof parsed === 'object') {
+            galleryCache = parsed;
+          }
+        }
+      } catch (_) {}
+
+      set({ token, profile, galleryCache, isLoading: false, isPhoneSkipped: false });
     } catch (e) {
       // SecureStore may fail on simulator builds without keychain entitlements — this is expected.
       console.warn('SecureStore unavailable, starting with no stored session:', e);
@@ -262,6 +286,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
       await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
       await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
+      await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
 
       // Sign out of Google so the account picker is shown on next sign-in
       try {

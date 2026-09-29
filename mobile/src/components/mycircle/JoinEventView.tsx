@@ -103,6 +103,12 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
           return timeB - timeA;
         });
         setUserEvents(sorted);
+        // Smart background prefetch of top celebration so opening gallery is 0ms instant
+        if (sorted.length > 0 && sorted[0].slug) {
+          import('../../services/galleryPrefetch').then((m) => {
+            m.prefetchEventGalleryData(sorted[0].slug, sorted[0].passcode);
+          }).catch(() => {});
+        }
       } else {
         // Fallback to recent events from SecureStore
         loadRecentEvents();

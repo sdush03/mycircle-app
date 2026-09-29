@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { playbackFocusManager } from './playbackFocusManager';
 
 const STORAGE_KEY = '@mycircle_video_watch_progress';
 
@@ -14,9 +15,16 @@ class VideoWatchProgressManager {
   private cache: Map<string, WatchProgress> = new Map();
   private isLoaded = false;
   private listeners: Set<() => void> = new Set();
+  private lastSaveTimestampMap: Map<string, number> = new Map();
 
   constructor() {
     this.loadFromStorage();
+    playbackFocusManager.subscribe((isPlaying) => {
+      if (!isPlaying) {
+        // Playback finished/closed — update gallery grid badges once after modal closes
+        this.notifyListeners(true);
+      }
+    });
   }
 
   private getKeys(item: any): string[] {
@@ -76,7 +84,11 @@ class VideoWatchProgressManager {
     return () => this.listeners.delete(listener);
   }
 
-  private notifyListeners(): void {
+  private notifyListeners(force = false): void {
+    if (!force && playbackFocusManager.isPlaying) {
+      // Suppress background gallery re-renders and network downloads during video playback!
+      return;
+    }
     this.listeners.forEach((cb) => {
       try {
         cb();
@@ -150,6 +162,7 @@ class VideoWatchProgressManager {
 
   /**
    * Save playback progress. Called during video playback.
+   * Throttles disk persistence & listener notifications to once every 3 seconds to avoid JS thread overload.
    */
   public saveProgress(item: any, currentTime: number, duration: number): void {
     const keys = this.getKeys(item);
@@ -157,18 +170,25 @@ class VideoWatchProgressManager {
 
     const ratio = currentTime / duration;
     const isCompleted = ratio >= 0.9;
+    const now = Date.now();
 
     const progress: WatchProgress = {
       currentTime: isCompleted ? 0 : currentTime,
       duration,
       progressPercent: isCompleted ? 0 : ratio,
       isCompleted,
-      updatedAt: Date.now(),
+      updatedAt: now,
     };
 
     keys.forEach((k) => this.cache.set(k, progress));
-    this.persistToStorage();
-    this.notifyListeners();
+
+    const primaryKey = keys[0];
+    const lastSave = this.lastSaveTimestampMap.get(primaryKey) || 0;
+    if (now - lastSave >= 3000 || isCompleted) {
+      this.lastSaveTimestampMap.set(primaryKey, now);
+      this.persistToStorage();
+      this.notifyListeners();
+    }
   }
 
   /**
