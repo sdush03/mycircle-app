@@ -18,7 +18,7 @@
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, View, Text, Dimensions } from 'react-native';
+import { StyleSheet, View, Dimensions } from 'react-native';
 import Animated, {
   useAnimatedReaction,
   runOnJS,
@@ -33,10 +33,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import * as Haptics from 'expo-haptics';
 import { getPhotoCardAspect } from '../../utils/photoDimensionCache';
 import { analyticsService } from '../../services/analyticsService';
-import { FONT_JOST_MEDIUM } from '../../constants/fonts';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -475,6 +473,9 @@ function buildTransitionCards<T>(
   const screenMinY = -180;
   const screenMaxY = SCREEN_HEIGHT + 180;
 
+  const isAddingColumn = toLayout.numColumns > fromLayout.numColumns;
+  const isRemovingColumn = toLayout.numColumns < fromLayout.numColumns;
+
   // 1. Process items visible in fromLayout:
   fromLayout.columns.forEach((col, cIdx) => {
     col.items.forEach((item) => {
@@ -523,11 +524,21 @@ function buildTransitionCards<T>(
           endOpacity = 1;
         } else {
           // Scenario B: Visible before, but exits the viewport in the new column density ->
-          // Gently fade out in place with slight scale down (NO supersonic rocket off-screen)!
-          endX = startX;
-          endY = startY + 15;
-          endW = startW * 0.92;
-          endH = startH * 0.92;
+          const isExitingToRight = isRemovingColumn && cIdx >= toLayout.numColumns;
+
+          if (isExitingToRight) {
+            // Slide smoothly out past the right edge of the screen:
+            endX = SCREEN_WIDTH + 14;
+            endY = startY;
+            endW = startW;
+            endH = startH;
+          } else {
+            // Gently glide down and fade:
+            endX = startX;
+            endY = startY + 16;
+            endW = startW * 0.94;
+            endH = startH * 0.94;
+          }
           endOpacity = 0;
         }
       } else {
@@ -575,11 +586,27 @@ function buildTransitionCards<T>(
       if (id === undefined || cardsMap.has(id)) return;
 
       // Scenario C: Newly appearing on screen in toLayout ->
-      // Smoothly fade in right in its target slot with a gentle scale up (NO supersonic rocket from 4,000px away)!
-      const startW = targetEndW * 0.92;
-      const startH = targetEndH * 0.92;
-      const startX = targetEndX + (targetEndW - startW) / 2;
-      const startY = targetEndY + 15;
+      const isEnteringFromRight = isAddingColumn && cIdx >= fromLayout.numColumns;
+
+      let startX: number;
+      let startY: number;
+      let startW: number;
+      let startH: number;
+
+      if (isEnteringFromRight) {
+        // Slide in from beyond the right edge of the screen:
+        startX = SCREEN_WIDTH + 14;
+        startY = targetEndY;
+        startW = targetEndW;
+        startH = targetEndH;
+      } else {
+        // Entering from bottom/top: gentle scale up and directional vertical glide:
+        const isFromTop = targetEndY < screenMinY / 2;
+        startW = targetEndW * 0.94;
+        startH = targetEndH * 0.94;
+        startX = targetEndX + (targetEndW - startW) / 2;
+        startY = isFromTop ? targetEndY - 20 : targetEndY + 20;
+      }
 
       cardsMap.set(id, {
         id,
@@ -752,10 +779,8 @@ export function MasonryFlashList<T = any>({
   const targetColsShared = useSharedValue(numColumnsProp || 2);
   const transitionProgress = useSharedValue(0);
   const isPinching = useSharedValue(false);
-  const hasTriggeredHaptic = useSharedValue(false);
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const gridOpacity = useSharedValue(1);
-  const toastOpacity = useSharedValue(0);
   const hasTransitionCardsShared = useSharedValue(false);
 
   const pendingTargetScrollYRef = useRef(0);
@@ -771,7 +796,6 @@ export function MasonryFlashList<T = any>({
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
   const [transitionToCols, setTransitionToCols] = useState(numColumnsProp || 2);
-  const [toastText, setToastText] = useState<string | null>(null);
 
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
@@ -915,21 +939,6 @@ export function MasonryFlashList<T = any>({
     [updateSlotsFromY, isTransitioning],
   );
 
-  const triggerHaptic = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  }, []);
-
-  const showColumnToast = useCallback((cols: number) => {
-    const label = cols === 1 ? '1 COLUMN' : `${cols} COLUMNS`;
-    setToastText(label);
-    toastOpacity.value = withTiming(1, { duration: 180 });
-    setTimeout(() => {
-      toastOpacity.value = withTiming(0, { duration: 250 }, () => {
-        runOnJS(setToastText)(null);
-      });
-    }, 1400);
-  }, [toastOpacity]);
-
   // ─── Native Scroll Dispatcher ──────────────────────────────────────────────
   const performScrollTo = useCallback((targetY: number) => {
     scrollYRef.current = targetY;
@@ -977,7 +986,6 @@ export function MasonryFlashList<T = any>({
     }
 
     onNumColumnsChange?.(targetCols);
-    showColumnToast(targetCols);
     // Keep the transition overlay cards visible for 110ms while React + native
     // mount and paint the new base grid views in native.
     // The base grid remains completely invisible (opacity 0) underneath during this time,
@@ -992,7 +1000,7 @@ export function MasonryFlashList<T = any>({
       transitionProgress.value = 0;
       pinchDirection.value = 0;
     }, 110);
-  }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity, hasTransitionCardsShared]);
+  }, [performScrollTo, onNumColumnsChange, transitionProgress, pinchDirection, gridOpacity, hasTransitionCardsShared]);
 
   const cancelTransition = useCallback(() => {
     gridOpacity.value = 1;
@@ -1066,7 +1074,6 @@ export function MasonryFlashList<T = any>({
         transitionProgress.value = 0;
         gridOpacity.value = 1;
         hasTransitionCardsShared.value = false;
-        hasTriggeredHaptic.value = false;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
@@ -1092,18 +1099,10 @@ export function MasonryFlashList<T = any>({
           const p = Math.max(0, Math.min(1, (0.97 - e.scale) / 0.20));
           transitionProgress.value = p;
           gridOpacity.value = interpolate(p, [0.08, 0.28], [1, 0], Extrapolation.CLAMP);
-          if (p >= 0.5 && !hasTriggeredHaptic.value) {
-            hasTriggeredHaptic.value = true;
-            runOnJS(triggerHaptic)();
-          }
         } else if (pinchDirection.value === -1) {
           const p = Math.max(0, Math.min(1, (e.scale - 1.03) / 0.20));
           transitionProgress.value = p;
           gridOpacity.value = interpolate(p, [0.08, 0.28], [1, 0], Extrapolation.CLAMP);
-          if (p >= 0.5 && !hasTriggeredHaptic.value) {
-            hasTriggeredHaptic.value = true;
-            runOnJS(triggerHaptic)();
-          }
         }
       })
       .onEnd((e) => {
@@ -1157,11 +1156,9 @@ export function MasonryFlashList<T = any>({
     pinchDirection,
     targetColsShared,
     transitionProgress,
-    hasTriggeredHaptic,
     currentColsShared,
     maxColumns,
     minColumns,
-    triggerHaptic,
     startInteractiveTransition,
     commitTransition,
     cancelTransition,
@@ -1179,11 +1176,6 @@ export function MasonryFlashList<T = any>({
       opacity: gridOpacity.value,
     };
   });
-
-  const toastAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: toastOpacity.value,
-    transform: [{ scale: 0.92 + toastOpacity.value * 0.08 }],
-  }));
 
   const renderedFooter = useMemo(() => {
     if (!ListFooterComponent) return null;
@@ -1291,7 +1283,7 @@ export function MasonryFlashList<T = any>({
       {/* ─── Apple Photos Flight Transition Overlay ─────────────────────── */}
       {transitionCards && (
         <View
-          style={StyleSheet.absoluteFillObject}
+          style={[StyleSheet.absoluteFillObject, { overflow: 'hidden' }]}
           pointerEvents="none"
           onLayout={() => {
             hasTransitionCardsShared.value = true;
@@ -1316,12 +1308,6 @@ export function MasonryFlashList<T = any>({
         </View>
       )}
 
-      {/* Floating column change feedback toast */}
-      {toastText && (
-        <Animated.View style={[styles.columnToast, toastAnimatedStyle]} pointerEvents="none">
-          <Text style={styles.columnToastText}>{toastText}</Text>
-        </Animated.View>
-      )}
     </View>
   );
 }
@@ -1367,27 +1353,5 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 999,
-  },
-  columnToast: {
-    position: 'absolute',
-    top: 96,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(18, 18, 18, 0.82)',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 20,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 6,
-    zIndex: 9999,
-  },
-  columnToastText: {
-    color: '#ffffff',
-    fontSize: 12,
-    letterSpacing: 1.2,
-    fontFamily: FONT_JOST_MEDIUM,
-    textTransform: 'uppercase',
   },
 });
