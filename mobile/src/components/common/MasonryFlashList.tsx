@@ -42,7 +42,17 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Layout constants:
 const HORIZONTAL_MARGIN = 9;
 const CARD_GAP = 6;
-const OVERSCAN = 1500;
+const OVERSCAN = 800;
+
+export const getPoolSizeForCols = (cols: number): number => {
+  switch (cols) {
+    case 1: return 32;
+    case 2: return 38;
+    case 3: return 44;
+    case 4: return 50;
+    case 5: default: return 54;
+  }
+};
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
@@ -71,16 +81,16 @@ interface SlotState {
   colItemIdx: number;
   top: number;
   height: number;
-  itemId?: string | number;
+  itemId?: string;
 }
 
-function getItemId<T>(item: ColumnItem<T> | undefined): string | number | undefined {
+function getItemId<T>(item: ColumnItem<T> | undefined): string | undefined {
   if (!item || item.item == null) return undefined;
   const raw: any = item.item;
-  if (raw.id !== undefined && raw.id !== null) return raw.id;
-  if (raw.uri) return raw.uri;
-  if (raw.r2Url) return raw.r2Url;
-  return item.originalIndex;
+  if (raw.id !== undefined && raw.id !== null) return String(raw.id);
+  if (raw.uri) return String(raw.uri);
+  if (raw.r2Url) return String(raw.r2Url);
+  return String(item.originalIndex);
 }
 
 export interface TransitionCardData<T> {
@@ -203,52 +213,74 @@ function assignSlots<T>(
   }
 
   const gridScrollY = Math.max(0, scrollY - headerHeight);
-  const minY = gridScrollY - OVERSCAN;
+  const minY = Math.max(0, gridScrollY - OVERSCAN);
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
+  const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
 
-  const visibleSet = new Set<number>();
+  // 1. Gather all items in visible window, tracking which are directly on-screen:
+  const visibleIndices: number[] = [];
+  const onScreenIndices = new Set<number>();
+
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
     if (topY + height >= minY && topY <= maxY) {
-      visibleSet.add(i);
+      visibleIndices.push(i);
+      if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
+        onScreenIndices.add(i);
+      }
     }
   }
 
-  const next = prevSlots.slice();
+  const visibleSet = new Set<number>(visibleIndices);
+
+  // 2. Clone previous slots, ensuring length equals poolSize:
+  const next: SlotState[] = prevSlots.slice(0, poolSize);
+  while (next.length < poolSize) {
+    next.push({ colItemIdx: -1, top: -30000, height: 0, itemId: undefined });
+  }
+
   const occupied = new Set<number>();
-  const free: number[] = [];
+  const freeSlotIndices: number[] = [];
 
   for (let s = 0; s < next.length; s++) {
-    const { colItemIdx, itemId } = next[s];
+    const slot = next[s];
+    const { colItemIdx, itemId } = slot;
     if (
       colItemIdx >= 0 &&
+      colItemIdx < items.length &&
       visibleSet.has(colItemIdx) &&
-      getItemId(items[colItemIdx]) === itemId
+      String(getItemId(items[colItemIdx])) === String(itemId)
     ) {
       occupied.add(colItemIdx);
       const currentItem = items[colItemIdx];
-      if (next[s].top !== currentItem.topY || next[s].height !== currentItem.height) {
+      if (slot.top !== currentItem.topY || slot.height !== currentItem.height) {
         next[s] = {
           colItemIdx,
           top: currentItem.topY,
           height: currentItem.height,
-          itemId,
+          itemId: String(itemId),
         };
       }
     } else {
-      free.push(s);
+      freeSlotIndices.push(s);
     }
   }
 
+  // 3. Find unassigned visible items:
   const unassigned: number[] = [];
-  for (let i = 0; i < items.length; i++) {
-    if (visibleSet.has(i) && !occupied.has(i)) {
-      unassigned.push(i);
+  for (const idx of visibleIndices) {
+    if (!occupied.has(idx)) {
+      unassigned.push(idx);
     }
   }
 
-  const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
+  // Sort unassigned: items directly on screen come first, then sort by proximity to viewport center
   unassigned.sort((a, b) => {
+    const aOnScreen = onScreenIndices.has(a);
+    const bOnScreen = onScreenIndices.has(b);
+    if (aOnScreen && !bOnScreen) return -1;
+    if (!aOnScreen && bOnScreen) return 1;
+
     const itemA = items[a];
     const itemB = items[b];
     const centerA = itemA.topY + itemA.height / 2;
@@ -256,32 +288,43 @@ function assignSlots<T>(
     return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
   });
 
+  // 4. Assign free slots to unassigned items:
   let fi = 0;
   for (const itemIdx of unassigned) {
-    if (fi >= free.length) break;
-    const slotIdx = free[fi++];
+    if (fi >= freeSlotIndices.length) break;
+    const slotIdx = freeSlotIndices[fi++];
     const newItem = items[itemIdx];
     const newTop = newItem.topY;
     const newH   = newItem.height;
-    const newId  = getItemId(newItem);
+    const newId  = String(getItemId(newItem) ?? itemIdx);
     const prev   = next[slotIdx];
 
-    if (prev.colItemIdx !== itemIdx || prev.top !== newTop || prev.height !== newH || prev.itemId !== newId) {
+    if (prev.colItemIdx !== itemIdx || prev.top !== newTop || prev.height !== newH || String(prev.itemId) !== newId) {
       next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId };
     }
   }
 
-  while (fi < free.length) {
-    const slotIdx = free[fi++];
+  // Park any leftover free slots off-screen:
+  while (fi < freeSlotIndices.length) {
+    const slotIdx = freeSlotIndices[fi++];
     if (next[slotIdx].colItemIdx !== -1) {
       next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined };
     }
   }
 
-  for (let s = 0; s < next.length; s++) {
-    if (next[s] !== prevSlots[s]) return next;
+  // Return unchanged reference if no slot modified:
+  if (prevSlots.length === next.length) {
+    let hasDiff = false;
+    for (let s = 0; s < next.length; s++) {
+      if (next[s] !== prevSlots[s]) {
+        hasDiff = true;
+        break;
+      }
+    }
+    if (!hasDiff) return prevSlots;
   }
-  return prevSlots;
+
+  return next;
 }
 
 function computeAllColumnSlots<T>(
@@ -289,15 +332,16 @@ function computeAllColumnSlots<T>(
   scrollY: number,
   poolSize: number,
   headerHeight: number,
+  prevAllSlots?: SlotState[][],
 ): SlotState[][] {
   if (!layout || !layout.columns) return [];
-  return layout.columns.map((col) => {
-    const base: SlotState[] = Array.from({ length: poolSize }, (): SlotState => ({
-      colItemIdx: -1,
-      top: -30000,
-      height: 0,
-      itemId: undefined,
-    }));
+  return layout.columns.map((col, cIdx) => {
+    const prevColSlots = (prevAllSlots && prevAllSlots[cIdx]) || [];
+    const base: SlotState[] = prevColSlots.length === poolSize
+      ? prevColSlots
+      : Array.from({ length: poolSize }, (_, i): SlotState => (
+          prevColSlots[i] || { colItemIdx: -1, top: -30000, height: 0, itemId: undefined }
+        ));
     return assignSlots(col.items, scrollY, base, poolSize, headerHeight);
   });
 }
@@ -583,18 +627,29 @@ const AnimatingCard = React.memo(function AnimatingCard({
 }: AnimatingCardProps) {
   const animatedStyle = useAnimatedStyle(() => {
     const p = progress.value;
-    const x = interpolate(p, [0, 1], [card.startX, card.endX]);
-    const y = interpolate(p, [0, 1], [card.startY, card.endY]);
-    const w = interpolate(p, [0, 1], [card.startW, card.endW]);
-    const h = interpolate(p, [0, 1], [card.startH, card.endH]);
+    const curW = interpolate(p, [0, 1], [card.startW, card.endW]);
+    const curH = interpolate(p, [0, 1], [card.startH, card.endH]);
+    const curX = interpolate(p, [0, 1], [card.startX, card.endX]);
+    const curY = interpolate(p, [0, 1], [card.startY, card.endY]);
+
+    const scaleX = card.startW > 0 ? curW / card.startW : 1;
+    const scaleY = card.startH > 0 ? curH / card.startH : 1;
+    const translateX = (curX - card.startX) + (curW - card.startW) / 2;
+    const translateY = (curY - card.startY) + (curH - card.startH) / 2;
     const opacity = interpolate(p, [0, 1], [card.startOpacity, card.endOpacity]);
 
     return {
       position: 'absolute',
-      left: x,
-      top: y,
-      width: w,
-      height: h,
+      left: card.startX,
+      top: card.startY,
+      width: card.startW,
+      height: card.startH,
+      transform: [
+        { translateX },
+        { translateY },
+        { scaleX },
+        { scaleY },
+      ],
       opacity,
       overflow: 'hidden',
     };
@@ -728,7 +783,7 @@ export function MasonryFlashList<T = any>({
   }, [numColumnsProp, minColumns, maxColumns, currentCols, isTransitioning]);
 
   const poolSize = useMemo(() => {
-    return Math.min(50, Math.max(16, Math.ceil(80 / currentCols)));
+    return getPoolSizeForCols(currentCols);
   }, [currentCols]);
 
   const [measuredHeroHeight, setMeasuredHeroHeight] = useState<number>(() => {
@@ -757,6 +812,7 @@ export function MasonryFlashList<T = any>({
   const lastUpdateRef = useRef(0);
   const lastImpressionCheckRef = useRef(0);
   const endReachedFiredRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   const [columnSlots, setColumnSlots] = useState<SlotState[][]>(() => {
     return computeAllColumnSlots(layout, 0, poolSize, headerHeight);
@@ -766,8 +822,9 @@ export function MasonryFlashList<T = any>({
   useEffect(() => {
     layoutRef.current = layout;
     dataRef.current = data;
+    if (isTransitioningRef.current) return;
     const y = scrollYRef.current;
-    const newSlots = computeAllColumnSlots(layout, y, poolSize, headerHeight);
+    const newSlots = computeAllColumnSlots(layout, y, poolSize, headerHeight, columnSlotsRef.current);
     setColumnSlots(newSlots);
     columnSlotsRef.current = newSlots;
   }, [layout, poolSize, headerHeight, data]);
@@ -910,22 +967,30 @@ export function MasonryFlashList<T = any>({
     }
 
     gridOpacity.value = 1;
-    setTransitionCards(null);
-    setIsTransitioning(false);
-    setIsPinchingState(false);
-    transitionProgress.value = 0;
-    pinchDirection.value = 0;
     onNumColumnsChange?.(targetCols);
     showColumnToast(targetCols);
+
+    // Keep the transition overlay cards visible for 70ms while React mounts the new base grid views:
+    setTimeout(() => {
+      setTransitionCards(null);
+      setIsTransitioning(false);
+      isTransitioningRef.current = false;
+      setIsPinchingState(false);
+      transitionProgress.value = 0;
+      pinchDirection.value = 0;
+    }, 70);
   }, [performScrollTo, onNumColumnsChange, showColumnToast, transitionProgress, pinchDirection, gridOpacity]);
 
   const cancelTransition = useCallback(() => {
     gridOpacity.value = 1;
-    setTransitionCards(null);
-    setIsTransitioning(false);
-    setIsPinchingState(false);
-    transitionProgress.value = 0;
-    pinchDirection.value = 0;
+    setTimeout(() => {
+      setTransitionCards(null);
+      setIsTransitioning(false);
+      isTransitioningRef.current = false;
+      setIsPinchingState(false);
+      transitionProgress.value = 0;
+      pinchDirection.value = 0;
+    }, 70);
   }, [gridOpacity, transitionProgress, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
@@ -941,7 +1006,7 @@ export function MasonryFlashList<T = any>({
     const currentHeaderHeight = headerHeightRef.current;
     const currentLayout = layoutRef.current;
     const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
-    const targetPool = Math.min(50, Math.max(16, Math.ceil(80 / targetCols)));
+    const targetPool = getPoolSizeForCols(targetCols);
 
     // PINCH ANCHOR: Compute targetScrollY based on the exact photo under (focalX, focalY)
     const targetScrollY = computeFocalAnchoredScrollY(
@@ -972,8 +1037,8 @@ export function MasonryFlashList<T = any>({
     setTransitionCards(cards);
     setTransitionToCols(targetCols);
     setIsTransitioning(true);
-    gridOpacity.value = 0;
-  }, [currentCols, minColumns, maxColumns, scrollSharedValue, gridOpacity]);
+    isTransitioningRef.current = true;
+  }, [currentCols, minColumns, maxColumns, scrollSharedValue]);
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
@@ -1012,6 +1077,7 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value === 1) {
           const p = Math.max(0, Math.min(1, (1 - e.scale) / 0.22));
           transitionProgress.value = p;
+          gridOpacity.value = interpolate(p, [0, 0.08], [1, 0]);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
@@ -1019,6 +1085,7 @@ export function MasonryFlashList<T = any>({
         } else if (pinchDirection.value === -1) {
           const p = Math.max(0, Math.min(1, (e.scale - 1) / 0.22));
           transitionProgress.value = p;
+          gridOpacity.value = interpolate(p, [0, 0.08], [1, 0]);
           if (p >= 0.5 && !hasTriggeredHaptic.value) {
             hasTriggeredHaptic.value = true;
             runOnJS(triggerHaptic)();
@@ -1046,6 +1113,7 @@ export function MasonryFlashList<T = any>({
             });
           } else {
             // Cancel transition: animate back to 0:
+            gridOpacity.value = withTiming(1, { duration: 180 });
             transitionProgress.value = withTiming(0, {
               duration: 180,
               easing: Easing.bezier(0.25, 1, 0.5, 1),

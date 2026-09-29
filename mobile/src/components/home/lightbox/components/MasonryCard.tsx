@@ -65,8 +65,8 @@ export const MasonryCard = React.memo(function MasonryCard({
     : (blurhash ? { blurhash, width: 32, height: 32 } : undefined);
 
   const effectivePriority = typeof isHighPriority === 'boolean'
-    ? (isHighPriority ? "high" : "low")
-    : (index < 10 ? "high" : "low");
+    ? (isHighPriority ? "high" : "normal")
+    : (index < 30 ? "high" : "normal");
 
   const isVideo =
     !!img?.isVideo ||
@@ -122,10 +122,9 @@ export const MasonryCard = React.memo(function MasonryCard({
           contentFit="cover"
           priority={effectivePriority}
           cachePolicy="memory-disk"
-          recyclingKey={String(cardId)}
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={Platform.OS === 'android' ? 0 : 50}
+          transition={0}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}

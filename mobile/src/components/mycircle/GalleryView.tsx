@@ -2084,16 +2084,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return activeList;
   }, [activeList, isLoading, isTabLoading]);
 
-  const { column0, column1 } = useMemo(() => {
-    const col0: { item: any; originalIndex: number }[] = [];
-    const col1: { item: any; originalIndex: number }[] = [];
-    displayData.forEach((item: any, idx: number) => {
-      if (idx % 2 === 0) col0.push({ item, originalIndex: idx });
-      else col1.push({ item, originalIndex: idx });
-    });
-    return { column0: col0, column1: col1 };
-  }, [displayData]);
-
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
 
