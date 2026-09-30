@@ -766,6 +766,8 @@ export function MasonryFlashList<T = any>({
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const targetColsShared = useSharedValue(numColumnsProp || 2);
   const gridOpacity = useSharedValue(1);
+  const overlayOpacity = useSharedValue(1);
+  const isOverlayMountedShared = useSharedValue(false);
 
   // ─── Component State ───────────────────────────────────────────────────────
   const [currentCols, setCurrentCols] = useState<number>(() => {
@@ -871,42 +873,91 @@ export function MasonryFlashList<T = any>({
   }, [mainScrollRef, scrollSharedValue]);
 
   // ─── Interactive Column Flight Handlers ─────────────────────────────────────
-  const commitTransition = useCallback((targetCols: number) => {
-    const targetScrollY = pendingTargetScrollYRef.current;
-    const targetSlots = pendingTargetSlotsRef.current;
-    const targetLayout = pendingTargetLayoutRef.current;
-
-    if (targetLayout && targetSlots) {
-      performScrollTo(targetScrollY);
-      setCurrentCols(targetCols);
-      setColumnSlots(targetSlots);
-      columnSlotsRef.current = targetSlots;
-      layoutRef.current = targetLayout;
-    }
-
-    onNumColumnsChange?.(targetCols);
-
-    // Keep the transition overlay cards visible for 80ms while native mounts recycled views
-    setTimeout(() => {
-      gridOpacity.value = 1;
-      setTransitionCards(null);
-      setIsTransitioning(false);
-      isTransitioningRef.current = false;
-      setIsPinchingState(false);
-      transitionProgress.value = 0;
-      pinchDirection.value = 0;
-    }, 80);
-  }, [performScrollTo, onNumColumnsChange, transitionProgress, pinchDirection, gridOpacity]);
-
-  const cancelTransition = useCallback(() => {
-    gridOpacity.value = 1;
+  const finalizeCleanup = useCallback(() => {
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
+    overlayOpacity.value = 1;
     transitionProgress.value = 0;
     pinchDirection.value = 0;
-  }, [gridOpacity, transitionProgress, pinchDirection]);
+
+    // Guarantee base grid has fresh slots populated at settled position:
+    const curLayout = layoutRef.current;
+    if (curLayout && curLayout.columns && curLayout.columns.length > 0) {
+      const y = scrollYRef.current;
+      const pool = getPoolSizeForCols(curLayout.numColumns);
+      const h = headerHeightRef.current;
+      const slots = computeAllColumnSlots(curLayout, y, pool, h, columnSlotsRef.current);
+      setColumnSlots(slots);
+      columnSlotsRef.current = slots;
+    }
+  }, [overlayOpacity, transitionProgress, pinchDirection]);
+
+  const commitTransition = useCallback((targetCols: number) => {
+    const targetScrollY = pendingTargetScrollYRef.current;
+    const currentHeaderHeight = headerHeightRef.current;
+    const targetLayout = pendingTargetLayoutRef.current ?? buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+    const targetPool = getPoolSizeForCols(targetCols);
+
+    // Compute fresh target slots at exact targetScrollY:
+    const freshTargetSlots = computeAllColumnSlots(
+      targetLayout,
+      targetScrollY,
+      targetPool,
+      currentHeaderHeight,
+    );
+
+    performScrollTo(targetScrollY);
+    setCurrentCols(targetCols);
+    currentColsShared.value = targetCols;
+    setColumnSlots(freshTargetSlots);
+    columnSlotsRef.current = freshTargetSlots;
+    layoutRef.current = targetLayout;
+
+    onNumColumnsChange?.(targetCols);
+
+    // Unhide base grid underneath the overlay
+    isOverlayMountedShared.value = false;
+    gridOpacity.value = 1;
+
+    // Smoothly dissolve overlay so hand-off is 100% seamless without white flash
+    overlayOpacity.value = withTiming(0, {
+      duration: 160,
+      easing: Easing.out(Easing.quad),
+    }, () => {
+      runOnJS(finalizeCleanup)();
+    });
+
+    // Fallback safety timeout in case Reanimated callback drops:
+    setTimeout(() => {
+      finalizeCleanup();
+    }, 220);
+  }, [
+    performScrollTo,
+    onNumColumnsChange,
+    currentColsShared,
+    isOverlayMountedShared,
+    gridOpacity,
+    overlayOpacity,
+    finalizeCleanup,
+  ]);
+
+  const cancelTransition = useCallback(() => {
+    isOverlayMountedShared.value = false;
+    gridOpacity.value = 1;
+
+    overlayOpacity.value = withTiming(0, {
+      duration: 120,
+      easing: Easing.out(Easing.quad),
+    }, () => {
+      runOnJS(finalizeCleanup)();
+    });
+
+    setTimeout(() => {
+      finalizeCleanup();
+    }, 180);
+  }, [isOverlayMountedShared, gridOpacity, overlayOpacity, finalizeCleanup]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -970,6 +1021,8 @@ export function MasonryFlashList<T = any>({
         pinchDirection.value = 0;
         transitionProgress.value = 0;
         gridOpacity.value = 1;
+        isOverlayMountedShared.value = false;
+        overlayOpacity.value = 1;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
@@ -1046,6 +1099,8 @@ export function MasonryFlashList<T = any>({
     targetColsShared,
     transitionProgress,
     gridOpacity,
+    isOverlayMountedShared,
+    overlayOpacity,
     currentColsShared,
     maxColumns,
     minColumns,
@@ -1056,8 +1111,18 @@ export function MasonryFlashList<T = any>({
 
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
+    if (!isOverlayMountedShared.value) {
+      return { opacity: 1 };
+    }
     return {
       opacity: gridOpacity.value,
+    };
+  });
+
+  const overlayAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: overlayOpacity.value,
     };
   });
 
@@ -1166,9 +1231,16 @@ export function MasonryFlashList<T = any>({
 
       {/* ─── Physical Side-Entry & Column Reflow Overlay ─────────────────── */}
       {transitionCards && (
-        <View
-          style={[StyleSheet.absoluteFillObject, { overflow: 'hidden' }]}
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFillObject,
+            { overflow: 'hidden' },
+            overlayAnimatedStyle,
+          ]}
           pointerEvents="none"
+          onLayout={() => {
+            isOverlayMountedShared.value = true;
+          }}
         >
           {transitionCards.map((card) => (
             <AnimatingCard
@@ -1186,7 +1258,7 @@ export function MasonryFlashList<T = any>({
               {renderStickyHeader()}
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       )}
 
     </View>
