@@ -205,7 +205,9 @@ function assignSlots<T>(
     return prevSlots;
   }
 
-  const gridScrollY = Math.max(0, scrollY - headerHeight);
+  const safeScrollY = Number.isFinite(scrollY) ? Math.max(0, scrollY) : 0;
+  const safeHeader = Number.isFinite(headerHeight) ? Math.max(0, headerHeight) : 0;
+  const gridScrollY = Math.max(0, safeScrollY - safeHeader);
   const minY = Math.max(0, gridScrollY - OVERSCAN);
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
   const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
@@ -406,20 +408,28 @@ function computeFocalAnchoredScrollY<T>(
   currentLayout: MasonryLayout<T>,
   targetLayout: MasonryLayout<T>,
 ): number {
-  const contentY = currentScrollY + screenFocalY - headerHeight;
+  const safeScrollY = Number.isFinite(currentScrollY) ? Math.max(0, currentScrollY) : 0;
+  const safeHeader = Number.isFinite(headerHeight) ? Math.max(0, headerHeight) : 0;
+  const safeScreenH = Number.isFinite(screenHeight) ? screenHeight : SCREEN_HEIGHT;
+  const safeFocalX = Number.isFinite(focalX) ? focalX : SCREEN_WIDTH / 2;
+  const safeFocalY = Number.isFinite(screenFocalY) ? screenFocalY : SCREEN_HEIGHT / 2;
+
+  if (!currentLayout || !targetLayout) return safeScrollY;
+
+  const contentY = safeScrollY + safeFocalY - safeHeader;
   if (contentY < 0) {
-    return currentScrollY;
+    return safeScrollY;
   }
 
-  const anchorItem = findFocalAnchorItem(currentLayout, currentScrollY, headerHeight, focalX, screenFocalY);
+  const anchorItem = findFocalAnchorItem(currentLayout, safeScrollY, safeHeader, safeFocalX, safeFocalY);
   if (!anchorItem) {
-    return currentScrollY;
+    return safeScrollY;
   }
 
   // Anchor item's center Y in current layout:
   const anchorItemCenterY = anchorItem.topY + anchorItem.height / 2;
   // Its exact screen Y coordinate:
-  const anchorItemScreenY = headerHeight + anchorItemCenterY - currentScrollY;
+  const anchorItemScreenY = safeHeader + anchorItemCenterY - safeScrollY;
 
   // Find same item in target layout:
   const itemId = getItemId(anchorItem);
@@ -441,15 +451,16 @@ function computeFocalAnchoredScrollY<T>(
   }
 
   if (!targetItem) {
-    return currentScrollY;
+    return safeScrollY;
   }
 
   // Align targetItem so its center lands at the EXACT SAME anchorItemScreenY:
   const targetItemCenterY = targetItem.topY + targetItem.height / 2;
-  const desiredScrollY = headerHeight + targetItemCenterY - anchorItemScreenY;
-  const maxScroll = Math.max(0, targetLayout.maxHeight + headerHeight - screenHeight);
+  const desiredScrollY = safeHeader + targetItemCenterY - anchorItemScreenY;
+  const maxScroll = Math.max(0, targetLayout.maxHeight + safeHeader - safeScreenH);
 
-  return Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
+  const finalScrollY = Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
+  return Number.isFinite(finalScrollY) ? finalScrollY : safeScrollY;
 }
 
 // ─── Apple Photos Canvas Zoom Freeze Snapshot Builder ─────────────────────────
@@ -813,32 +824,36 @@ export function MasonryFlashList<T = any>({
 
   // ─── Native Scroll Dispatcher ──────────────────────────────────────────────
   const performScrollTo = useCallback((targetY: number) => {
-    scrollYRef.current = targetY;
+    if (!Number.isFinite(targetY)) return;
+    const safeY = Math.max(0, Math.round(targetY));
+    scrollYRef.current = safeY;
     if (scrollSharedValue) {
-      scrollSharedValue.value = targetY;
+      scrollSharedValue.value = safeY;
     }
     try {
       if (mainScrollRef?.current) {
         if (typeof (mainScrollRef.current as any).scrollTo === 'function') {
-          (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+          (mainScrollRef.current as any).scrollTo({ y: safeY, animated: false });
+        } else if (typeof (mainScrollRef.current as any).scrollToOffset === 'function') {
+          (mainScrollRef.current as any).scrollToOffset({ offset: safeY, animated: false });
         } else {
           runOnUI((y: number) => {
             'worklet';
             scrollTo(mainScrollRef, 0, y, false);
-          })(targetY);
+          })(safeY);
         }
       } else {
         runOnUI((y: number) => {
           'worklet';
           scrollTo(mainScrollRef, 0, y, false);
-        })(targetY);
+        })(safeY);
       }
     } catch (_e) {
       try {
         runOnUI((y: number) => {
           'worklet';
           scrollTo(mainScrollRef, 0, y, false);
-        })(targetY);
+        })(safeY);
       } catch (_e2) {}
     }
   }, [mainScrollRef, scrollSharedValue]);
@@ -853,6 +868,17 @@ export function MasonryFlashList<T = any>({
     gridScale.value = 1.0;
     overlayScale.value = 1.0;
     overlayOpacity.value = 1.0;
+
+    // Force-recompute active slots at the settled scroll position to guarantee cards are painted:
+    const curLayout = layoutRef.current;
+    if (curLayout && curLayout.columns && curLayout.columns.length > 0) {
+      const y = scrollYRef.current;
+      const pool = getPoolSizeForCols(curLayout.numColumns);
+      const h = headerHeightRef.current;
+      const slots = computeAllColumnSlots(curLayout, y, pool, h, columnSlotsRef.current);
+      setColumnSlots(slots);
+      columnSlotsRef.current = slots;
+    }
   }, [canvasScale, gridScale, overlayScale, overlayOpacity]);
 
   const startCommitTransition = useCallback((
@@ -917,6 +943,11 @@ export function MasonryFlashList<T = any>({
     }, () => {
       runOnJS(finalizeTransition)();
     });
+
+    // Safety fallback: ensure transition ALWAYS finalizes even if Reanimated callback drops:
+    setTimeout(() => {
+      finalizeTransition();
+    }, 280);
   }, [
     performScrollTo,
     onNumColumnsChange,
@@ -961,24 +992,26 @@ export function MasonryFlashList<T = any>({
         canvasScale.value = Math.max(0.55, Math.min(1.85, s));
         gridScale.value = canvasScale.value;
       })
-      .onEnd((e) => {
+      .onEnd((_e) => {
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
 
         const curScale = canvasScale.value;
         const cols = currentColsShared.value;
+        const fx = focalXShared.value;
+        const fy = focalYShared.value;
 
         // Scale < 0.88 -> Zoom Out (increase columns, e.g. 2 -> 3)
         // Scale > 1.15 -> Zoom In (decrease columns, e.g. 3 -> 2)
         if (curScale < 0.88 && cols < maxColumns) {
           const targetCols = cols + 1;
           const targetRatio = cols / targetCols;
-          runOnJS(startCommitTransition)(targetCols, e.focalX, e.focalY, targetRatio);
+          runOnJS(startCommitTransition)(targetCols, fx, fy, targetRatio);
         } else if (curScale > 1.15 && cols > minColumns) {
           const targetCols = cols - 1;
           const targetRatio = cols / targetCols;
-          runOnJS(startCommitTransition)(targetCols, e.focalX, e.focalY, targetRatio);
+          runOnJS(startCommitTransition)(targetCols, fx, fy, targetRatio);
         } else {
           // Cancelled pinch: spring back smoothly to 1.0
           gridScale.value = withSpring(1.0, { damping: 22, stiffness: 260 }, () => {
@@ -1012,7 +1045,10 @@ export function MasonryFlashList<T = any>({
     'worklet';
     const s = gridScale.value;
     if (!isPinching.value && s === 1) {
-      return { opacity: 1 };
+      return {
+        transform: [{ scale: 1 }],
+        opacity: 1,
+      };
     }
 
     const curScrollY = scrollSharedValue?.value ?? 0;
