@@ -541,60 +541,33 @@ function buildSideTransitionCards<T>(
     });
   } else {
     // ─── ZOOM IN (e.g. 3 -> 2 columns):
-    // Target is toLayout (2 cols).
+    // Active layout is fromLayout (3 cols).
     // Columns 0 & 1 expand from 3-col width to 2-col width.
-    // Column 2 (from fromLayout) slides off to the right edge and fades!
-    toLayout.columns.forEach((col, cIdx) => {
-      const endX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+    // Column 2 slides off to the right edge and fades!
+    // Each photo in fromLayout appears exactly once — ZERO duplicate cards or duplicate keys!
+    fromLayout.columns.forEach((col, cIdx) => {
+      const isExitingColumn = cIdx >= toLayout.numColumns;
       const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+      const startW = fromLayout.colWidth;
 
-      col.items.forEach((item) => {
-        const endY = headerHeight + item.topY - toScrollY;
-        const endW = toLayout.colWidth;
-        const endH = item.height;
-
-        if (endY + endH < screenMinY || endY > screenMaxY) {
-          return;
-        }
-
-        const id = getItemId(item) ?? `${cIdx}-${item.originalIndex}`;
-
-        // Surviving column: starts at 3-col width and expands to 2-col width
-        cards.push({
-          id,
-          item: item.item,
-          originalIndex: item.originalIndex,
-          targetCol: cIdx,
-          startX,
-          startY: endY,
-          startW: fromLayout.colWidth,
-          startH: endH,
-          startOpacity: 1,
-          endX,
-          endY,
-          endW,
-          endH,
-          endOpacity: 1,
-        });
-      });
-    });
-
-    // Exiting columns (e.g. Column 2): slide out to the right edge
-    for (let cIdx = toLayout.numColumns; cIdx < fromLayout.columns.length; cIdx++) {
-      const col = fromLayout.columns[cIdx];
-      if (!col) continue;
-      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+      // Surviving columns expand to toLayout.colWidth; exiting columns slide off-screen to the right
+      const endX = isExitingColumn
+        ? SCREEN_WIDTH + 16
+        : HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+      const endW = isExitingColumn
+        ? fromLayout.colWidth
+        : toLayout.colWidth;
+      const endOpacity = isExitingColumn ? 0 : 1;
 
       col.items.forEach((item) => {
         const startY = headerHeight + item.topY - fromScrollY;
-        const startW = fromLayout.colWidth;
         const startH = item.height;
 
         if (startY + startH < screenMinY || startY > screenMaxY) {
           return;
         }
 
-        const id = getItemId(item) ?? `exit-${cIdx}-${item.originalIndex}`;
+        const id = getItemId(item) ?? `${cIdx}-${item.originalIndex}`;
 
         cards.push({
           id,
@@ -606,14 +579,14 @@ function buildSideTransitionCards<T>(
           startW,
           startH,
           startOpacity: 1,
-          endX: SCREEN_WIDTH + 16,
+          endX,
           endY: startY,
-          endW: startW,
+          endW,
           endH: startH,
-          endOpacity: 0,
+          endOpacity,
         });
       });
-    }
+    });
   }
 
   return cards;
@@ -1242,9 +1215,9 @@ export function MasonryFlashList<T = any>({
             isOverlayMountedShared.value = true;
           }}
         >
-          {transitionCards.map((card) => (
+          {transitionCards.map((card, idx) => (
             <AnimatingCard
-              key={`trans-${card.id}`}
+              key={`trans-${card.targetCol}-${card.id}-${card.originalIndex}-${idx}`}
               card={card}
               progress={transitionProgress}
               renderItem={renderItem}
