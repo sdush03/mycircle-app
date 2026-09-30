@@ -536,14 +536,14 @@ const FreezeOverlay = React.memo(function FreezeOverlay({
     const s = scale.value;
     const fx = focalX.value;
     const fy = focalY.value;
+    const tx = (1 - s) * (fx - SCREEN_WIDTH / 2);
+    const ty = (1 - s) * (fy - SCREEN_HEIGHT / 2);
 
     return {
       transform: [
-        { translateX: fx },
-        { translateY: fy },
+        { translateX: tx },
+        { translateY: ty },
         { scale: s },
-        { translateX: -fx },
-        { translateY: -fy },
       ],
       opacity: opacity.value,
     };
@@ -666,7 +666,6 @@ export function MasonryFlashList<T = any>({
 }: MasonryFlashListProps<T>) {
   // ─── Canvas Zoom Shared Values ─────────────────────────────────────────────
   const canvasScale = useSharedValue(1);
-  const gridScale = useSharedValue(1);
   const overlayScale = useSharedValue(1);
   const overlayOpacity = useSharedValue(1);
   const focalXShared = useSharedValue(SCREEN_WIDTH / 2);
@@ -865,7 +864,6 @@ export function MasonryFlashList<T = any>({
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     canvasScale.value = 1.0;
-    gridScale.value = 1.0;
     overlayScale.value = 1.0;
     overlayOpacity.value = 1.0;
 
@@ -879,7 +877,7 @@ export function MasonryFlashList<T = any>({
       setColumnSlots(slots);
       columnSlotsRef.current = slots;
     }
-  }, [canvasScale, gridScale, overlayScale, overlayOpacity]);
+  }, [canvasScale, overlayScale, overlayOpacity]);
 
   const startCommitTransition = useCallback((
     targetCols: number,
@@ -927,10 +925,10 @@ export function MasonryFlashList<T = any>({
     layoutRef.current = targetLayout;
     onNumColumnsChange?.(targetCols);
 
-    // 3. Reset base grid scale back to 1.0 (FreezeOverlay carries the scaled view on top)
+    // 3. Reset viewport scale back to 1.0 (FreezeOverlay carries the scaled view on top)
     overlayScale.value = canvasScale.value;
     overlayOpacity.value = 1.0;
-    gridScale.value = 1.0;
+    canvasScale.value = 1.0;
 
     // 4. Smoothly animate freeze overlay to target ratio while cross-fading out:
     overlayScale.value = withTiming(targetRatio, {
@@ -955,7 +953,6 @@ export function MasonryFlashList<T = any>({
     scrollSharedValue,
     finalizeTransition,
     canvasScale,
-    gridScale,
     overlayScale,
     overlayOpacity,
     currentColsShared,
@@ -964,6 +961,7 @@ export function MasonryFlashList<T = any>({
   // ─── Real-Time GPU Canvas Zoom Pinch Gesture ────────────────────────────────
   const pinchGesture = useMemo(() => {
     return Gesture.Pinch()
+      .cancelsTouchesInView(true)
       .enabled(enablePinchToZoom && !isTransitioning)
       .onStart((e) => {
         'worklet';
@@ -972,7 +970,6 @@ export function MasonryFlashList<T = any>({
         focalXShared.value = e.focalX;
         focalYShared.value = e.focalY;
         canvasScale.value = 1.0;
-        gridScale.value = 1.0;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
@@ -990,7 +987,6 @@ export function MasonryFlashList<T = any>({
         }
 
         canvasScale.value = Math.max(0.55, Math.min(1.85, s));
-        gridScale.value = canvasScale.value;
       })
       .onEnd((_e) => {
         'worklet';
@@ -1014,8 +1010,7 @@ export function MasonryFlashList<T = any>({
           runOnJS(startCommitTransition)(targetCols, fx, fy, targetRatio);
         } else {
           // Cancelled pinch: spring back smoothly to 1.0
-          gridScale.value = withSpring(1.0, { damping: 22, stiffness: 260 }, () => {
-            canvasScale.value = 1.0;
+          canvasScale.value = withSpring(1.0, { damping: 22, stiffness: 260 }, () => {
             runOnJS(setIsPinchingState)(false);
           });
         }
@@ -1034,36 +1029,32 @@ export function MasonryFlashList<T = any>({
     focalXShared,
     focalYShared,
     canvasScale,
-    gridScale,
     currentColsShared,
     maxColumns,
     minColumns,
     startCommitTransition,
   ]);
 
-  const gridAnimatedStyle = useAnimatedStyle(() => {
+  const viewportAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
-    const s = gridScale.value;
+    const s = canvasScale.value;
     if (!isPinching.value && s === 1) {
       return {
         transform: [{ scale: 1 }],
-        opacity: 1,
       };
     }
 
-    const curScrollY = scrollSharedValue?.value ?? 0;
-    const relX = focalXShared.value - HORIZONTAL_MARGIN;
-    const relY = curScrollY + focalYShared.value - headerHeightShared.value;
+    const fx = focalXShared.value;
+    const fy = focalYShared.value;
+    const tx = (1 - s) * (fx - SCREEN_WIDTH / 2);
+    const ty = (1 - s) * (fy - SCREEN_HEIGHT / 2);
 
     return {
       transform: [
-        { translateX: relX },
-        { translateY: relY },
+        { translateX: tx },
+        { translateY: ty },
         { scale: s },
-        { translateX: -relX },
-        { translateY: -relY },
       ],
-      opacity: 1,
     };
   });
 
@@ -1081,7 +1072,7 @@ export function MasonryFlashList<T = any>({
   return (
     <View style={styles.container}>
       <GestureDetector gesture={pinchGesture}>
-        <Animated.View style={styles.viewport}>
+        <Animated.View style={[styles.viewport, viewportAnimatedStyle]}>
           <Animated.ScrollView
             ref={mainScrollRef}
             onScroll={onScroll}
@@ -1124,7 +1115,7 @@ export function MasonryFlashList<T = any>({
             ) : null}
 
             {/* Child 2: Base Recycled Masonry Grid */}
-            <Animated.View style={[styles.gridRow, gridAnimatedStyle]}>
+            <View style={styles.gridRow}>
               {layout.columns.map((col, colIdx) => {
                 const isLastCol = colIdx === layout.columns.length - 1;
                 const slots = columnSlots[colIdx] || [];
@@ -1163,7 +1154,7 @@ export function MasonryFlashList<T = any>({
                   </View>
                 );
               })}
-            </Animated.View>
+            </View>
 
             {renderedFooter}
           </Animated.ScrollView>
