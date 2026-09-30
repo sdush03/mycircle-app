@@ -1009,8 +1009,11 @@ export function MasonryFlashList<T = any>({
           const targetRatio = cols / targetCols;
           runOnJS(startCommitTransition)(targetCols, fx, fy, targetRatio);
         } else {
-          // Cancelled pinch: spring back smoothly to 1.0
-          canvasScale.value = withSpring(1.0, { damping: 22, stiffness: 260 }, () => {
+          // Cancelled pinch: smoothly glide back to 1.0 with Apple ease-out (no bounce)
+          canvasScale.value = withTiming(1.0, {
+            duration: 180,
+            easing: Easing.bezier(0.25, 1, 0.5, 1),
+          }, () => {
             runOnJS(setIsPinchingState)(false);
           });
         }
