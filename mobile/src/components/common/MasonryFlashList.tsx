@@ -1329,9 +1329,11 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            targetP = Math.max(0, Math.min(0.85, (0.985 - e.scale) / 0.28));
+            // Pinch-in: scale goes from 0.985 (threshold) down to ~0.835 (full progress)
+            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.15));
           } else if (pinchDirection.value === -1) {
-            targetP = Math.max(0, Math.min(0.85, (e.scale - 1.015) / 0.28));
+            // Pinch-out: scale goes from 1.015 (threshold) up to ~1.165 (full progress)
+            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.15));
           }
 
           if (hasTransitionCardsShared.value) {
@@ -1356,9 +1358,12 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // Smoothly complete remaining flight to 1.0 (snappy 220ms) with elegant iOS curve:
+              // Smoothly complete remaining flight to 1.0
+              // Duration scales with how much is left — if user already dragged to 0.9, snap is instant
+              const remaining = 1 - currentP;
+              const duration = Math.max(60, Math.round(remaining * 220));
               transitionProgress.value = withTiming(1, {
-                duration: 220,
+                duration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, () => {
                 runOnJS(commitTransitionOnJS)(targetCols);

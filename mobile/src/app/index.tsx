@@ -4,8 +4,7 @@ import {
   View, 
   Text, 
   ScrollView, 
-  RefreshControl,
-  Image, 
+  RefreshControl, 
   Pressable, 
   Platform, 
   ActivityIndicator, 
@@ -218,6 +217,20 @@ export default function HomeScreen() {
                 return timeB - timeA;
               });
               setEvents(sorted);
+
+              // Pre-warm disk cache for both horizontal and vertical celebration covers
+              sorted.forEach((ev: any) => {
+                const covers = [
+                  ev.coverPhotoMobileUrl,
+                  ev.cover_photo_mobile_url,
+                  ev.coverPhotoUrl,
+                  ev.cover_photo_url,
+                  ev.coverPhotoSquareUrl,
+                  ev.coverUrl,
+                  ev.bannerUrl,
+                ].filter(Boolean);
+                covers.forEach((c) => ExpoImage.prefetch(c));
+              });
             }
           } catch (_) {}
         }
@@ -226,6 +239,11 @@ export default function HomeScreen() {
             const cachedStories = JSON.parse(storiesItem[1]);
             if (Array.isArray(cachedStories) && cachedStories.length > 0) {
               setWebsiteStories(cachedStories);
+              // Pre-warm disk cache for story covers (both horizontal and vertical)
+              cachedStories.forEach((s: any) => {
+                const covers = [s.cover_image_mobile_url, s.cover_image_url, s.grid_image_url].filter(Boolean);
+                covers.forEach((c) => ExpoImage.prefetch(c));
+              });
             }
           } catch (_) {}
         }
@@ -234,6 +252,11 @@ export default function HomeScreen() {
             const cachedFilms = JSON.parse(filmsItem[1]);
             if (Array.isArray(cachedFilms) && cachedFilms.length > 0) {
               setWebsiteFilms(cachedFilms);
+              // Pre-warm disk cache for film covers
+              cachedFilms.forEach((f: any) => {
+                const covers = [f.thumbnail_url, f.poster_url, f.cover_image_url, f.cover_image_mobile_url].filter(Boolean);
+                covers.forEach((c) => ExpoImage.prefetch(c));
+              });
             }
           } catch (_) {}
         }
@@ -281,6 +304,12 @@ export default function HomeScreen() {
             setWebsiteStories(storiesData);
             AsyncStorage.setItem('@mycircle_cached_website_stories', JSON.stringify(storiesData)).catch(() => {});
 
+            // Pre-warm disk cache for all story covers (both horizontal and vertical)
+            storiesData.forEach((s: any) => {
+              const covers = [s.cover_image_mobile_url, s.cover_image_url, s.grid_image_url].filter(Boolean);
+              covers.forEach((c) => ExpoImage.prefetch(c));
+            });
+
             // Background pre-fetch full story details for top stories so tapping them opens INSTANTLY
             storiesData.forEach(async (s: any) => {
               if (!s.slug) return;
@@ -310,6 +339,12 @@ export default function HomeScreen() {
           if (Array.isArray(filmsData) && filmsData.length > 0) {
             setWebsiteFilms(filmsData);
             AsyncStorage.setItem('@mycircle_cached_website_films', JSON.stringify(filmsData)).catch(() => {});
+
+            // Pre-warm disk cache for film covers
+            filmsData.forEach((f: any) => {
+              const covers = [f.thumbnail_url, f.poster_url, f.cover_image_url, f.cover_image_mobile_url].filter(Boolean);
+              covers.forEach((c) => ExpoImage.prefetch(c));
+            });
           }
         }
       } catch (e) {
@@ -322,6 +357,15 @@ export default function HomeScreen() {
           const inspoData = await inspoRes.json();
           if (Array.isArray(inspoData)) {
             setWebsiteInspirations(inspoData);
+
+            // Pre-warm disk cache for inspiration covers
+            inspoData.forEach((b: any) => {
+              const covers = [b.coverImageMobile, b.coverImage, b.images?.[0]].filter(Boolean);
+              covers.forEach((c) => {
+                const url = typeof c === 'string' ? c : c?.uri;
+                if (url) ExpoImage.prefetch(url);
+              });
+            });
           }
         }
       } catch (e) {
@@ -371,6 +415,20 @@ export default function HomeScreen() {
       });
       setEvents(sortedEvents);
       AsyncStorage.setItem('@mycircle_user_events_cache', JSON.stringify(sortedEvents)).catch(() => {});
+
+      // Pre-warm disk cache for both horizontal and vertical covers of user events
+      sortedEvents.forEach((ev: any) => {
+        const covers = [
+          ev.coverPhotoMobileUrl,
+          ev.cover_photo_mobile_url,
+          ev.coverPhotoUrl,
+          ev.cover_photo_url,
+          ev.coverPhotoSquareUrl,
+          ev.coverUrl,
+          ev.bannerUrl,
+        ].filter(Boolean);
+        covers.forEach((c) => ExpoImage.prefetch(c));
+      });
     } catch (err: any) {
       if (err?.response?.status === 401) {
         setEvents([]);
