@@ -222,6 +222,7 @@ const cardStyles = StyleSheet.create({
   masonryImage: {
     width: '100%',
     height: '100%',
+    backgroundColor: '#f2eee8',
   },
   heartOverlay: {
     position: 'absolute',

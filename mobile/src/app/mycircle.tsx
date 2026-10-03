@@ -96,7 +96,7 @@ export default function MyCircleScreen() {
 
   // 4. Base Screen: JoinEventView (All Celebrations screen) with overlays (matching FeaturedStoryView)
   return (
-    <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+    <View style={{ flex: 1, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }}>
       <JoinEventView onSuccess={() => {}} />
 
       {/* Passcode Modal overlay if passcode is required */}
@@ -121,7 +121,7 @@ export default function MyCircleScreen() {
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     justifyContent: 'center',
     alignItems: 'center',
   },

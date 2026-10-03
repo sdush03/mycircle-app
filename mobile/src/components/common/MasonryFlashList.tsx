@@ -718,7 +718,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       {card.uri ? (
         <Image
           source={{ uri: card.uri }}
-          style={StyleSheet.absoluteFillObject}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#f2eee8' }]}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={0}
@@ -823,6 +823,7 @@ export function MasonryFlashList<T = any>({
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const hasTransitionCardsShared = useSharedValue(false);
   const isTransitioningShared = useSharedValue(false);
+  const isScrollRestoringShared = useSharedValue(false);
 
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
@@ -849,6 +850,7 @@ export function MasonryFlashList<T = any>({
     return Math.max(minColumns, Math.min(maxColumns, numColumnsProp || 2));
   });
 
+  const [containerMinHeight, setContainerMinHeight] = useState<number>(0);
   const [isPinchingState, setIsPinchingState] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
@@ -857,8 +859,9 @@ export function MasonryFlashList<T = any>({
     setIsPinchingState(false);
     if (!isTransitioningRef.current) {
       isTransitioningShared.value = false;
+      isScrollRestoringShared.value = false;
     }
-  }, [isTransitioningShared]);
+  }, [isTransitioningShared, isScrollRestoringShared]);
 
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
@@ -1032,11 +1035,11 @@ export function MasonryFlashList<T = any>({
     () => scrollSharedValue?.value ?? 0,
     (y) => {
       'worklet';
-      if (!isPinching.value && !isTransitioning) {
+      if (!isPinching.value && !isTransitioningShared.value && !isScrollRestoringShared.value) {
         runOnJS(updateSlotsFromY)(y);
       }
     },
-    [updateSlotsFromY, isTransitioning],
+    [updateSlotsFromY],
   );
 
 
@@ -1066,6 +1069,7 @@ export function MasonryFlashList<T = any>({
       transitionWatchdogTimerRef.current = null;
     }
     pendingAutoCommitRef.current = null;
+    isScrollRestoringShared.value = false;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
@@ -1074,7 +1078,7 @@ export function MasonryFlashList<T = any>({
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isTransitioningShared, transitionProgress, pinchDirection]);
+  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
@@ -1083,12 +1087,14 @@ export function MasonryFlashList<T = any>({
 
     // 1. Immediately switch base grid state to target columns and slots:
     if (targetLayout && targetSlots) {
+      isScrollRestoringShared.value = true;
       pendingScrollRestorationRef.current = targetScrollY;
       currentColsShared.value = targetCols;
       setCurrentCols(targetCols);
       setColumnSlots(targetSlots);
       columnSlotsRef.current = targetSlots;
       layoutRef.current = targetLayout;
+      setContainerMinHeight(targetLayout.maxHeight + headerHeightRef.current);
 
       performScrollTo(targetScrollY);
       requestAnimationFrame(() => {
@@ -1096,7 +1102,11 @@ export function MasonryFlashList<T = any>({
       });
       setTimeout(() => {
         performScrollTo(targetScrollY);
-      }, 40);
+      }, 30);
+      setTimeout(() => {
+        performScrollTo(targetScrollY);
+        isScrollRestoringShared.value = false;
+      }, 80);
     }
 
     onNumColumnsChange?.(targetCols);
@@ -1105,7 +1115,7 @@ export function MasonryFlashList<T = any>({
     setTimeout(() => {
       finalizeCommit();
     }, 120);
-  }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared]);
+  }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared, isScrollRestoringShared]);
 
   commitTransitionRef.current = commitTransition;
 
@@ -1115,6 +1125,7 @@ export function MasonryFlashList<T = any>({
       transitionWatchdogTimerRef.current = null;
     }
     pendingAutoCommitRef.current = null;
+    isScrollRestoringShared.value = false;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
@@ -1123,7 +1134,7 @@ export function MasonryFlashList<T = any>({
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isTransitioningShared, transitionProgress, pinchDirection]);
+  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1134,13 +1145,13 @@ export function MasonryFlashList<T = any>({
       return;
     }
 
-    // Safety watchdog: guarantee the grid NEVER remains locked for more than 450ms
+    // Safety watchdog: guarantee the grid NEVER remains locked for more than 400ms
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
     }
     transitionWatchdogTimerRef.current = setTimeout(() => {
       finalizeCommit();
-    }, 450);
+    }, 400);
 
     const currentScrollY = scrollSharedValue ? scrollSharedValue.value : scrollYRef.current;
     const currentHeaderHeight = headerHeightRef.current;
@@ -1158,6 +1169,9 @@ export function MasonryFlashList<T = any>({
       currentLayout,
       targetLayout,
     );
+
+    // Immediately expand minHeight so iOS UIScrollView does not clamp targetScrollY:
+    setContainerMinHeight(Math.max(currentLayout.maxHeight, targetLayout.maxHeight) + currentHeaderHeight);
 
     // Build the interactive flight transition cards (progress 0 = currentLayout, progress 1 = targetLayout):
     const cards = buildTransitionCards(
@@ -1352,14 +1366,14 @@ export function MasonryFlashList<T = any>({
             style={styles.scrollView}
             contentContainerStyle={[
               styles.contentContainer,
-              { minHeight: layout.maxHeight + headerHeight },
+              { minHeight: Math.max(layout.maxHeight + headerHeight, containerMinHeight) },
             ]}
             onContentSizeChange={(_w, _h) => {
               if (pendingScrollRestorationRef.current !== null) {
                 const targetY = pendingScrollRestorationRef.current;
                 pendingScrollRestorationRef.current = null;
                 performScrollTo(targetY);
-                updateSlotsFromY(targetY, true);
+                isScrollRestoringShared.value = false;
               }
             }}
             refreshControl={refreshControl}
@@ -1452,7 +1466,11 @@ export function MasonryFlashList<T = any>({
       {/* ─── Apple Photos Flight Transition Overlay ─────────────────────── */}
       {transitionCards && (
         <Animated.View
-          style={[StyleSheet.absoluteFillObject, overlayAnimatedStyle]}
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: '#f2eee8' },
+            overlayAnimatedStyle,
+          ]}
           pointerEvents="none"
         >
           {transitionCards.map((card) => (
@@ -1462,13 +1480,6 @@ export function MasonryFlashList<T = any>({
               progress={transitionProgress}
             />
           ))}
-
-          {/* Keep sticky header crisp on top of flying cards */}
-          {renderStickyHeader && isScrolledPastHero ? (
-            <View style={styles.stickyHeaderOverlay} pointerEvents="none">
-              {renderStickyHeader()}
-            </View>
-          ) : null}
         </Animated.View>
       )}
 
@@ -1486,6 +1497,7 @@ const styles = StyleSheet.create({
   viewport: {
     flex: 1,
     overflow: 'hidden',
+    backgroundColor: '#f2eee8',
   },
   scrollView: {
     flex: 1,
@@ -1499,10 +1511,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginLeft: HORIZONTAL_MARGIN,
     marginRight: HORIZONTAL_MARGIN,
-    backgroundColor: 'transparent',
+    backgroundColor: '#f2eee8',
   },
   column: {
-    backgroundColor: 'transparent',
+    backgroundColor: '#f2eee8',
   },
   slot: {
     position: 'absolute',

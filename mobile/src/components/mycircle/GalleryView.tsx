@@ -364,6 +364,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const scrollY = useSharedValue(0);
   const scrollTargetY = useSharedValue(0);
   const isSmoothScrollingToTop = useSharedValue(false);
+  const isPinching = useSharedValue(false);
   const [isPast60Photos, setIsPast60Photos] = useState(false);
 
   const exactTouchPoint = Math.round(screenHeight * 0.70) - Math.round(insets.top + 45);
@@ -1596,15 +1597,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   // Left-Edge Pan Swipe Back Gesture
   const edgeSwipeGesture = Gesture.Pan()
+    .minPointers(1)
+    .maxPointers(1)
     .activeOffsetX(30)
     .failOffsetY([-25, 25])
     .onBegin((e) => {
       'worklet';
-      touchStartedOnLeftEdge.value = e.x <= 45 && !isLightboxOpen.value;
+      if (isLightboxOpen.value || isPinching.value) {
+        touchStartedOnLeftEdge.value = false;
+        return;
+      }
+      touchStartedOnLeftEdge.value = e.x <= 45;
     })
     .onUpdate((e) => {
       'worklet';
-      if (!touchStartedOnLeftEdge.value) return;
+      if (!touchStartedOnLeftEdge.value || isPinching.value) return;
       if (e.translationX > 0) {
         if (isCinemaShared.value) {
           cinemaSwipeX.value = e.translationX;
@@ -2295,7 +2302,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           styles.stickyHeaderContainer,
           {
             paddingTop: Math.max(insets.top + 4, 28),
-            backgroundColor: '#ffffff',
+            backgroundColor: '#f2eee8',
             borderBottomWidth: StyleSheet.hairlineWidth,
             borderBottomColor: '#e5e5ea',
           },
@@ -2368,6 +2375,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 numColumns={galleryColumns}
                 onNumColumnsChange={handleGalleryColumnsChange}
                 enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
+                isPinchingShared={isPinching}
                 minColumns={1}
                 maxColumns={5}
                 onScroll={scrollHandler}
@@ -2744,7 +2752,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 32,
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   subtitleText: {
     fontFamily: FONT_MONTSERRAT_REGULAR,
@@ -2856,7 +2864,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'transparent',
   },
   stickyHeaderContainer: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     zIndex: 10,
   },
   floatingHeaderContainer: {
@@ -2864,7 +2872,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e5e5ea',
     zIndex: 90,

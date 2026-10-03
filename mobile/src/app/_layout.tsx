@@ -343,9 +343,9 @@ function RootLayoutContent() {
     };
   });
 
-  // 1. Keep screen solid white matching native splash until fonts & stored auth are initialized (prevents black flicker)
+  // 1. Keep screen solid matching native splash until fonts & stored auth are initialized (prevents black flicker)
   if (!isReady || isLoading || !fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: '#ffffff' }} />;
+    return <View style={{ flex: 1, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }} />;
   }
 
   // 2. Render LoginView directly when unauthenticated (prevents underlying Home screen from mounting/glimpsing)
@@ -363,10 +363,10 @@ function RootLayoutContent() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Animated.View entering={FadeIn.duration(350)} style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      <Animated.View entering={FadeIn.duration(350)} style={{ flex: 1, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }}>
         {!isHeaderHidden && (
           <>
-            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
+            <StatusBar barStyle="dark-content" backgroundColor={eventSlug ? '#f2eee8' : '#ffffff'} translucent={false} />
             {/* Global Header — Centered Logo */}
             <View style={[styles.globalHeader, { height: headerHeight, paddingTop: topInset }]}>
               <ExpoImage
