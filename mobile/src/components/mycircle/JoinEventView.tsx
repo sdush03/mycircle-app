@@ -103,6 +103,21 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
           return timeB - timeA;
         });
         setUserEvents(sorted);
+
+        // Pre-warm disk cache for both horizontal and vertical celebration covers
+        sorted.forEach((ev: any) => {
+          const covers = [
+            ev.coverPhotoMobileUrl,
+            ev.cover_photo_mobile_url,
+            ev.coverPhotoUrl,
+            ev.cover_photo_url,
+            ev.coverPhotoSquareUrl,
+            ev.coverUrl,
+            ev.bannerUrl,
+          ].filter(Boolean);
+          covers.forEach((c) => Image.prefetch(c));
+        });
+
         // Smart background prefetch of top celebration so opening gallery is 0ms instant
         if (sorted.length > 0 && sorted[0].slug) {
           import('../../services/galleryPrefetch').then((m) => {
@@ -151,6 +166,20 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
             return timeB - timeA;
           });
           setUserEvents(sorted);
+
+          // Pre-warm disk cache for both horizontal and vertical celebration covers
+          sorted.forEach((ev: any) => {
+            const covers = [
+              ev.coverPhotoMobileUrl,
+              ev.cover_photo_mobile_url,
+              ev.coverPhotoUrl,
+              ev.cover_photo_url,
+              ev.coverPhotoSquareUrl,
+              ev.coverUrl,
+              ev.bannerUrl,
+            ].filter(Boolean);
+            covers.forEach((c) => Image.prefetch(c));
+          });
         }
       }
     } catch (e) {
@@ -293,7 +322,14 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
                     delayLongPress={450}
                   >
                     {coverUrl ? (
-                      <Image source={{ uri: coverUrl }} style={styles.cardCoverImage} contentFit="cover" />
+                      <Image
+                        source={{ uri: coverUrl }}
+                        style={styles.cardCoverImage}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        priority="high"
+                        transition={150}
+                      />
                     ) : (
                       <View style={styles.cardFallbackImage}>
                         <Text style={{ fontSize: 28, color: '#a07850' }}>✨</Text>

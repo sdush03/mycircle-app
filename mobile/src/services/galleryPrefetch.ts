@@ -136,10 +136,20 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
     if (mappedFavorites.length > 0) tabCache['MY FAVOURITES'] = mappedFavorites;
     if (mappedCinema.length > 0) tabCache['CINEMA'] = mappedCinema;
 
-    // Pre-warm native image cache for cover photo
+    // Pre-warm native image cache for BOTH vertical and horizontal cover photos
     if (details) {
-      const cover = details.coverPhotoMobileUrl || details.coverPhotoUrl || details.coverUrl || details.bannerUrl;
-      if (cover) Image.prefetch(cover);
+      const covers = [
+        details.coverPhotoMobileUrl,
+        details.cover_photo_mobile_url,
+        details.cover_photo_mobile,
+        details.coverPhotoUrl,
+        details.cover_photo_url,
+        details.coverPhoto,
+        details.coverPhotoSquareUrl,
+        details.coverUrl,
+        details.bannerUrl,
+      ].filter(Boolean);
+      covers.forEach((c) => Image.prefetch(c));
     }
 
     // Pre-warm native image cache for top 12 photo thumbnails

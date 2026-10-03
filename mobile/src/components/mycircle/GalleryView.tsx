@@ -264,6 +264,24 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
     return {};
   });
+
+  // Pre-warm disk cache for both horizontal and vertical covers of this event
+  useEffect(() => {
+    if (cachedInitial?.details) {
+      const d = cachedInitial.details;
+      const covers = [
+        d.coverPhotoMobileUrl,
+        d.cover_photo_mobile_url,
+        d.coverPhotoUrl,
+        d.cover_photo_url,
+        d.coverPhotoSquareUrl,
+        d.coverUrl,
+        d.bannerUrl,
+      ].filter(Boolean);
+      covers.forEach((c) => Image.prefetch(c));
+    }
+  }, [cachedInitial]);
+
   const [isTabLoading, setIsTabLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>(() => {
@@ -686,8 +704,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (eventRes.data) {
           fetchedEventDetails = eventRes.data;
           setEventDetailsData(eventRes.data);
-          const c = eventRes.data.coverPhotoMobileUrl || eventRes.data.coverPhotoUrl || eventRes.data.coverUrl || eventRes.data.bannerUrl;
-          if (c) Image.prefetch(c);
+          const covers = [
+            eventRes.data.coverPhotoMobileUrl,
+            eventRes.data.cover_photo_mobile_url,
+            eventRes.data.coverPhotoUrl,
+            eventRes.data.cover_photo_url,
+            eventRes.data.coverPhotoSquareUrl,
+            eventRes.data.coverUrl,
+            eventRes.data.bannerUrl,
+          ].filter(Boolean);
+          covers.forEach((c) => Image.prefetch(c));
         }
       } catch (e: any) {
         if (e?.response?.status === 404) {
@@ -941,8 +967,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // 1. Process Event Details
       if (bundleData.event) {
         setEventDetailsData(bundleData.event);
-        const c = bundleData.event.coverPhotoMobileUrl || bundleData.event.coverPhotoUrl || bundleData.event.coverUrl || bundleData.event.bannerUrl;
-        if (c) Image.prefetch(c);
+        const covers = [
+          bundleData.event.coverPhotoMobileUrl,
+          bundleData.event.cover_photo_mobile_url,
+          bundleData.event.coverPhotoUrl,
+          bundleData.event.cover_photo_url,
+          bundleData.event.coverPhotoSquareUrl,
+          bundleData.event.coverUrl,
+          bundleData.event.bannerUrl,
+        ].filter(Boolean);
+        covers.forEach((c) => Image.prefetch(c));
       }
 
       // 2. Process Guest Access Level (Partial vs Full)

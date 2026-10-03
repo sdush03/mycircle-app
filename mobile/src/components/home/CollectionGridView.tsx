@@ -5,7 +5,6 @@ import {
   Text,
   Modal,
   ScrollView,
-  Image,
   Pressable,
   Dimensions,
   BackHandler,

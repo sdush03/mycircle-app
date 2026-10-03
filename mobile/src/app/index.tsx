@@ -927,7 +927,14 @@ export default function HomeScreen() {
                     onPress={() => handleEventCardClick(ev)}
                   >
                     {coverUrl ? (
-                      <Image source={{ uri: coverUrl }} style={styles.myCircleCardImage} />
+                      <ExpoImage
+                        source={{ uri: coverUrl }}
+                        style={styles.myCircleCardImage}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        priority="high"
+                        transition={150}
+                      />
                     ) : (
                       <View style={styles.myCircleCardFallback}>
                         <Text style={{ fontSize: 32, color: '#a07850' }}>✨</Text>
@@ -981,7 +988,13 @@ export default function HomeScreen() {
                     // Open liked photo preview
                   }}
                 >
-                  <Image source={{ uri: photo.r2Url || photo.url }} style={styles.likedImage} />
+                  <ExpoImage
+                    source={{ uri: photo.r2Url || photo.url }}
+                    style={styles.likedImage}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={150}
+                  />
                   <View style={styles.likedBadge}>
                     <Text style={styles.likedBadgeText}>❤️</Text>
                   </View>
@@ -1018,7 +1031,14 @@ export default function HomeScreen() {
                     onPress={() => handleStoryPress(story)}
                   >
                     {story.coverImage ? (
-                      <Image source={story.coverImage} style={styles.featuredImage} />
+                      <ExpoImage
+                        source={story.coverImage}
+                        style={styles.featuredImage}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        priority="high"
+                        transition={150}
+                      />
                     ) : (
                       <View style={[styles.featuredImage, { backgroundColor: '#18181b' }]} />
                     )}
@@ -1106,7 +1126,13 @@ export default function HomeScreen() {
                         }}
                       >
                         {coverSrc ? (
-                          <Image source={coverSrc} style={styles.filmImage} />
+                          <ExpoImage
+                            source={typeof coverSrc === 'string' ? { uri: coverSrc } : coverSrc}
+                            style={styles.filmImage}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={150}
+                          />
                         ) : (
                           <View style={[styles.filmImage, { backgroundColor: '#18181b' }]} />
                         )}
@@ -1182,9 +1208,12 @@ export default function HomeScreen() {
                     }}
                   >
                     {card.coverImage ? (
-                      <Image
+                      <ExpoImage
                         source={typeof card.coverImage === 'string' ? { uri: card.coverImage } : card.coverImage}
                         style={styles.vibeCardImage}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        transition={150}
                       />
                     ) : (
                       <View style={[styles.vibeCardImage, { backgroundColor: '#18181b' }]} />
@@ -1251,7 +1280,13 @@ export default function HomeScreen() {
                     }}
                   >
                     {card.coverImage ? (
-                      <Image source={card.coverImage} style={styles.vibeCardImage} />
+                      <ExpoImage
+                        source={card.coverImage}
+                        style={styles.vibeCardImage}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        transition={150}
+                      />
                     ) : (
                       <View style={[styles.vibeCardImage, { backgroundColor: '#18181b' }]} />
                     )}

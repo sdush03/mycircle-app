@@ -1329,11 +1329,11 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            // Pinch-in: scale goes from 0.985 (threshold) down to ~0.835 (full progress)
-            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.15));
+            // Pinch-in: scale goes from 0.985 (threshold) down to ~0.765 (full progress)
+            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.22));
           } else if (pinchDirection.value === -1) {
-            // Pinch-out: scale goes from 1.015 (threshold) up to ~1.165 (full progress)
-            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.15));
+            // Pinch-out: scale goes from 1.015 (threshold) up to ~1.235 (full progress)
+            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.22));
           }
 
           if (hasTransitionCardsShared.value) {
