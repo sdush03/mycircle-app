@@ -30,6 +30,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   Easing,
+  useAnimatedRef,
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -576,7 +577,7 @@ function buildTransitionCards<T>(
           endY = clampedEndY;
           endW = targetEndW;
           endH = targetEndH;
-          endOpacity = 1;
+          endOpacity = 0;
         }
       } else {
         // Fallback: fade out in place
@@ -828,6 +829,11 @@ export function MasonryFlashList<T = any>({
   const isGestureAcceptedShared = useSharedValue(false);
   // Smooth cross-fade shared value — drives the overlay→grid handoff opacity transition
   const overlayOpacity = useSharedValue(0);
+  const fromScrollYShared = useSharedValue(0);
+  const targetScrollYShared = useSharedValue(0);
+
+  const internalScrollRef = useAnimatedRef<Animated.ScrollView>();
+  const effectiveScrollRef = (mainScrollRef || internalScrollRef) as any;
 
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
@@ -931,6 +937,7 @@ export function MasonryFlashList<T = any>({
       hasTransitionCardsShared.value = false;
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
+      overlayOpacity.value = 0;
     }
   }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity, isFlightAnimatingShared]);
 
@@ -1095,6 +1102,33 @@ export function MasonryFlashList<T = any>({
   );
 
 
+  // ─── Real-Time Scroll Synchronization During Pinch Transition ─────────────
+  useAnimatedReaction(
+    () => {
+      'worklet';
+      if (
+        hasTransitionCardsShared.value &&
+        (isTransitioningShared.value || isFlightAnimatingShared.value)
+      ) {
+        const fromY = fromScrollYShared.value;
+        const toY = targetScrollYShared.value;
+        const p = transitionProgress.value;
+        return fromY + p * (toY - fromY);
+      }
+      return null;
+    },
+    (interpolatedY, prevY) => {
+      'worklet';
+      if (interpolatedY !== null && interpolatedY !== prevY && effectiveScrollRef) {
+        scrollTo(effectiveScrollRef, 0, interpolatedY, false);
+        if (scrollSharedValue) {
+          scrollSharedValue.value = interpolatedY;
+        }
+      }
+    },
+    [effectiveScrollRef, scrollSharedValue],
+  );
+
   // ─── Native Scroll Dispatcher ──────────────────────────────────────────────
   const performScrollTo = useCallback((targetY: number) => {
     scrollYRef.current = targetY;
@@ -1102,17 +1136,17 @@ export function MasonryFlashList<T = any>({
       scrollSharedValue.value = targetY;
     }
     try {
-      if (mainScrollRef?.current && typeof (mainScrollRef.current as any).scrollTo === 'function') {
-        (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+      if (effectiveScrollRef?.current && typeof (effectiveScrollRef.current as any).scrollTo === 'function') {
+        (effectiveScrollRef.current as any).scrollTo({ y: targetY, animated: false });
       }
     } catch (_e) {}
     try {
       runOnUI((y: number) => {
         'worklet';
-        scrollTo(mainScrollRef, 0, y, false);
+        scrollTo(effectiveScrollRef, 0, y, false);
       })(targetY);
     } catch (_e2) {}
-  }, [mainScrollRef, scrollSharedValue]);
+  }, [effectiveScrollRef, scrollSharedValue]);
 
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   // Internal cleanup — called AFTER the cross-fade animation finishes
@@ -1128,7 +1162,8 @@ export function MasonryFlashList<T = any>({
     hasTransitionCardsShared.value = false;
     isFlightAnimatingShared.value = false;
     transitionProgress.value = 0;
-  }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared]);
+    overlayOpacity.value = 0;
+  }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared, overlayOpacity]);
 
   const finalizeCommit = useCallback(() => {
     console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Starting overlay cross-fade (400ms)');
@@ -1213,8 +1248,10 @@ export function MasonryFlashList<T = any>({
     pinchDirection.value = 0;
     // Reset expanded container height (was inflated for the transition target):
     setContainerMinHeight(0);
+    // Restore scroll position to fromScrollY:
+    performScrollTo(fromScrollYShared.value);
     // Refresh slots so grid is correct after cancel:
-    updateSlotsFromY(scrollYRef.current, true);
+    updateSlotsFromY(fromScrollYShared.value, true);
     // Cross-fade overlay out, then clean up cards:
     overlayOpacity.value = withTiming(0, {
       duration: 150,
@@ -1226,7 +1263,7 @@ export function MasonryFlashList<T = any>({
         runOnJS(cleanupAfterTransition)();
       }
     });
-  }, [isTransitioningShared, isScrollRestoringShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
+  }, [isTransitioningShared, isScrollRestoringShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition, performScrollTo, fromScrollYShared]);
   cancelTransitionRef.current = cancelTransition;
 
   const startInteractiveTransition = useCallback((
@@ -1259,9 +1296,8 @@ export function MasonryFlashList<T = any>({
       }
     }, 1500); // 6000ms for slow-mo testing
 
-    // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
-    // scrollSharedValue.value on JS thread which can be stale across the bridge.
-    const currentScrollY = scrollYRef.current;
+    // Use fromScrollYShared (recorded on UI thread at pinch start) or scrollYRef fallback
+    const currentScrollY = Math.max(0, fromScrollYShared.value || scrollYRef.current);
     const currentHeaderHeight = headerHeightRef.current;
     const currentLayout = layoutRef.current;
 
@@ -1289,6 +1325,9 @@ export function MasonryFlashList<T = any>({
       targetLayout,
     );
 
+    fromScrollYShared.value = currentScrollY;
+    targetScrollYShared.value = targetScrollY;
+
     // Immediately expand minHeight so iOS UIScrollView does not clamp targetScrollY:
     setContainerMinHeight(Math.max(currentLayout.maxHeight, targetLayout.maxHeight) + currentHeaderHeight);
 
@@ -1312,7 +1351,7 @@ export function MasonryFlashList<T = any>({
     transitionCardsRef.current = cards;
     setIsTransitioning(true);
     isTransitioningRef.current = true;
-  }, [currentCols, minColumns, maxColumns, finalizeCommit]);
+  }, [currentCols, minColumns, maxColumns, finalizeCommit, fromScrollYShared, targetScrollYShared]);
   startInteractiveTransitionRef.current = startInteractiveTransition;
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
@@ -1327,8 +1366,8 @@ export function MasonryFlashList<T = any>({
       .enabled(enablePinchToZoom)
       .cancelsTouchesInView(true);
 
-    if (mainScrollRef) {
-      g = (g as any).simultaneousWithExternalGesture(mainScrollRef);
+    if (effectiveScrollRef) {
+      g = (g as any).simultaneousWithExternalGesture(effectiveScrollRef);
     }
 
     return g
@@ -1349,6 +1388,10 @@ export function MasonryFlashList<T = any>({
         pinchDirection.value = 0;
         transitionProgress.value = 0;
         hasTransitionCardsShared.value = false;
+        overlayOpacity.value = 0;
+        const startY = scrollSharedValue ? Math.max(0, scrollSharedValue.value) : 0;
+        fromScrollYShared.value = startY;
+        targetScrollYShared.value = startY;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
@@ -1473,8 +1516,9 @@ export function MasonryFlashList<T = any>({
       });
   }, [
     enablePinchToZoom,
-    mainScrollRef,
+    effectiveScrollRef,
     isPinchingShared,
+    scrollSharedValue,
     // All of these are useSharedValue — their identity is STABLE across renders:
     isPinching,
     isTransitioningShared,
@@ -1487,6 +1531,9 @@ export function MasonryFlashList<T = any>({
     targetColsShared,
     transitionProgress,
     currentColsShared,
+    fromScrollYShared,
+    targetScrollYShared,
+    overlayOpacity,
     maxColumns,
     minColumns,
     // All of these are stable useCallback with [] deps — identity NEVER changes:
@@ -1509,12 +1556,12 @@ export function MasonryFlashList<T = any>({
 
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
-    // Grid is ALWAYS visible — the overlay covers it from above when overlayOpacity > 0.
-    // When overlay is not yet visible (JS still computing), apply a scale + opacity effect
-    // driven directly by the pinch gesture on the UI thread — gives instant feedback.
-    if (overlayOpacity.value > 0.5) {
-      // Overlay is covering — just show grid at normal size underneath
-      return { opacity: 1, transform: [{ scale: 1 }] };
+    if (hasTransitionCardsShared.value) {
+      // Cross-fade handoff: grid opacity is inverse of overlay opacity
+      return {
+        opacity: 1 - overlayOpacity.value,
+        transform: [{ scale: 1 }],
+      };
     }
     if (pinchDirection.value !== 0 && !hasTransitionCardsShared.value) {
       // Pinch detected but overlay not yet ready — show immediate visual feedback
@@ -1544,7 +1591,7 @@ export function MasonryFlashList<T = any>({
       <GestureDetector gesture={pinchGesture}>
         <View style={styles.viewport}>
           <Animated.ScrollView
-            ref={mainScrollRef}
+            ref={effectiveScrollRef}
             onScroll={onScroll}
             scrollEventThrottle={scrollEventThrottle}
             showsVerticalScrollIndicator={false}
@@ -1656,7 +1703,7 @@ export function MasonryFlashList<T = any>({
         <Animated.View
           style={[
             StyleSheet.absoluteFillObject,
-            { backgroundColor: '#f2eee8' },
+            { backgroundColor: 'transparent' },
             overlayAnimatedStyle,
           ]}
           pointerEvents="none"
