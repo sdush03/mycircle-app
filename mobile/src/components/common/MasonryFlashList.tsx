@@ -960,7 +960,8 @@ export function MasonryFlashList<T = any>({
 
   // ─── Slot Updates from Scroll Worklet ──────────────────────────────────────
   const updateSlotsFromY = useCallback((y: number, force: boolean = false) => {
-    if (isPinchingState || isTransitioning) return;
+    // Use the ref guard — it's always synchronously correct unlike React state (isPinchingState, isTransitioning)
+    if (isTransitioningRef.current) return;
 
     scrollYRef.current = y;
     const now = Date.now();
@@ -1029,7 +1030,7 @@ export function MasonryFlashList<T = any>({
         onEndReached();
       }
     }
-  }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize, isPinchingState, isTransitioning]);
+  }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize]);
 
   useAnimatedReaction(
     () => scrollSharedValue?.value ?? 0,
@@ -1073,12 +1074,14 @@ export function MasonryFlashList<T = any>({
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
+    isTransitioningRef.current = false;
     setTransitionCards(null);
     setIsTransitioning(false);
-    isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection]);
+    // Force slot refresh at current scroll position so correct photos show immediately:
+    updateSlotsFromY(scrollYRef.current, true);
+  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
@@ -1096,25 +1099,24 @@ export function MasonryFlashList<T = any>({
       layoutRef.current = targetLayout;
       setContainerMinHeight(targetLayout.maxHeight + headerHeightRef.current);
 
+      // Scroll to target position — first call is immediate, second lands after React commits
       performScrollTo(targetScrollY);
       requestAnimationFrame(() => {
         performScrollTo(targetScrollY);
-      });
-      setTimeout(() => {
-        performScrollTo(targetScrollY);
-      }, 30);
-      setTimeout(() => {
-        performScrollTo(targetScrollY);
         isScrollRestoringShared.value = false;
-      }, 80);
+      });
     }
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Seamless hand-off: keep overlay visible for 120ms while native base grid mounts and paints
-    setTimeout(() => {
-      finalizeCommit();
-    }, 120);
+    // 2. Seamless hand-off: keep overlay visible for exactly 2 paint frames (double RAF)
+    // so native base grid has committed at least 1 full layout + paint cycle before revealing.
+    // This eliminates the white flash that a fixed timer could race against on slower devices.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        finalizeCommit();
+      });
+    });
   }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared, isScrollRestoringShared]);
 
   commitTransitionRef.current = commitTransition;
@@ -1129,31 +1131,40 @@ export function MasonryFlashList<T = any>({
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
+    isTransitioningRef.current = false;
     setTransitionCards(null);
     setIsTransitioning(false);
-    isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection]);
+    // Refresh slots so grid is correct if cancel brings user back to original layout:
+    updateSlotsFromY(scrollYRef.current, true);
+  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
     focalX: number,
     focalY: number,
   ) => {
+    // Guard: reject if invalid cols, same cols, or already mid-transition on JS thread
     if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
       return;
     }
+    if (isTransitioningRef.current) {
+      // Already mid-transition — don't clobber pending state; watchdog will clean up
+      return;
+    }
 
-    // Safety watchdog: guarantee the grid NEVER remains locked for more than 400ms
+    // Safety watchdog: guarantee the grid NEVER remains locked for more than 500ms
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
     }
     transitionWatchdogTimerRef.current = setTimeout(() => {
       finalizeCommit();
-    }, 400);
+    }, 500);
 
-    const currentScrollY = scrollSharedValue ? scrollSharedValue.value : scrollYRef.current;
+    // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
+    // scrollSharedValue.value on JS thread which can be stale across the bridge.
+    const currentScrollY = scrollYRef.current;
     const currentHeaderHeight = headerHeightRef.current;
     const currentLayout = layoutRef.current;
     const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
@@ -1191,7 +1202,7 @@ export function MasonryFlashList<T = any>({
     setTransitionCards(cards);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
-  }, [currentCols, minColumns, maxColumns, scrollSharedValue, finalizeCommit]);
+  }, [currentCols, minColumns, maxColumns, finalizeCommit]);
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
@@ -1369,11 +1380,12 @@ export function MasonryFlashList<T = any>({
               { minHeight: Math.max(layout.maxHeight + headerHeight, containerMinHeight) },
             ]}
             onContentSizeChange={(_w, _h) => {
+              // Fallback: if RAF-based restoration already cleared pendingScrollRestorationRef,
+              // this no-ops. If somehow the RAF fired before native content grew (unlikely), this catches it.
               if (pendingScrollRestorationRef.current !== null) {
                 const targetY = pendingScrollRestorationRef.current;
                 pendingScrollRestorationRef.current = null;
                 performScrollTo(targetY);
-                isScrollRestoringShared.value = false;
               }
             }}
             refreshControl={refreshControl}
@@ -1520,7 +1532,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    backgroundColor: 'transparent',
+    backgroundColor: '#f2eee8',
     overflow: 'hidden',
   },
   stickyHeaderOverlay: {

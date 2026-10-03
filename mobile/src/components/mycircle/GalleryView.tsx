@@ -269,11 +269,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (!eventSlug) return 'HIGHLIGHTS';
     if (cachedInitial) {
-      if (cachedInitial.hasFullAccess === false) {
-        return 'HIGHLIGHTS';
-      }
       const hlCount = cachedInitial.details?.tabCounts?.['HIGHLIGHTS'] ?? 0;
       if (hlCount > 0) return 'HIGHLIGHTS';
+      if (cachedInitial.hasFullAccess === false) {
+        return 'MY PHOTOS';
+      }
+      return 'ALL';
     }
     return 'HIGHLIGHTS';
   });
@@ -950,10 +951,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
 
       // Security Fundamental 3: Guest was demoted from Full to Partial!
-      // Drop ALL tab, switch immediately to HIGHLIGHTS
+      // Drop ALL tab, switch immediately to HIGHLIGHTS (if highlights > 0) else MY PHOTOS
       if (oldFullAccess === true && newFullAccess === false) {
-        console.log(`[MYCIRCLE ACCESS 🔒] Access downgraded from Full to Partial. Switching to HIGHLIGHTS.`);
-        setActiveTab('HIGHLIGHTS');
+        console.log(`[MYCIRCLE ACCESS 🔒] Access downgraded from Full to Partial. Switching tab.`);
+        const hlCount = bundleData.event?.tabCounts?.['HIGHLIGHTS'] ?? 0;
+        setActiveTab(hlCount > 0 ? 'HIGHLIGHTS' : 'MY PHOTOS');
       }
 
       // 3. Process Photos
@@ -1305,11 +1307,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [allPhotos, tabCache]);
 
   const highlightsCount = React.useMemo(() => {
-    if (eventDetails?.tabCounts?.['HIGHLIGHTS']) {
-      return eventDetails.tabCounts['HIGHLIGHTS'];
-    }
-    return allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS').length;
-  }, [allPhotos, eventDetails?.tabCounts]);
+    const rawCount = typeof eventDetails?.tabCounts?.['HIGHLIGHTS'] === 'number'
+      ? eventDetails.tabCounts['HIGHLIGHTS']
+      : (typeof eventDetails?.tabCounts?.['highlights'] === 'number' ? eventDetails.tabCounts['highlights'] : 0);
+    const inTabCache = tabCache['HIGHLIGHTS']?.length || 0;
+    const inAllPhotos = allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS').length;
+    return Math.max(rawCount, inTabCache, inAllPhotos);
+  }, [allPhotos, tabCache, eventDetails?.tabCounts]);
 
   // Per-tab server loader (matching web 1:1)
   const fetchTabPhotos = useCallback(async (tabName: string) => {
@@ -1359,7 +1363,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       list.push('ALL');
     }
 
-    // 2. MY PHOTOS Tab (Always visible)
+    // 2. MY PHOTOS Tab (Always visible whether 0 or > 0)
     list.push('MY PHOTOS');
 
     // 3. MY FAVOURITES Tab (Only visible if favorites count > 0)
@@ -1369,13 +1373,27 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     // 4. Dynamic Ceremony/Event Tabs from eventDetails.tabs (from DB)
     const ceremonyTabsSet = new Set<string>();
-    // Guarantee HIGHLIGHTS is always present
-    ceremonyTabsSet.add('HIGHLIGHTS');
 
+    // Only include HIGHLIGHTS if highlightsCount > 0
+    if (highlightsCount > 0) {
+      ceremonyTabsSet.add('HIGHLIGHTS');
+    }
+
+    // Only include folders from eventDetails.tabs if count > 0
     if (Array.isArray(eventDetails?.tabs)) {
       eventDetails.tabs.forEach((t: string) => {
         if (t && typeof t === 'string' && t.trim().length > 0) {
-          ceremonyTabsSet.add(t.trim().toUpperCase());
+          const upper = t.trim().toUpperCase();
+          if (upper === 'HIGHLIGHTS') {
+            if (highlightsCount > 0) {
+              ceremonyTabsSet.add('HIGHLIGHTS');
+            }
+          } else {
+            const count = eventDetails?.tabCounts?.[upper] ?? eventDetails?.tabCounts?.[t.trim()] ?? 0;
+            if (count > 0) {
+              ceremonyTabsSet.add(upper);
+            }
+          }
         }
       });
     }
@@ -1383,9 +1401,20 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // Also include any unique tabNames found in loaded photos
     allPhotos.forEach((p: any) => {
       if (p.tabName && typeof p.tabName === 'string' && p.tabName.trim().length > 0) {
-        ceremonyTabsSet.add(p.tabName.trim().toUpperCase());
+        const upper = p.tabName.trim().toUpperCase();
+        if (upper === 'HIGHLIGHTS') {
+          if (highlightsCount > 0) {
+            ceremonyTabsSet.add('HIGHLIGHTS');
+          }
+        } else {
+          ceremonyTabsSet.add(upper);
+        }
       }
     });
+
+    if (tabCache['CINEMA'] && tabCache['CINEMA'].length > 0) {
+      ceremonyTabsSet.add('CINEMA');
+    }
 
     const allowedTabs: string[] = [];
     ceremonyTabsSet.forEach((tab) => {
@@ -1396,7 +1425,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
-    // Ensure HIGHLIGHTS is first, CINEMA is second, followed by all other ceremony tabs
+    // Ensure HIGHLIGHTS is first (if present), CINEMA is second, followed by all other ceremony tabs
     const orderedCeremony: string[] = [];
     if (allowedTabs.includes('HIGHLIGHTS')) orderedCeremony.push('HIGHLIGHTS');
     if (allowedTabs.includes('CINEMA')) orderedCeremony.push('CINEMA');
@@ -1418,7 +1447,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
 
     return list;
-  }, [hasFullAccess, favoritesCount, eventDetails?.tabs, allPhotos, isBrideOrGroom]);
+  }, [hasFullAccess, favoritesCount, highlightsCount, eventDetails?.tabs, eventDetails?.tabCounts, allPhotos, tabCache, isBrideOrGroom]);
 
   const scrollToY = useCallback((targetY: number) => {
     try {
@@ -1654,36 +1683,34 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
   // Exact Landing Tab Rules:
-  // - If highlights are present -> land on HIGHLIGHTS (for both Full Access & Partial Access)
-  // - If highlights are not present:
+  // - If highlights > 0 -> land on HIGHLIGHTS (for both Full Access & Partial Access)
+  // - If highlights <= 0:
   //     - Full Access -> ALL
   //     - Partial Access -> MY PHOTOS
   useEffect(() => {
     if (!isLoading && !hasSetLandingTabRef.current) {
       hasSetLandingTabRef.current = true;
-      const hasHighlights =
-        highlightsCount > 0 ||
-        (tabCache['HIGHLIGHTS'] && tabCache['HIGHLIGHTS'].length > 0) ||
-        allPhotos.some((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS');
-
-      if (hasHighlights) {
+      if (highlightsCount > 0) {
         setActiveTab('HIGHLIGHTS');
       } else if (hasFullAccess) {
         setActiveTab('ALL');
       } else {
-        const targetTab = availableTabs.includes('MY PHOTOS') ? 'MY PHOTOS' : (availableTabs[0] || 'HIGHLIGHTS');
-        setActiveTab(targetTab);
+        setActiveTab('MY PHOTOS');
       }
     }
-  }, [isLoading, hasFullAccess, highlightsCount, availableTabs, tabCache, allPhotos]);
+  }, [isLoading, hasFullAccess, highlightsCount]);
 
-  // Sanitize activeTab: Ensure partial access users never stay on 'ALL' if it's not in availableTabs
+  // Sanitize activeTab: Ensure users never stay on an unavailable tab (e.g. ALL for partial access, or HIGHLIGHTS if highlightsCount is 0)
   useEffect(() => {
-    if (!isLoading && availableTabs.length > 0 && !availableTabs.map(t => t.toUpperCase()).includes(activeTab.toUpperCase())) {
-      const fallbackTab = availableTabs.includes('HIGHLIGHTS') ? 'HIGHLIGHTS' : availableTabs[0];
+    if (!isLoading && availableTabs.length > 0 && !availableTabs.map((t) => t.toUpperCase()).includes(activeTab.toUpperCase())) {
+      const fallbackTab = (highlightsCount > 0 && availableTabs.includes('HIGHLIGHTS'))
+        ? 'HIGHLIGHTS'
+        : (hasFullAccess && availableTabs.includes('ALL')
+            ? 'ALL'
+            : (availableTabs.includes('MY PHOTOS') ? 'MY PHOTOS' : availableTabs[0]));
       setActiveTab(fallbackTab);
     }
-  }, [isLoading, availableTabs, activeTab]);
+  }, [isLoading, availableTabs, activeTab, highlightsCount, hasFullAccess]);
 
   // Screen Capture Protection:
   //   - Calls onScreenProtectionChange so _layout.tsx applies it to the main UIWindow (iOS)
