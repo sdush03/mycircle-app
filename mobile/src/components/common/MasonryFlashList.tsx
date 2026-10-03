@@ -29,8 +29,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  interpolate,
-  Extrapolation,
   Easing,
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
@@ -815,8 +813,6 @@ export function MasonryFlashList<T = any>({
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const hasTransitionCardsShared = useSharedValue(false);
   const isTransitioningShared = useSharedValue(false);
-  const isCommittingShared = useSharedValue(false);
-  const overlayOpacity = useSharedValue(1);
 
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
@@ -848,8 +844,6 @@ export function MasonryFlashList<T = any>({
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
       hasTransitionCardsShared.value = true;
-      overlayOpacity.value = 1;
-      isCommittingShared.value = false;
 
       // If user did a quick flick and lifted fingers before overlay finished mounting:
       if (pendingAutoCommitRef.current !== null) {
@@ -868,10 +862,8 @@ export function MasonryFlashList<T = any>({
       hasTransitionCardsShared.value = false;
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
-      overlayOpacity.value = 1;
-      isCommittingShared.value = false;
     }
-  }, [transitionCards, hasTransitionCardsShared, overlayOpacity, isCommittingShared, transitionProgress, commitTransitionOnJS]);
+  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -1030,17 +1022,15 @@ export function MasonryFlashList<T = any>({
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   const finalizeCommit = useCallback(() => {
     pendingAutoCommitRef.current = null;
-    isCommittingShared.value = false;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
-    overlayOpacity.value = 1;
     transitionProgress.value = 0;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [isCommittingShared, hasTransitionCardsShared, isTransitioningShared, overlayOpacity, transitionProgress, pinchDirection]);
+  }, [hasTransitionCardsShared, isTransitioningShared, transitionProgress, pinchDirection]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
@@ -1058,38 +1048,27 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Reveal base grid (100% visible) underneath the overlay cards:
-    isCommittingShared.value = true;
-
-    // 3. Keep overlay solid for 70ms while native base grid paints underneath,
-    //    then smoothly crossfade overlay out over 130ms for zero-flash seamless handoff:
+    // 2. Keep the transition overlay cards visible for 140ms while React + native
+    // mount and paint the new base grid views in native.
+    // Then cleanly swap in a single tick (NO crossfade, NO background ghost photo):
     setTimeout(() => {
-      overlayOpacity.value = withTiming(0, {
-        duration: 130,
-        easing: Easing.out(Easing.quad),
-      }, (finished) => {
-        if (finished) {
-          runOnJS(finalizeCommit)();
-        }
-      });
-    }, 70);
-  }, [performScrollTo, onNumColumnsChange, isCommittingShared, overlayOpacity, finalizeCommit]);
+      finalizeCommit();
+    }, 140);
+  }, [performScrollTo, onNumColumnsChange, finalizeCommit]);
 
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
     pendingAutoCommitRef.current = null;
-    isCommittingShared.value = false;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
-    overlayOpacity.value = 1;
     transitionProgress.value = 0;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [isCommittingShared, hasTransitionCardsShared, isTransitioningShared, overlayOpacity, transitionProgress, pinchDirection]);
+  }, [hasTransitionCardsShared, isTransitioningShared, transitionProgress, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1158,8 +1137,6 @@ export function MasonryFlashList<T = any>({
         focalYShared.value = e.focalY;
         pinchDirection.value = 0;
         transitionProgress.value = 0;
-        overlayOpacity.value = 1;
-        isCommittingShared.value = false;
         hasTransitionCardsShared.value = false;
         runOnJS(setIsPinchingState)(true);
       })
@@ -1269,8 +1246,6 @@ export function MasonryFlashList<T = any>({
     pinchDirection,
     targetColsShared,
     transitionProgress,
-    overlayOpacity,
-    isCommittingShared,
     currentColsShared,
     maxColumns,
     minColumns,
@@ -1284,23 +1259,15 @@ export function MasonryFlashList<T = any>({
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
     return {
-      opacity: hasTransitionCardsShared.value ? overlayOpacity.value : 0,
+      opacity: hasTransitionCardsShared.value ? 1 : 0,
     };
   });
 
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
-    if (!hasTransitionCardsShared.value) {
-      return { opacity: 1 };
-    }
-    // During commit handoff, base grid is already in new columns and must be 100% visible:
-    if (isCommittingShared.value) {
-      return { opacity: 1 };
-    }
-    // During flight, smoothly dissolve base grid so no duplicate photos show in background:
-    const p = transitionProgress.value;
-    const opacity = interpolate(p, [0, 0.10], [1, 0], Extrapolation.CLAMP);
-    return { opacity };
+    return {
+      opacity: hasTransitionCardsShared.value ? 0 : 1,
+    };
   });
 
   const renderedFooter = useMemo(() => {
