@@ -2357,7 +2357,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     >
       <GestureHandlerRootView style={styles.container}>
         <GestureDetector gesture={edgeSwipeGesture}>
-          <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
+          <Animated.View style={[{ flex: 1, backgroundColor: '#f2eee8' }, screenSwipeAnimatedStyle]}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
             {/* ── Base Layer: Photos Gallery View (Remains mounted underneath Cinema) ── */}
@@ -2647,7 +2647,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: '#f2eee8',
   },
   cinemaOverlayContainer: {
     ...StyleSheet.absoluteFillObject,

@@ -134,7 +134,7 @@ export const MasonryCard = React.memo(function MasonryCard({
           cachePolicy="memory-disk"
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={180}
+          transition={0}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}

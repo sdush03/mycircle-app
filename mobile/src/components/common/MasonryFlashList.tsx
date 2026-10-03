@@ -709,7 +709,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       ],
       opacity,
       overflow: 'hidden',
-      backgroundColor: '#1c1c1e',
+      backgroundColor: '#f2eee8',
     };
   });
 
@@ -1101,10 +1101,10 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Snappy seamless hand-off: keep overlay visible for only 50ms while native mounts
+    // 2. Seamless hand-off: keep overlay visible for 120ms while native base grid mounts and paints
     setTimeout(() => {
       finalizeCommit();
-    }, 50);
+    }, 120);
   }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared]);
 
   commitTransitionRef.current = commitTransition;
@@ -1481,7 +1481,7 @@ export function MasonryFlashList<T = any>({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   viewport: {
     flex: 1,
@@ -1489,10 +1489,10 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   contentContainer: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     paddingBottom: 40,
   },
   gridRow: {
