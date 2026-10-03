@@ -230,7 +230,11 @@ function assignSlots<T>(
 
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
-    if (topY + height >= minY && topY <= maxY) {
+    if (topY > maxY) {
+      // Items are ordered by topY ascending — all subsequent items are below maxY
+      break;
+    }
+    if (topY + height >= minY) {
       candidates.push(i);
       if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
         onScreenSet.add(i);
@@ -521,23 +525,28 @@ function buildTransitionCards<T>(
   const screenMaxY = SCREEN_HEIGHT + 140;
 
   // 1. Process items visible in fromLayout:
-  fromLayout.columns.forEach((col, cIdx) => {
-    col.items.forEach((item) => {
-      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+  for (let cIdx = 0; cIdx < fromLayout.columns.length; cIdx++) {
+    const col = fromLayout.columns[cIdx];
+    for (let i = 0; i < col.items.length; i++) {
+      const item = col.items[i];
       const startY = headerHeight + item.topY - fromScrollY;
+
+      // Since col.items are ordered by topY ascending, all subsequent items are below screen:
+      if (startY > screenMaxY) {
+        break;
+      }
+
       const startW = fromLayout.colWidth;
       const startH = item.height;
 
       // Only track items currently visible on the screen in fromLayout:
-      const isVisibleInFrom =
-        startY + startH >= screenMinY && startY <= screenMaxY;
-
-      if (!isVisibleInFrom) {
-        return;
+      if (startY + startH < screenMinY) {
+        continue;
       }
 
+      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
       const id = getItemId(item);
-      if (id === undefined) return;
+      if (id === undefined) continue;
 
       // Find where this item lands in toLayout:
       const targetItem = toLayout.itemMap.get(id);
@@ -616,24 +625,32 @@ function buildTransitionCards<T>(
         scaleDelta,
         opacityDelta,
       });
-    });
-  });
+    }
+  }
 
   // 2. Process items visible in toLayout that were NOT visible in fromLayout:
-  toLayout.columns.forEach((col, cIdx) => {
-    col.items.forEach((item) => {
-      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+  for (let cIdx = 0; cIdx < toLayout.columns.length; cIdx++) {
+    const col = toLayout.columns[cIdx];
+    for (let i = 0; i < col.items.length; i++) {
+      const item = col.items[i];
       const targetEndY = headerHeight + item.topY - toScrollY;
+
+      // Ordered by topY ascending:
+      if (targetEndY > screenMaxY) {
+        break;
+      }
+
       const targetEndW = toLayout.colWidth;
       const targetEndH = item.height;
 
-      const isVisibleInTo =
-        targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
-
-      if (!isVisibleInTo) return;
+      if (targetEndY + targetEndH < screenMinY) {
+        continue;
+      }
 
       const id = getItemId(item);
-      if (id === undefined || cardsMap.has(id)) return;
+      if (id === undefined || cardsMap.has(id)) continue;
+
+      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
 
       // Scenario C: Newly appearing on screen in toLayout ->
       // Smoothly fade in right in its target slot with a gentle scale up
@@ -671,8 +688,8 @@ function buildTransitionCards<T>(
         scaleDelta,
         opacityDelta,
       });
-    });
-  });
+    }
+  }
 
   return Array.from(cardsMap.values());
 }
@@ -890,24 +907,11 @@ export function MasonryFlashList<T = any>({
     if (transitionCards && transitionCards.length > 0) {
       hasTransitionCardsShared.value = true;
       overlayOpacity.value = 1; // Overlay covers grid instantly
-
-      if (pendingAutoCommitRef.current !== null) {
-        const toCols = pendingAutoCommitRef.current;
-        pendingAutoCommitRef.current = null;
-        // TEMPORARY SLOW-MOTION TEST: 1200ms so flight can be observed frame-by-frame
-        transitionProgress.value = withTiming(1, {
-          duration: 1200,
-          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-        }, () => {
-          runOnJS(commitTransitionOnJS)(toCols);
-        });
-      }
     } else {
       hasTransitionCardsShared.value = false;
       pendingAutoCommitRef.current = null;
-      transitionProgress.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity]);
+  }, [transitionCards, hasTransitionCardsShared, overlayOpacity]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -1334,9 +1338,8 @@ export function MasonryFlashList<T = any>({
             targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.25));
           }
 
-          if (hasTransitionCardsShared.value) {
-            transitionProgress.value = targetP;
-          }
+          // ALWAYS track gesture progress immediately on UI thread so it's never stuck at 0:
+          transitionProgress.value = targetP;
         }
       })
       .onEnd((e) => {
@@ -1355,20 +1358,15 @@ export function MasonryFlashList<T = any>({
           const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
 
           if (isIntentional) {
-            if (hasTransitionCardsShared.value) {
-              // TEMPORARY SLOW-MOTION TEST: 1200ms completion flight
-              const remaining = 1 - currentP;
-              const duration = Math.max(600, Math.round(remaining * 1200));
-              transitionProgress.value = withTiming(1, {
-                duration,
-                easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-              }, () => {
-                runOnJS(commitTransitionOnJS)(targetCols);
-              });
-            } else {
-              // Quick flick finished before overlay finished mounting across bridge:
-              runOnJS(setPendingAutoCommit)(targetCols);
-            }
+            // ALWAYS launch completion animation directly on the UI thread without bridge race condition:
+            const remaining = Math.max(0, 1 - currentP);
+            const duration = Math.max(600, Math.round(remaining * 1200)); // Test duration 1200ms
+            transitionProgress.value = withTiming(1, {
+              duration,
+              easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+            }, () => {
+              runOnJS(commitTransitionOnJS)(targetCols);
+            });
           } else {
             // Cancel transition: animate cards back to 0:
             runOnJS(clearPendingAutoCommit)();
