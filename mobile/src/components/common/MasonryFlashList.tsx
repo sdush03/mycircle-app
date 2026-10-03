@@ -35,7 +35,6 @@ import type { SharedValue } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { getPhotoCardAspect } from '../../utils/photoDimensionCache';
 import { analyticsService } from '../../services/analyticsService';
-import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -1209,17 +1208,18 @@ export function MasonryFlashList<T = any>({
       return;
     }
 
-    // Haptic feedback — like Apple Photos, subtle tap when crossing column threshold
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-
-    // Safety watchdog: guarantee the grid NEVER remains locked for more than 500ms
+    // Safety watchdog: only fires AFTER the gesture has ended and something got stuck.
+    // Must NOT fire during an active pinch-and-hold — that would destroy and rebuild
+    // the transition every cycle, causing the cards to vibrate/refresh endlessly.
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
     }
     transitionWatchdogTimerRef.current = setTimeout(() => {
-      // Call through the ref so we always get the latest finalizeCommit
-      finalizeCommit();
-    }, 500);
+      // Only force-finalize if the pinch gesture is done but transition is still stuck
+      if (isTransitioningRef.current && !isPinching.value) {
+        finalizeCommit();
+      }
+    }, 2000);
 
     // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
     // scrollSharedValue.value on JS thread which can be stale across the bridge.
