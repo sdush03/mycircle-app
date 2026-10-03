@@ -1,27 +1,24 @@
 /**
- * MasonryFlashList — True View Recycling Masonry Grid with Physical Column Slide & Reflow
+ * MasonryFlashList — True View Recycling Masonry Grid with Apple Photos FLIP Transition
  *
  * Architecture:
  * - Dynamic column density (1 col: editorial feed, 2 cols: masonry, 3 cols: compact grid)
- * - Physical Column Reflow & Side-Entry Transition:
- *   - When zooming out (e.g. 2 -> 3 cols):
- *     - Existing columns compress and shift smoothly to their new widths and positions.
- *     - The brand new column physically slides in from the right edge of the screen.
- *     - Zero diagonal crossing or random photo shuffling.
- *   - When zooming in (e.g. 3 -> 2 cols):
- *     - Surviving columns expand smoothly to fill the screen.
- *     - The extra column physically slides off-screen past the right edge and fades.
- *   - Real-Time Finger Tracking:
- *     - Column slide and compression directly track two-finger pinch distance at 60fps.
- *   - Frame-0 Seamless Hand-off:
- *     - Transition cards match the target layout pixel-for-pixel at progress = 1.0.
- *     - Base grid recycled views mount seamlessly underneath with zero jump and zero white flash.
+ * - Apple Photos FLIP Layout Flight Transition:
+ *   - Pinch Focal Anchor: When you pinch with two fingers, the photo directly between your
+ *     fingers is tracked (focalX, focalY). That photo stays pinned directly under your fingers.
+ *   - Multi-Element Flight Animation: During column changes, every visible photo smoothly
+ *     floats, slides, and resizes from its starting grid slot to its new column slot.
+ *   - Column Addition (2 -> 3): Photos glide over into Column 3, and new photos smoothly fade in.
+ *   - Column Removal (3 -> 2): Photos glide back into 2 columns, and Column 3 smoothly collapses.
+ * - Frame-0 Pre-calculated Hand-off:
+ *   - When the 320ms animation finishes, the recycled grid seamlessly unhides at the exact
+ *     matching scroll offset and slots with zero jump and zero white flash.
  * - Lightweight View Recycling:
  *   - Maintains ~60–80 recycled native views in memory for lists of 10,000+ photos.
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, View, Dimensions } from 'react-native';
+import { StyleSheet, View, Text, Dimensions } from 'react-native';
 import Animated, {
   useAnimatedReaction,
   runOnJS,
@@ -104,12 +101,12 @@ export interface TransitionCardData<T> {
   startY: number;
   startW: number;
   startH: number;
+  startOpacity: number;
   endX: number;
   endY: number;
   endW: number;
   endH: number;
-  fromItem?: ColumnItem<T>;
-  toItem?: ColumnItem<T>;
+  endOpacity: number;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -348,7 +345,7 @@ function computeAllColumnSlots<T>(
   });
 }
 
-// ─── Focal-Point Touch Anchor ─────────────────────────────────────────────────
+// ─── Apple Photos Focal-Point Touch Anchor ────────────────────────────────────
 
 function findFocalAnchorItem<T>(
   layout: MasonryLayout<T>,
@@ -363,9 +360,10 @@ function findFocalAnchorItem<T>(
   const contentY = currentScrollY + screenFocalY - headerHeight;
 
   if (contentY < 0) {
-    return null;
+    return null; // Finger touch is above photos in the header area
   }
 
+  // 1. Check column closest to contentX:
   const colW = layout.colWidth;
   const gap = CARD_GAP;
   const cIdx = Math.max(0, Math.min(layout.columns.length - 1, Math.floor(contentX / (colW + gap))));
@@ -380,6 +378,7 @@ function findFocalAnchorItem<T>(
     }
   }
 
+  // 2. Fallback: find item in any column with center closest to (focalX, contentY):
   let bestItem: ColumnItem<T> | null = null;
   let bestDist = Infinity;
 
@@ -413,27 +412,22 @@ function computeFocalAnchoredScrollY<T>(
   currentLayout: MasonryLayout<T>,
   targetLayout: MasonryLayout<T>,
 ): number {
-  const safeScrollY = Number.isFinite(currentScrollY) ? Math.max(0, currentScrollY) : 0;
-  const safeHeader = Number.isFinite(headerHeight) ? Math.max(0, headerHeight) : 0;
-  const safeScreenH = Number.isFinite(screenHeight) ? screenHeight : SCREEN_HEIGHT;
-  const safeFocalX = Number.isFinite(focalX) ? focalX : SCREEN_WIDTH / 2;
-  const safeFocalY = Number.isFinite(screenFocalY) ? screenFocalY : SCREEN_HEIGHT / 2;
-
-  if (!currentLayout || !targetLayout) return safeScrollY;
-
-  const contentY = safeScrollY + safeFocalY - safeHeader;
+  const contentY = currentScrollY + screenFocalY - headerHeight;
   if (contentY < 0) {
-    return safeScrollY;
+    return currentScrollY;
   }
 
-  const anchorItem = findFocalAnchorItem(currentLayout, safeScrollY, safeHeader, safeFocalX, safeFocalY);
+  const anchorItem = findFocalAnchorItem(currentLayout, currentScrollY, headerHeight, focalX, screenFocalY);
   if (!anchorItem) {
-    return safeScrollY;
+    return currentScrollY;
   }
 
+  // Anchor item's center Y in current layout:
   const anchorItemCenterY = anchorItem.topY + anchorItem.height / 2;
-  const anchorItemScreenY = safeHeader + anchorItemCenterY - safeScrollY;
+  // Its exact screen Y coordinate:
+  const anchorItemScreenY = headerHeight + anchorItemCenterY - currentScrollY;
 
+  // Find same item in target layout:
   const itemId = getItemId(anchorItem);
   let targetItem: ColumnItem<T> | undefined;
 
@@ -453,190 +447,165 @@ function computeFocalAnchoredScrollY<T>(
   }
 
   if (!targetItem) {
-    return safeScrollY;
+    return currentScrollY;
   }
 
+  // Align targetItem so its center lands at the EXACT SAME anchorItemScreenY:
   const targetItemCenterY = targetItem.topY + targetItem.height / 2;
-  const desiredScrollY = safeHeader + targetItemCenterY - anchorItemScreenY;
-  const maxScroll = Math.max(0, targetLayout.maxHeight + safeHeader - safeScreenH);
+  const desiredScrollY = headerHeight + targetItemCenterY - anchorItemScreenY;
+  const maxScroll = Math.max(0, targetLayout.maxHeight + headerHeight - screenHeight);
 
-  const finalScrollY = Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
-  return Number.isFinite(finalScrollY) ? finalScrollY : safeScrollY;
+  return Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
 }
 
-// ─── Physical Side-Entry & Column Reflow Cards Builder ────────────────────────
+// ─── Apple Photos Multi-Element Flight Cards Builder ──────────────────────────
 
-function buildSideTransitionCards<T>(
+function buildTransitionCards<T>(
   fromLayout: MasonryLayout<T>,
   fromScrollY: number,
   toLayout: MasonryLayout<T>,
   toScrollY: number,
   headerHeight: number,
 ): TransitionCardData<T>[] {
-  const cards: TransitionCardData<T>[] = [];
-  const screenMinY = -120;
-  const screenMaxY = SCREEN_HEIGHT + 120;
+  const cardsMap = new Map<string | number, TransitionCardData<T>>();
 
-  const isAddingColumn = toLayout.numColumns > fromLayout.numColumns;
+  // Screen visible bounds with edge padding to smoothly catch entering/leaving cards
+  const screenMinY = -180;
+  const screenMaxY = SCREEN_HEIGHT + 180;
 
-  if (isAddingColumn) {
-    // ─── ZOOM OUT (e.g. 2 -> 3 columns):
-    // Target is toLayout (3 cols).
-    // Columns 0 & 1 compress and shift left.
-    // Column 2 slides in from the right edge!
-    toLayout.columns.forEach((col, cIdx) => {
-      const endX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
-      const isNewColumn = cIdx >= fromLayout.numColumns;
-
-      col.items.forEach((item) => {
-        const endY = headerHeight + item.topY - toScrollY;
-        const endW = toLayout.colWidth;
-        const endH = item.height;
-
-        if (endY + endH < screenMinY || endY > screenMaxY) {
-          return;
-        }
-
-        const id = getItemId(item) ?? `${cIdx}-${item.originalIndex}`;
-
-        if (isNewColumn) {
-          // NEW COLUMN: physically slides in from beyond the right screen edge (100% solid!)
-          cards.push({
-            id,
-            item: item.item,
-            originalIndex: item.originalIndex,
-            targetCol: cIdx,
-            startX: SCREEN_WIDTH + 16,
-            startY: endY,
-            startW: endW,
-            startH: endH,
-            endX,
-            endY,
-            endW,
-            endH,
-          });
-        } else {
-          // EXISTING COLUMN: stays in column cIdx, compresses width and shifts left
-          const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
-
-          // Find the photo from fromLayout in column cIdx closest to this card's screen Y:
-          const fromCol = fromLayout.columns[cIdx];
-          let closestFromItem: ColumnItem<T> | undefined;
-          if (fromCol && fromCol.items.length > 0) {
-            let closestDist = Infinity;
-            for (const fItem of fromCol.items) {
-              const fY = headerHeight + fItem.topY - fromScrollY;
-              const dist = Math.abs(fY - endY);
-              if (dist < closestDist) {
-                closestDist = dist;
-                closestFromItem = fItem;
-              }
-            }
-          }
-
-          cards.push({
-            id,
-            item: item.item,
-            originalIndex: item.originalIndex,
-            targetCol: cIdx,
-            startX,
-            startY: endY,
-            startW: fromLayout.colWidth,
-            startH: endH,
-            endX,
-            endY,
-            endW,
-            endH,
-            fromItem: closestFromItem,
-            toItem: item,
-          });
-        }
-      });
-    });
-  } else {
-    // ─── ZOOM IN (e.g. 3 -> 2 columns):
-    // Active layout is fromLayout (3 cols).
-    // Columns 0 & 1 expand from 3-col width to 2-col width.
-    // Column 2 slides off to the right edge!
-    // Each photo in fromLayout appears exactly once — ZERO duplicate cards or duplicate keys!
-    fromLayout.columns.forEach((col, cIdx) => {
-      const isExitingColumn = cIdx >= toLayout.numColumns;
+  // 1. Process items visible in fromLayout:
+  fromLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
       const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+      const startY = headerHeight + item.topY - fromScrollY;
       const startW = fromLayout.colWidth;
+      const startH = item.height;
 
-      const endX = isExitingColumn
-        ? SCREEN_WIDTH + 16
-        : HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
-      const endW = isExitingColumn
-        ? fromLayout.colWidth
-        : toLayout.colWidth;
+      // Only track items currently visible on the screen in fromLayout:
+      const isVisibleInFrom =
+        startY + startH >= screenMinY && startY <= screenMaxY;
 
-      col.items.forEach((item) => {
-        const startY = headerHeight + item.topY - fromScrollY;
-        const startH = item.height;
+      if (!isVisibleInFrom) {
+        return;
+      }
 
-        if (startY + startH < screenMinY || startY > screenMaxY) {
-          return;
-        }
+      const id = getItemId(item);
+      if (id === undefined) return;
 
-        const id = getItemId(item) ?? `${cIdx}-${item.originalIndex}`;
+      // Find where this item lands in toLayout:
+      const targetItem = toLayout.itemMap.get(id);
+      let endX = startX;
+      let endY = startY;
+      let endW = startW;
+      let endH = startH;
+      let startOpacity = 1;
+      let endOpacity = 1;
+      let targetCol = cIdx;
 
-        if (isExitingColumn) {
-          // EXITING COLUMN: physically slides out past the right edge (100% solid!)
-          cards.push({
-            id,
-            item: item.item,
-            originalIndex: item.originalIndex,
-            targetCol: cIdx,
-            startX,
-            startY,
-            startW,
-            startH,
-            endX,
-            endY: startY,
-            endW,
-            endH: startH,
-          });
+      if (targetItem) {
+        targetCol = targetItem.colIndex;
+        const targetEndX = HORIZONTAL_MARGIN + targetItem.colIndex * (toLayout.colWidth + CARD_GAP);
+        const targetEndY = headerHeight + targetItem.topY - toScrollY;
+        const targetEndW = toLayout.colWidth;
+        const targetEndH = targetItem.height;
+
+        const isVisibleInTo =
+          targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
+
+        if (isVisibleInTo) {
+          // Scenario A: Visible on screen in both layouts -> Physical FLIP flight into new column!
+          endX = targetEndX;
+          endY = targetEndY;
+          endW = targetEndW;
+          endH = targetEndH;
+          endOpacity = 1;
         } else {
-          // SURVIVING COLUMN: expands from 3-col width to 2-col width
-          // Find the photo from toLayout in column cIdx closest to this card's screen Y:
-          const toCol = toLayout.columns[cIdx];
-          let closestToItem: ColumnItem<T> | undefined;
-          if (toCol && toCol.items.length > 0) {
-            let closestDist = Infinity;
-            for (const tItem of toCol.items) {
-              const tY = headerHeight + tItem.topY - toScrollY;
-              const dist = Math.abs(tY - startY);
-              if (dist < closestDist) {
-                closestDist = dist;
-                closestToItem = tItem;
-              }
-            }
-          }
-
-          cards.push({
-            id,
-            item: item.item,
-            originalIndex: item.originalIndex,
-            targetCol: cIdx,
-            startX,
-            startY,
-            startW,
-            startH,
-            endX,
-            endY: startY,
-            endW,
-            endH: startH,
-            fromItem: item,
-            toItem: closestToItem,
-          });
+          // Scenario B: Visible before, but exits the viewport in the new column density ->
+          // Naturally slide off the screen edge towards target position (clamped just beyond edge).
+          // Keeps card fully visible while sliding out so no white voids appear on screen!
+          const clampedEndY = targetEndY > screenMaxY
+            ? SCREEN_HEIGHT + 80
+            : (targetEndY < screenMinY ? -targetEndH - 80 : targetEndY);
+          endX = targetEndX;
+          endY = clampedEndY;
+          endW = targetEndW;
+          endH = targetEndH;
+          endOpacity = 1;
         }
+      } else {
+        // Fallback: fade out in place
+        endX = startX;
+        endY = startY;
+        endW = startW;
+        endH = startH;
+        endOpacity = 0;
+      }
+
+      cardsMap.set(id, {
+        id,
+        item: item.item,
+        originalIndex: item.originalIndex,
+        targetCol,
+        startX,
+        startY,
+        startW,
+        startH,
+        startOpacity,
+        endX,
+        endY,
+        endW,
+        endH,
+        endOpacity,
       });
     });
-  }
+  });
 
-  return cards;
+  // 2. Process items visible in toLayout that were NOT visible in fromLayout:
+  toLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
+      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+      const targetEndY = headerHeight + item.topY - toScrollY;
+      const targetEndW = toLayout.colWidth;
+      const targetEndH = item.height;
+
+      const isVisibleInTo =
+        targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
+
+      if (!isVisibleInTo) return;
+
+      const id = getItemId(item);
+      if (id === undefined || cardsMap.has(id)) return;
+
+      // Scenario C: Newly appearing on screen in toLayout ->
+      // Smoothly fade in right in its target slot with a gentle scale up (NO supersonic rocket from 4,000px away)!
+      const startW = targetEndW * 0.92;
+      const startH = targetEndH * 0.92;
+      const startX = targetEndX + (targetEndW - startW) / 2;
+      const startY = targetEndY + 15;
+
+      cardsMap.set(id, {
+        id,
+        item: item.item,
+        originalIndex: item.originalIndex,
+        targetCol: cIdx,
+        startX,
+        startY,
+        startW,
+        startH,
+        startOpacity: 0,
+        endX: targetEndX,
+        endY: targetEndY,
+        endW: targetEndW,
+        endH: targetEndH,
+        endOpacity: 1,
+      });
+    });
+  });
+
+  return Array.from(cardsMap.values());
 }
+
+
 
 // ─── Animating Flight Card Component ──────────────────────────────────────────
 
@@ -651,7 +620,6 @@ interface AnimatingCardProps {
     numColumns?: number;
   }) => React.ReactElement;
   toCols: number;
-  fromCols: number;
 }
 
 const AnimatingCard = React.memo(function AnimatingCard({
@@ -659,92 +627,47 @@ const AnimatingCard = React.memo(function AnimatingCard({
   progress,
   renderItem: renderFn,
   toCols,
-  fromCols,
 }: AnimatingCardProps) {
-  // Pure physical geometry for the card frame: ALWAYS 100% solid opacity!
-  const cardFrameStyle = useAnimatedStyle(() => {
-    'worklet';
+  const animatedStyle = useAnimatedStyle(() => {
     const p = progress.value;
-    const curX = interpolate(p, [0, 1], [card.startX, card.endX]);
-    const curY = interpolate(p, [0, 1], [card.startY, card.endY]);
     const curW = interpolate(p, [0, 1], [card.startW, card.endW]);
     const curH = interpolate(p, [0, 1], [card.startH, card.endH]);
+    const curX = interpolate(p, [0, 1], [card.startX, card.endX]);
+    const curY = interpolate(p, [0, 1], [card.startY, card.endY]);
 
-    const scaleX = card.endW > 0 ? curW / card.endW : 1;
-    const scaleY = card.endH > 0 ? curH / card.endH : 1;
-    const translateX = curX + (curW - card.endW) / 2;
-    const translateY = curY + (curH - card.endH) / 2;
+    const scaleX = card.startW > 0 ? curW / card.startW : 1;
+    const scaleY = card.startH > 0 ? curH / card.startH : 1;
+    const translateX = (curX - card.startX) + (curW - card.startW) / 2;
+    const translateY = (curY - card.startY) + (curH - card.startH) / 2;
+    const opacity = interpolate(p, [0, 1], [card.startOpacity, card.endOpacity]);
 
     return {
       position: 'absolute',
-      left: 0,
-      top: 0,
-      width: card.endW,
-      height: card.endH,
+      left: card.startX,
+      top: card.startY,
+      width: card.startW,
+      height: card.startH,
       transform: [
         { translateX },
         { translateY },
         { scaleX },
         { scaleY },
       ],
+      opacity,
       overflow: 'hidden',
-    };
-  });
-
-  // Crossfade INSIDE the card if fromItem and toItem differ:
-  const hasInternalCrossfade =
-    card.fromItem != null &&
-    card.toItem != null &&
-    getItemId(card.fromItem) !== getItemId(card.toItem);
-
-  const fromPhotoStyle = useAnimatedStyle(() => {
-    'worklet';
-    return {
-      opacity: interpolate(progress.value, [0.08, 0.92], [1, 0], Extrapolation.CLAMP),
-    };
-  });
-
-  const toPhotoStyle = useAnimatedStyle(() => {
-    'worklet';
-    return {
-      opacity: interpolate(progress.value, [0.08, 0.92], [0, 1], Extrapolation.CLAMP),
+      backgroundColor: 'transparent',
     };
   });
 
   return (
-    <Animated.View style={cardFrameStyle}>
-      {hasInternalCrossfade && card.fromItem && card.toItem ? (
-        <>
-          {/* Incoming photo */}
-          <Animated.View style={[StyleSheet.absoluteFillObject, toPhotoStyle]}>
-            {renderFn({
-              item: card.toItem.item,
-              index: card.toItem.originalIndex,
-              isColumn0: card.targetCol === 0,
-              columnIndex: card.targetCol,
-              numColumns: toCols,
-            })}
-          </Animated.View>
-          {/* Outgoing photo */}
-          <Animated.View style={[StyleSheet.absoluteFillObject, fromPhotoStyle]}>
-            {renderFn({
-              item: card.fromItem.item,
-              index: card.fromItem.originalIndex,
-              isColumn0: card.targetCol === 0,
-              columnIndex: card.targetCol,
-              numColumns: fromCols,
-            })}
-          </Animated.View>
-        </>
-      ) : (
-        renderFn({
-          item: card.item,
-          index: card.originalIndex,
-          isColumn0: card.targetCol === 0,
-          columnIndex: card.targetCol,
-          numColumns: toCols,
-        })
-      )}
+    <Animated.View style={animatedStyle}>
+      {renderFn({
+        item: card.item,
+        index: card.originalIndex,
+        isColumn0: card.targetCol === 0,
+        columnIndex: card.targetCol,
+        numColumns: toCols,
+      })}
     </Animated.View>
   );
 });
@@ -824,14 +747,24 @@ export function MasonryFlashList<T = any>({
   refreshControl,
   isPinchingShared,
 }: MasonryFlashListProps<T>) {
-  // ─── Transition Shared Values ──────────────────────────────────────────────
+  // ─── Shared Values ─────────────────────────────────────────────────────────
+  const pinchScale = useSharedValue(1);
+  const focalXShared = useSharedValue(SCREEN_WIDTH / 2);
+  const focalYShared = useSharedValue(SCREEN_HEIGHT / 2);
+  const pinchDirection = useSharedValue(0);
+  const targetColsShared = useSharedValue(numColumnsProp || 2);
   const transitionProgress = useSharedValue(0);
-  const pinchDirection = useSharedValue(0); // 1 = zoom out (+1 col), -1 = zoom in (-1 col)
   const isPinching = useSharedValue(false);
   const currentColsShared = useSharedValue(numColumnsProp || 2);
-  const targetColsShared = useSharedValue(numColumnsProp || 2);
-  const gridOpacity = useSharedValue(1);
-  const isOverlayMountedShared = useSharedValue(false);
+  const hasTransitionCardsShared = useSharedValue(false);
+  const isTransitioningShared = useSharedValue(false);
+  const isOverlayReadyShared = useSharedValue(false);
+  const hasStartedFlight = useSharedValue(false);
+  const shouldCommitOnMount = useSharedValue(false);
+
+  const pendingTargetScrollYRef = useRef(0);
+  const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
+  const pendingTargetLayoutRef = useRef<MasonryLayout<T> | null>(null);
 
   // ─── Component State ───────────────────────────────────────────────────────
   const [currentCols, setCurrentCols] = useState<number>(() => {
@@ -841,8 +774,24 @@ export function MasonryFlashList<T = any>({
   const [isPinchingState, setIsPinchingState] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
-  const [transitionFromCols, setTransitionFromCols] = useState(currentCols);
-  const [transitionToCols, setTransitionToCols] = useState(currentCols);
+  const [transitionToCols, setTransitionToCols] = useState(numColumnsProp || 2);
+
+  useEffect(() => {
+    if (transitionCards && transitionCards.length > 0) {
+      hasTransitionCardsShared.value = true;
+      // Allow 2 native animation frames (~45ms) for overlay images to bind GPU textures
+      // while the base grid remains 100% visible underneath:
+      const timer = setTimeout(() => {
+        isOverlayReadyShared.value = true;
+      }, 45);
+      return () => clearTimeout(timer);
+    } else {
+      hasTransitionCardsShared.value = false;
+      isOverlayReadyShared.value = false;
+      hasStartedFlight.value = false;
+      transitionProgress.value = 0;
+    }
+  }, [transitionCards, hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, transitionProgress]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -882,11 +831,10 @@ export function MasonryFlashList<T = any>({
   const layoutRef = useRef(layout);
   const dataRef = useRef(data);
   const scrollYRef = useRef(0);
+  const lastUpdateRef = useRef(0);
+  const lastImpressionCheckRef = useRef(0);
+  const endReachedFiredRef = useRef(false);
   const isTransitioningRef = useRef(false);
-
-  const pendingTargetScrollYRef = useRef<number>(0);
-  const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
-  const pendingTargetLayoutRef = useRef<MasonryLayout<T> | null>(null);
 
   const [columnSlots, setColumnSlots] = useState<SlotState[][]>(() => {
     return computeAllColumnSlots(layout, 0, poolSize, headerHeight);
@@ -903,109 +851,151 @@ export function MasonryFlashList<T = any>({
     columnSlotsRef.current = newSlots;
   }, [layout, poolSize, headerHeight, data]);
 
-  // Keep scrollYRef synchronized:
-  if (scrollSharedValue) {
-    useAnimatedReaction(
-      () => scrollSharedValue.value,
-      (y) => {
-        scrollYRef.current = y;
-      },
-    );
-  }
+  useEffect(() => {
+    endReachedFiredRef.current = false;
+  }, [data]);
 
-  // ─── Smooth Native Scroll Helper ───────────────────────────────────────────
-  const performScrollTo = useCallback((safeY: number) => {
-    scrollYRef.current = safeY;
-    if (scrollSharedValue) {
-      scrollSharedValue.value = safeY;
-    }
-    try {
-      if (mainScrollRef?.current) {
-        if (typeof mainScrollRef.current.scrollTo === 'function') {
-          mainScrollRef.current.scrollTo({ y: safeY, animated: false });
-        } else if (typeof mainScrollRef.current.scrollToOffset === 'function') {
-          mainScrollRef.current.scrollToOffset({ offset: safeY, animated: false });
+  // ─── Slot Updates from Scroll Worklet ──────────────────────────────────────
+  const updateSlotsFromY = useCallback((y: number) => {
+    if (isPinchingState || isTransitioning) return;
+
+    const now = Date.now();
+    if (now - lastUpdateRef.current < 16) return;
+    lastUpdateRef.current = now;
+    scrollYRef.current = y;
+
+    const currentLayout = layoutRef.current;
+    if (!currentLayout || !currentLayout.columns) return;
+
+    setColumnSlots((prev) => {
+      let anyChanged = false;
+      const next = currentLayout.columns.map((col, cIdx) => {
+        const prevSlots = (prev && prev[cIdx]) || [];
+        const updated = assignSlots(col.items, y, prevSlots, poolSize, headerHeight);
+        if (updated !== prevSlots) anyChanged = true;
+        return updated;
+      });
+      if (anyChanged) columnSlotsRef.current = next;
+      return anyChanged ? next : prev;
+    });
+
+    // Batch track visible impressions
+    if (now - lastImpressionCheckRef.current > 600) {
+      lastImpressionCheckRef.current = now;
+      const gridY = Math.max(0, y - headerHeight);
+      const viewTop = gridY;
+      const viewBottom = gridY + SCREEN_HEIGHT;
+
+      for (let c = 0; c < currentLayout.columns.length; c++) {
+        const items = currentLayout.columns[c].items;
+        if (!items) continue;
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          if (it.topY + it.height >= viewTop && it.topY <= viewBottom) {
+            const rawItem: any = it.item;
+            if (rawItem && !rawItem.isSkeleton) {
+              const mediaId = rawItem.id || rawItem.uri || rawItem.r2Url;
+              const isVideo = Boolean(rawItem.isVideo || rawItem.type === 'VIDEO' || rawItem.tab === 'Cinema' || rawItem.videoUrl);
+              const mediaType = isVideo ? 'VIDEO' : 'PHOTO';
+              const url = rawItem.r2Url || rawItem.fullUri || rawItem.uri || rawItem.photoUrl;
+              analyticsService.trackImpression(mediaId, mediaType, 'GRID', url);
+            }
+          }
         }
       }
-    } catch (_e) {
-      try {
-        runOnUI((y: number) => {
-          'worklet';
-          scrollTo(mainScrollRef, 0, y, false);
-        })(safeY);
-      } catch (_e2) {}
     }
+
+    // Trigger onEndReached
+    const totalHeight = currentLayout.maxHeight;
+    if (onEndReached && !endReachedFiredRef.current && totalHeight > 0) {
+      const thresholdY = totalHeight - SCREEN_HEIGHT * (1 + onEndReachedThreshold);
+      if (y >= thresholdY) {
+        endReachedFiredRef.current = true;
+        onEndReached();
+      }
+    }
+  }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize, isPinchingState, isTransitioning]);
+
+  useAnimatedReaction(
+    () => scrollSharedValue?.value ?? 0,
+    (y) => {
+      'worklet';
+      if (!isPinching.value && !isTransitioning) {
+        runOnJS(updateSlotsFromY)(y);
+      }
+    },
+    [updateSlotsFromY, isTransitioning],
+  );
+
+
+  // ─── Native Scroll Dispatcher ──────────────────────────────────────────────
+  const performScrollTo = useCallback((targetY: number) => {
+    scrollYRef.current = targetY;
+    if (scrollSharedValue) {
+      scrollSharedValue.value = targetY;
+    }
+    try {
+      if (mainScrollRef?.current && typeof (mainScrollRef.current as any).scrollTo === 'function') {
+        (mainScrollRef.current as any).scrollTo({ y: targetY, animated: false });
+      }
+    } catch (_e) {}
+    try {
+      runOnUI((y: number) => {
+        'worklet';
+        scrollTo(mainScrollRef, 0, y, false);
+      })(targetY);
+    } catch (_e2) {}
   }, [mainScrollRef, scrollSharedValue]);
 
-  // ─── Interactive Column Flight Handlers ─────────────────────────────────────
-  const finalizeCleanup = useCallback(() => {
+  // ─── Apple Photos Interactive Flight Transition ───────────────────────────
+  const finalizeCommit = useCallback(() => {
+    hasTransitionCardsShared.value = false;
+    isOverlayReadyShared.value = false;
+    hasStartedFlight.value = false;
+    shouldCommitOnMount.value = false;
+    isTransitioningShared.value = false;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
-    transitionProgress.value = 0;
     pinchDirection.value = 0;
-
-    // Guarantee base grid has fresh slots populated at settled position:
-    const curLayout = layoutRef.current;
-    if (curLayout && curLayout.columns && curLayout.columns.length > 0) {
-      const y = scrollYRef.current;
-      const pool = getPoolSizeForCols(curLayout.numColumns);
-      const h = headerHeightRef.current;
-      const slots = computeAllColumnSlots(curLayout, y, pool, h, columnSlotsRef.current);
-      setColumnSlots(slots);
-      columnSlotsRef.current = slots;
-    }
-  }, [transitionProgress, pinchDirection]);
+  }, [hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, isTransitioningShared, pinchDirection]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
-    const currentHeaderHeight = headerHeightRef.current;
-    const targetLayout = pendingTargetLayoutRef.current ?? buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
-    const targetPool = getPoolSizeForCols(targetCols);
+    const targetSlots = pendingTargetSlotsRef.current;
+    const targetLayout = pendingTargetLayoutRef.current;
 
-    // Compute fresh target slots at exact targetScrollY:
-    const freshTargetSlots = computeAllColumnSlots(
-      targetLayout,
-      targetScrollY,
-      targetPool,
-      currentHeaderHeight,
-    );
-
-    performScrollTo(targetScrollY);
-    setCurrentCols(targetCols);
-    currentColsShared.value = targetCols;
-    setColumnSlots(freshTargetSlots);
-    columnSlotsRef.current = freshTargetSlots;
-    layoutRef.current = targetLayout;
+    if (targetLayout && targetSlots) {
+      performScrollTo(targetScrollY);
+      setCurrentCols(targetCols);
+      setColumnSlots(targetSlots);
+      columnSlotsRef.current = targetSlots;
+      layoutRef.current = targetLayout;
+    }
 
     onNumColumnsChange?.(targetCols);
 
-    // Unhide base grid underneath the overlay
-    isOverlayMountedShared.value = false;
-    gridOpacity.value = 1;
-
-    // Clean direct swap with no overall dissolve:
+    // Keep the transition overlay cards visible for 140ms while React + native
+    // mount and paint the new base grid views in native.
+    // Then cleanly swap in a single tick (NO crossfade that reveals duplicate background photos):
     setTimeout(() => {
-      finalizeCleanup();
-    }, 45);
-  }, [
-    performScrollTo,
-    onNumColumnsChange,
-    currentColsShared,
-    isOverlayMountedShared,
-    gridOpacity,
-    finalizeCleanup,
-  ]);
+      finalizeCommit();
+    }, 140);
+  }, [performScrollTo, onNumColumnsChange, finalizeCommit]);
 
   const cancelTransition = useCallback(() => {
-    isOverlayMountedShared.value = false;
-    gridOpacity.value = 1;
-
-    setTimeout(() => {
-      finalizeCleanup();
-    }, 40);
-  }, [isOverlayMountedShared, gridOpacity, finalizeCleanup]);
+    hasTransitionCardsShared.value = false;
+    isOverlayReadyShared.value = false;
+    hasStartedFlight.value = false;
+    shouldCommitOnMount.value = false;
+    isTransitioningShared.value = false;
+    setTransitionCards(null);
+    setIsTransitioning(false);
+    isTransitioningRef.current = false;
+    setIsPinchingState(false);
+    pinchDirection.value = 0;
+  }, [hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, isTransitioningShared, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1022,6 +1012,7 @@ export function MasonryFlashList<T = any>({
     const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
     const targetPool = getPoolSizeForCols(targetCols);
 
+    // PINCH ANCHOR: Compute targetScrollY based on the exact photo under (focalX, focalY)
     const targetScrollY = computeFocalAnchoredScrollY(
       currentScrollY,
       currentHeaderHeight,
@@ -1032,7 +1023,8 @@ export function MasonryFlashList<T = any>({
       targetLayout,
     );
 
-    const cards = buildSideTransitionCards(
+    // Build the interactive flight transition cards (progress 0 = currentLayout, progress 1 = targetLayout):
+    const cards = buildTransitionCards(
       currentLayout,
       currentScrollY,
       targetLayout,
@@ -1040,68 +1032,112 @@ export function MasonryFlashList<T = any>({
       currentHeaderHeight,
     );
 
-    const targetSlots = computeAllColumnSlots(
-      targetLayout,
-      targetScrollY,
-      targetPool,
-      currentHeaderHeight,
-    );
+    const targetSlots = computeAllColumnSlots(targetLayout, targetScrollY, targetPool, currentHeaderHeight);
 
     pendingTargetScrollYRef.current = targetScrollY;
     pendingTargetSlotsRef.current = targetSlots;
     pendingTargetLayoutRef.current = targetLayout;
 
-    setTransitionFromCols(currentCols);
     setTransitionCards(cards);
     setTransitionToCols(targetCols);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
   }, [currentCols, minColumns, maxColumns, scrollSharedValue]);
 
-  // ─── Real-Time Pinch Gesture with Side-Entry Column Flight ──────────────────
+  useAnimatedReaction(
+    () => isOverlayReadyShared.value,
+    (ready) => {
+      'worklet';
+      if (ready && shouldCommitOnMount.value) {
+        shouldCommitOnMount.value = false;
+        const targetCols = targetColsShared.value;
+        transitionProgress.value = withTiming(1, {
+          duration: 240,
+          easing: Easing.bezier(0.25, 1, 0.5, 1),
+        }, (finished) => {
+          if (finished) {
+            runOnJS(commitTransition)(targetCols);
+          }
+        });
+      }
+    },
+    [commitTransition],
+  );
+
+  // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
-    return Gesture.Pinch()
-      .cancelsTouchesInView(true)
-      .enabled(enablePinchToZoom && !isTransitioning)
-      .onStart((_e) => {
+    let g = Gesture.Pinch()
+      .enabled(enablePinchToZoom)
+      .cancelsTouchesInView(true);
+
+    if (mainScrollRef) {
+      g = (g as any).simultaneousWithExternalGesture(mainScrollRef);
+    }
+
+    return g
+      .onStart((e) => {
         'worklet';
+        if (isTransitioningShared.value) return;
+
         isPinching.value = true;
         if (isPinchingShared) isPinchingShared.value = true;
+        focalXShared.value = e.focalX;
+        focalYShared.value = e.focalY;
         pinchDirection.value = 0;
         transitionProgress.value = 0;
-        gridOpacity.value = 1;
-        isOverlayMountedShared.value = false;
+        hasStartedFlight.value = false;
+        shouldCommitOnMount.value = false;
+        hasTransitionCardsShared.value = false;
+        isOverlayReadyShared.value = false;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
         'worklet';
-        const cols = currentColsShared.value;
+        if (isTransitioningShared.value && !hasTransitionCardsShared.value) return;
 
-        // Detect direction and initialize side-flight overlay once threshold is crossed:
+        focalXShared.value = e.focalX;
+        focalYShared.value = e.focalY;
+
+        // Detect pinch direction as fingers move:
         if (pinchDirection.value === 0) {
-          if (e.scale < 0.95 && cols < maxColumns) {
-            pinchDirection.value = 1; // Pinch in -> Zoom out -> Add column (e.g. 2 -> 3)
-            targetColsShared.value = cols + 1;
-            runOnJS(startInteractiveTransition)(cols + 1, e.focalX, e.focalY);
-          } else if (e.scale > 1.05 && cols > minColumns) {
-            pinchDirection.value = -1; // Pinch out -> Zoom in -> Remove column (e.g. 3 -> 2)
-            targetColsShared.value = cols - 1;
-            runOnJS(startInteractiveTransition)(cols - 1, e.focalX, e.focalY);
+          if (e.scale < 0.985 && currentColsShared.value < maxColumns) {
+            pinchDirection.value = 1; // Pinch in -> Add column (e.g. 2 -> 3)
+            targetColsShared.value = currentColsShared.value + 1;
+            isTransitioningShared.value = true;
+            runOnJS(startInteractiveTransition)(currentColsShared.value + 1, e.focalX, e.focalY);
+          } else if (e.scale > 1.015 && currentColsShared.value > minColumns) {
+            pinchDirection.value = -1; // Pinch out -> Remove column (e.g. 3 -> 2, 2 -> 1)
+            targetColsShared.value = currentColsShared.value - 1;
+            isTransitioningShared.value = true;
+            runOnJS(startInteractiveTransition)(currentColsShared.value - 1, e.focalX, e.focalY);
           }
         }
 
-        // Live interactive gesture flight tracking user's fingers:
-        if (pinchDirection.value === 1) {
-          const p = Math.max(0, Math.min(1, (0.95 - e.scale) / 0.22));
-          transitionProgress.value = p;
-          gridOpacity.value = interpolate(p, [0.03, 0.15], [1, 0], Extrapolation.CLAMP);
-        } else if (pinchDirection.value === -1) {
-          const p = Math.max(0, Math.min(1, (e.scale - 1.05) / 0.22));
-          transitionProgress.value = p;
-          gridOpacity.value = interpolate(p, [0.03, 0.15], [1, 0], Extrapolation.CLAMP);
+        // Live interactive gesture flight progress once overlay is mounted and warmed up:
+        if (isOverlayReadyShared.value) {
+          let targetP = 0;
+          if (pinchDirection.value === 1) {
+            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.20));
+          } else if (pinchDirection.value === -1) {
+            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.20));
+          }
+
+          if (!hasStartedFlight.value) {
+            hasStartedFlight.value = true;
+            if (targetP > 0.04) {
+              transitionProgress.value = withTiming(targetP, {
+                duration: 90,
+                easing: Easing.out(Easing.quad),
+              });
+            } else {
+              transitionProgress.value = targetP;
+            }
+          } else {
+            transitionProgress.value = targetP;
+          }
         }
       })
-      .onEnd((_e) => {
+      .onEnd((e) => {
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
@@ -1109,45 +1145,73 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value !== 0) {
           const currentP = transitionProgress.value;
           const targetCols = targetColsShared.value;
+          const isPinchIn = pinchDirection.value === 1;
+          const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
+          const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
 
-          if (currentP >= 0.35) {
-            // Animate remaining progress to 1.0 and commit new columns:
-            transitionProgress.value = withTiming(1, {
-              duration: 220,
-              easing: Easing.bezier(0.25, 1, 0.5, 1),
-            }, () => {
-              runOnJS(commitTransition)(targetCols);
-            });
+          // Intentional pinch if progress >= 0.18, scale delta >= 0.035, or flicked with velocity:
+          const isIntentional = currentP >= 0.18 || scaleDelta >= 0.035 || hasVelocity;
+
+          if (isIntentional) {
+            if (isOverlayReadyShared.value) {
+              // Overlay is ready: smoothly complete remaining flight to 1.0 (220ms):
+              transitionProgress.value = withTiming(1, {
+                duration: 220,
+                easing: Easing.bezier(0.25, 1, 0.5, 1),
+              }, (finished) => {
+                if (finished) {
+                  runOnJS(commitTransition)(targetCols);
+                }
+              });
+            } else {
+              // Fast flick occurred before overlay finished mounting across bridge:
+              // Flag so that the exact moment overlay warms up, it smoothly animates 0 -> 1!
+              shouldCommitOnMount.value = true;
+            }
           } else {
-            // Cancel transition: animate cards smoothly back to 0 (no bounce):
-            gridOpacity.value = withTiming(1, { duration: 180 });
-            transitionProgress.value = withTiming(0, {
-              duration: 180,
-              easing: Easing.bezier(0.25, 1, 0.5, 1),
-            }, () => {
+            // Cancel transition: animate cards back to 0:
+            shouldCommitOnMount.value = false;
+            if (currentP > 0.01) {
+              transitionProgress.value = withTiming(0, {
+                duration: 180,
+                easing: Easing.bezier(0.25, 1, 0.5, 1),
+              }, (finished) => {
+                if (finished) {
+                  runOnJS(cancelTransition)();
+                }
+              });
+            } else {
               runOnJS(cancelTransition)();
-            });
+            }
           }
         } else {
           runOnJS(setIsPinchingState)(false);
+          isTransitioningShared.value = false;
         }
       })
       .onFinalize(() => {
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
-        runOnJS(setIsPinchingState)(false);
+        if (pinchDirection.value === 0) {
+          runOnJS(setIsPinchingState)(false);
+          isTransitioningShared.value = false;
+        }
       });
   }, [
     enablePinchToZoom,
-    isTransitioning,
+    mainScrollRef,
     isPinchingShared,
     isPinching,
+    isTransitioningShared,
+    isOverlayReadyShared,
+    hasStartedFlight,
+    shouldCommitOnMount,
+    focalXShared,
+    focalYShared,
     pinchDirection,
     targetColsShared,
     transitionProgress,
-    gridOpacity,
-    isOverlayMountedShared,
     currentColsShared,
     maxColumns,
     minColumns,
@@ -1156,14 +1220,22 @@ export function MasonryFlashList<T = any>({
     cancelTransition,
   ]);
 
+  const overlayAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: hasTransitionCardsShared.value ? 1 : 0,
+    };
+  });
+
   const gridVisibilityStyle = useAnimatedStyle(() => {
-    'worklet';
-    if (!isOverlayMountedShared.value) {
+    // Keep base grid 100% visible while overlay is mounting or warming up:
+    if (!hasTransitionCardsShared.value || !isOverlayReadyShared.value) {
       return { opacity: 1 };
     }
-    return {
-      opacity: gridOpacity.value,
-    };
+    // Only hide base grid once cards have actually started moving into flight:
+    if (transitionProgress.value < 0.04) {
+      return { opacity: 1 };
+    }
+    return { opacity: 0 };
   });
 
   const renderedFooter = useMemo(() => {
@@ -1269,23 +1341,19 @@ export function MasonryFlashList<T = any>({
         </View>
       </GestureDetector>
 
-      {/* ─── Physical Side-Entry & Column Reflow Overlay ─────────────────── */}
+      {/* ─── Apple Photos Flight Transition Overlay ─────────────────────── */}
       {transitionCards && (
-        <View
-          style={[StyleSheet.absoluteFillObject, { overflow: 'hidden' }]}
+        <Animated.View
+          style={[StyleSheet.absoluteFillObject, overlayAnimatedStyle]}
           pointerEvents="none"
-          onLayout={() => {
-            isOverlayMountedShared.value = true;
-          }}
         >
-          {transitionCards.map((card, idx) => (
+          {transitionCards.map((card) => (
             <AnimatingCard
-              key={`trans-${card.targetCol}-${card.id}-${card.originalIndex}-${idx}`}
+              key={`trans-${card.id}`}
               card={card}
               progress={transitionProgress}
               renderItem={renderItem}
               toCols={transitionToCols}
-              fromCols={transitionFromCols}
             />
           ))}
 
@@ -1295,7 +1363,7 @@ export function MasonryFlashList<T = any>({
               {renderStickyHeader()}
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       )}
 
     </View>
@@ -1325,16 +1393,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginLeft: HORIZONTAL_MARGIN,
     marginRight: HORIZONTAL_MARGIN,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
   },
   column: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
   },
   slot: {
     position: 'absolute',
     left: 0,
     right: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
     overflow: 'hidden',
   },
   stickyHeaderOverlay: {

@@ -38,28 +38,20 @@ export function getPhotoCardAspect(
 
   const isLandscape = Boolean(item?.isHorizontal || (rawAspect && rawAspect > 1.05));
 
-  // In 1-column mode: photos should render as an immersive editorial feed
-  if (numColumns === 1) {
-    if (isLandscape) {
-      return (rawAspect && rawAspect > 1.0) ? rawAspect : 1.5;
-    }
-    // For portraits in 1-column, preserve natural aspect clamped between 3/4 and 4/5
-    return (rawAspect && rawAspect >= 0.75 && rawAspect <= 1.0) ? rawAspect : 4 / 5;
-  }
-
+  // 4. Stable Intrinsic Aspect Ratio:
+  // Landscape photos: preserve natural aspect or default to 3/2 (1.5)
   if (isLandscape) {
-    // Landscape photos: use their real aspect ratio (e.g. 1.5, 1.33) or default to 3/2 (1.5)
     return (rawAspect && rawAspect > 1.0) ? rawAspect : 1.5;
   }
 
-  // 4. Portrait photos: Cycle 2/3 → 3/4 → 4/5 for organic editorial masonry rhythm!
-  // Deterministic calculation based on photo ID + column offset so cards stagger naturally
+  // Portrait photos: Cycle 2/3 → 3/4 → 4/5 for organic editorial masonry rhythm.
+  // Deterministic calculation based on photo ID so each photo retains its stable intrinsic aspect ratio
+  // across all column densities (1 to 5) — prevents distortive stretching and post-pinch resizing snaps!
   const idNum = typeof item?.id === 'number'
     ? item.id
     : (typeof item?.id === 'string' ? item.id.split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0) : index);
   const safeId = (typeof idNum === 'number' && !isNaN(idNum)) ? idNum : (index || 0);
-  const colOffset = typeof isColumn0OrColIdx === 'number' ? isColumn0OrColIdx : (isColumn0OrColIdx ? 0 : 1);
-  const cycle = Math.abs((safeId || 0) + (colOffset || 0)) % 3;
+  const cycle = Math.abs(safeId || 0) % 3;
   const result = cycle === 0 ? 2 / 3 : (cycle === 1 ? 3 / 4 : 4 / 5);
   return isNaN(result) || result <= 0 ? 0.75 : result;
 }

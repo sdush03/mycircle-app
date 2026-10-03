@@ -208,7 +208,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f3f4f6',
+    backgroundColor: 'transparent',
     overflow: 'hidden',
     position: 'relative',
   },
