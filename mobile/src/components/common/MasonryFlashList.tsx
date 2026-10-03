@@ -47,9 +47,9 @@ export const getPoolSizeForCols = (cols: number): number => {
   switch (cols) {
     case 1: return 40;
     case 2: return 50;
-    case 3: return 44;
-    case 4: return 38;
-    case 5: default: return 34;
+    case 3: return 48;
+    case 4: return 46;
+    case 5: default: return 46;
   }
 };
 
@@ -950,6 +950,7 @@ export function MasonryFlashList<T = any>({
   const updateSlotsFromY = useCallback((y: number, force: boolean = false) => {
     if (isPinchingState || isTransitioning) return;
 
+    scrollYRef.current = y;
     const now = Date.now();
     if (!force && now - lastUpdateRef.current < 16) {
       if (trailingUpdateTimerRef.current) {
@@ -965,7 +966,6 @@ export function MasonryFlashList<T = any>({
       trailingUpdateTimerRef.current = null;
     }
     lastUpdateRef.current = now;
-    scrollYRef.current = y;
 
     const currentLayout = layoutRef.current;
     if (!currentLayout || !currentLayout.columns) return;

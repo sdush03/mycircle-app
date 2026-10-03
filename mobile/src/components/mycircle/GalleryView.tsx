@@ -540,8 +540,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const visibleStartIndex = Math.max(0, currentRow * currentCols);
 
     // Viewport-Proximity Pre-fetch: pre-fetch upcoming thumbnail cards ahead of the user's screen
-    // Dynamically scale prefetch count based on column count (e.g. 30 for 1-2 cols, 45 for 3 cols, 60 for 4 cols, 75 for 5 cols)
-    const prefetchWindow = Math.max(30, currentCols * 15);
+    // Dynamically scale prefetch count based on column count (e.g. 80 for 1-2 cols, 120 for 3 cols, 160 for 4 cols, 200 for 5 cols)
+    const prefetchWindow = Math.max(80, currentCols * 40);
     const upcomingPhotos = activeListRef.current.slice(visibleStartIndex, visibleStartIndex + prefetchWindow);
     const urlsToPrefetch: string[] = [];
     upcomingPhotos.forEach((photo) => {
@@ -632,14 +632,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (!mappedList || mappedList.length === 0) return;
 
     const activeCols = cols ?? galleryColumnsRef.current ?? 2;
-    // Scale prefetch batch dynamically: 60 for 1-2 cols, 90 for 3 cols, 120 for 4 cols, 150 for 5 cols
-    const targetCount = Math.max(60, activeCols * 30);
+    // Scale prefetch batch dynamically: 80 for 1-2 cols, 120 for 3 cols, 160 for 4 cols, 200 for 5 cols
+    const targetCount = Math.max(80, activeCols * 40);
     const targetItems = mappedList.slice(0, targetCount);
 
-    const chunkSize = 20;
+    const chunkSize = 25;
     for (let i = 0; i < targetItems.length; i += chunkSize) {
       const chunk = targetItems.slice(i, i + chunkSize);
-      const delay = Math.floor(i / chunkSize) * 60;
+      const delay = Math.floor(i / chunkSize) * 35;
       setTimeout(() => {
         const uris: string[] = [];
         chunk.forEach((p) => {

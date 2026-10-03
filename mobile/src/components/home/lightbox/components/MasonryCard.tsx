@@ -1,12 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withDelay,
-  Easing,
-} from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
@@ -39,44 +32,10 @@ export const MasonryCard = React.memo(function MasonryCard({
     : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
 
-  // Generate deterministic organic stagger & duration based on cardId/index
-  const { randomDelay, randomDuration, startScale } = React.useMemo(() => {
-    let hash = 0;
-    const key = `${cardId}-${index}`;
-    for (let i = 0; i < key.length; i++) {
-      hash = (hash << 5) - hash + key.charCodeAt(i);
-      hash |= 0;
-    }
-    const abs = Math.abs(hash);
-
-    // Stagger delay between 0ms and 210ms in organic intervals (0, 28, 56, 84, 112, 140, 168, etc.)
-    const delay = ((abs % 7) * 28) + ((abs % 3) * 12); // Range: 0 to 192ms
-    // Duration between 380ms and 480ms
-    const duration = 380 + (abs % 5) * 22; // Range: 380 to 468ms
-    // Start scale slightly varied: 1.05 to 1.08
-    const scaleVal = 1.05 + (abs % 4) * 0.01;
-
-    return { randomDelay: delay, randomDuration: duration, startScale: scaleVal };
-  }, [cardId, index]);
-
-  const scale = useSharedValue(startScale);
-  const opacity = useSharedValue(0);
-
   useEffect(() => {
     setFailedUri(null);
-    scale.value = startScale;
-    opacity.value = 0;
-  }, [primaryUri, startScale, scale, opacity]);
+  }, [primaryUri]);
 
-  const animatedImageStyle = useAnimatedStyle(() => {
-    'worklet';
-    return {
-      width: '100%',
-      height: '100%',
-      transform: [{ scale: scale.value }],
-      opacity: opacity.value,
-    };
-  });
   const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
 
   const colIdx = typeof columnIndex === 'number' ? columnIndex : (isColumn0 ? 0 : 1);
@@ -146,11 +105,16 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri) : null;
   const validThumb = rawThumb && !isVideoFile(rawThumb) ? rawThumb : null;
-  let candidateUri = validThumb || (!isVideoFile(activeUri) ? activeUri : null);
-  if (candidateUri && candidateUri.startsWith('/')) {
+  let candidateUri = validThumb ||
+    (!isVideoFile(activeUri) ? activeUri : null) ||
+    (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url) ? img.r2Url : null) ||
+    (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl) ? img.photoUrl : null) ||
+    (typeof img === 'object' && img?.url && !isVideoFile(img.url) ? img.url : null);
+
+  if (candidateUri && typeof candidateUri === 'string' && candidateUri.startsWith('/')) {
     candidateUri = `https://mycircle.mistyvisuals.com${candidateUri}`;
   }
-  const imageDisplayUri = candidateUri;
+  const imageDisplayUri = typeof candidateUri === 'string' && candidateUri.length > 0 ? candidateUri : null;
 
   return (
     <Pressable 
@@ -162,51 +126,32 @@ export const MasonryCard = React.memo(function MasonryCard({
       onPress={handlePress}
     >
       {imageDisplayUri ? (
-        <Animated.View style={animatedImageStyle}>
-          <Image
-            source={{ uri: imageDisplayUri }}
-            style={cardStyles.masonryImage}
-            contentFit="cover"
-            priority={effectivePriority}
-            cachePolicy="memory-disk"
-            placeholder={placeholderSource}
-            placeholderContentFit="cover"
-            transition={0}
-            onLoadStart={() => {
-              loadStartTimeRef.current = Date.now();
-            }}
-            onLoad={(e) => {
-              scale.value = withDelay(
-                randomDelay,
-                withTiming(1, {
-                  duration: randomDuration,
-                  easing: Easing.bezier(0.16, 1, 0.3, 1),
-                })
-              );
-              opacity.value = withDelay(
-                randomDelay,
-                withTiming(1, {
-                  duration: Math.max(280, randomDuration - 40),
-                  easing: Easing.out(Easing.quad),
-                })
-              );
-              if (e.source?.width && e.source?.height) {
-                const aspect = e.source.width / e.source.height;
-                if (cardId) savePhotoAspect(cardId, aspect);
-                if (imageDisplayUri) savePhotoAspect(imageDisplayUri, aspect);
-              }
-              const elapsed = Date.now() - (loadStartTimeRef.current || Date.now());
-              const cacheType = elapsed < 35 ? '💾 CACHE HIT (0-35ms)' : `🌐 NETWORK DOWNLOAD (${elapsed}ms)`;
-              const isThumb = imageDisplayUri.includes('thumb') || imageDisplayUri.includes('mobile') || imageDisplayUri.includes('/api/gallery/resize') || (e.source?.width && e.source.width <= 600);
-              const resTag = isThumb ? '🖼️ [THUMBNAIL]' : '4️⃣K [FULL RES ORIGINAL]';
-              console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Stagger: +${randomDelay}ms | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
-            }}
-            onError={() => {
-              console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
-              if (fallbackUri && imageDisplayUri !== fallbackUri && !isVideoFile(fallbackUri)) setFailedUri(primaryUri);
-            }}
-          />
-        </Animated.View>
+        <Image
+          source={{ uri: imageDisplayUri }}
+          style={cardStyles.masonryImage}
+          contentFit="cover"
+          priority={effectivePriority}
+          cachePolicy="memory-disk"
+          placeholder={placeholderSource}
+          placeholderContentFit="cover"
+          transition={180}
+          onLoadStart={() => {
+            loadStartTimeRef.current = Date.now();
+          }}
+          onLoad={(e) => {
+            if (e.source?.width && e.source?.height) {
+              const aspect = e.source.width / e.source.height;
+              if (cardId) savePhotoAspect(cardId, aspect);
+              if (imageDisplayUri) savePhotoAspect(imageDisplayUri, aspect);
+            }
+          }}
+          onError={() => {
+            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
+            if (fallbackUri && imageDisplayUri !== fallbackUri && !isVideoFile(fallbackUri)) {
+              setFailedUri(primaryUri);
+            }
+          }}
+        />
       ) : (
         <View style={[cardStyles.masonryImage, { backgroundColor: '#141414', justifyContent: 'center', alignItems: 'center' }]}>
           <Ionicons name="videocam-outline" size={28} color="rgba(255, 255, 255, 0.25)" />
