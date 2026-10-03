@@ -41,15 +41,15 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Layout constants:
 const HORIZONTAL_MARGIN = 9;
 const CARD_GAP = 6;
-const OVERSCAN = 800;
+const OVERSCAN = 1200;
 
 export const getPoolSizeForCols = (cols: number): number => {
   switch (cols) {
-    case 1: return 32;
-    case 2: return 38;
+    case 1: return 40;
+    case 2: return 50;
     case 3: return 44;
-    case 4: return 50;
-    case 5: default: return 54;
+    case 4: return 38;
+    case 5: default: return 34;
   }
 };
 
@@ -144,6 +144,8 @@ export interface MasonryFlashListProps<T = any> {
   contentContainerStyle?: any;
   refreshControl?: any;
   isPinchingShared?: SharedValue<boolean>;
+  onMomentumScrollEnd?: (event: any) => void;
+  onScrollEndDrag?: (event: any) => void;
 }
 
 // ─── Dynamic Layout Computation ───────────────────────────────────────────────
@@ -222,67 +224,26 @@ function assignSlots<T>(
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
   const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
 
-  // 1. Gather all items in visible window, tracking which are directly on-screen:
-  const visibleIndices: number[] = [];
-  const onScreenIndices = new Set<number>();
+  // 1. Identify all candidate items in overscan range, separating on-screen vs overscan
+  const candidates: number[] = [];
+  const onScreenSet = new Set<number>();
 
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
     if (topY + height >= minY && topY <= maxY) {
-      visibleIndices.push(i);
+      candidates.push(i);
       if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
-        onScreenIndices.add(i);
+        onScreenSet.add(i);
       }
     }
   }
 
-  const visibleSet = new Set<number>(visibleIndices);
-
-  // 2. Clone previous slots, ensuring length equals poolSize:
-  const next: SlotState[] = prevSlots.slice(0, poolSize);
-  while (next.length < poolSize) {
-    next.push({ colItemIdx: -1, top: -30000, height: 0, itemId: undefined });
-  }
-
-  const occupied = new Set<number>();
-  const freeSlotIndices: number[] = [];
-
-  for (let s = 0; s < next.length; s++) {
-    const slot = next[s];
-    const { colItemIdx, itemId } = slot;
-    if (
-      colItemIdx >= 0 &&
-      colItemIdx < items.length &&
-      visibleSet.has(colItemIdx) &&
-      String(getItemId(items[colItemIdx])) === String(itemId)
-    ) {
-      occupied.add(colItemIdx);
-      const currentItem = items[colItemIdx];
-      if (slot.top !== currentItem.topY || slot.height !== currentItem.height) {
-        next[s] = {
-          colItemIdx,
-          top: currentItem.topY,
-          height: currentItem.height,
-          itemId: String(itemId),
-        };
-      }
-    } else {
-      freeSlotIndices.push(s);
-    }
-  }
-
-  // 3. Find unassigned visible items:
-  const unassigned: number[] = [];
-  for (const idx of visibleIndices) {
-    if (!occupied.has(idx)) {
-      unassigned.push(idx);
-    }
-  }
-
-  // Sort unassigned: items directly on screen come first, then sort by proximity to viewport center
-  unassigned.sort((a, b) => {
-    const aOnScreen = onScreenIndices.has(a);
-    const bOnScreen = onScreenIndices.has(b);
+  // 2. Prioritize candidates:
+  //    - Items directly on screen ALWAYS come first (highest priority)
+  //    - Then items sorted by distance to the viewport center (closest first)
+  candidates.sort((a, b) => {
+    const aOnScreen = onScreenSet.has(a);
+    const bOnScreen = onScreenSet.has(b);
     if (aOnScreen && !bOnScreen) return -1;
     if (!aOnScreen && bOnScreen) return 1;
 
@@ -293,25 +254,70 @@ function assignSlots<T>(
     return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
   });
 
-  // 4. Assign free slots to unassigned items:
-  let fi = 0;
-  for (const itemIdx of unassigned) {
-    if (fi >= freeSlotIndices.length) break;
-    const slotIdx = freeSlotIndices[fi++];
-    const newItem = items[itemIdx];
-    const newTop = newItem.topY;
-    const newH   = newItem.height;
-    const newId  = String(getItemId(newItem) ?? itemIdx);
-    const prev   = next[slotIdx];
+  // Top `poolSize` candidates are the ones that MUST be assigned slots.
+  // Because onScreen items are sorted first, all on-screen items are GUARANTEED to be in targetIndices!
+  const targetIndices = candidates.slice(0, poolSize);
+  const targetSet = new Set<number>(targetIndices);
 
-    if (prev.colItemIdx !== itemIdx || prev.top !== newTop || prev.height !== newH || String(prev.itemId) !== newId) {
-      next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId };
+  // 3. Prepare next slot array with exact poolSize:
+  const next: SlotState[] = prevSlots.slice(0, poolSize);
+  while (next.length < poolSize) {
+    next.push({ colItemIdx: -1, top: -30000, height: 0, itemId: undefined });
+  }
+
+  const assignedItems = new Set<number>();
+  const occupiedSlots = new Set<number>();
+
+  // Pass 1: Retain slots that already hold an item that is in targetSet
+  for (let s = 0; s < next.length; s++) {
+    const slot = next[s];
+    const { colItemIdx, itemId } = slot;
+    if (
+      colItemIdx >= 0 &&
+      colItemIdx < items.length &&
+      targetSet.has(colItemIdx) &&
+      String(getItemId(items[colItemIdx])) === String(itemId)
+    ) {
+      assignedItems.add(colItemIdx);
+      occupiedSlots.add(s);
+      const currentItem = items[colItemIdx];
+      if (slot.top !== currentItem.topY || slot.height !== currentItem.height) {
+        next[s] = {
+          colItemIdx,
+          top: currentItem.topY,
+          height: currentItem.height,
+          itemId: String(itemId),
+        };
+      }
     }
   }
 
-  // Park any leftover free slots off-screen:
-  while (fi < freeSlotIndices.length) {
-    const slotIdx = freeSlotIndices[fi++];
+  // Pass 2: Collect free slots (slots not retained in Pass 1)
+  const freeSlotIndices: number[] = [];
+  for (let s = 0; s < next.length; s++) {
+    if (!occupiedSlots.has(s)) {
+      freeSlotIndices.push(s);
+    }
+  }
+
+  // Pass 3: Assign unassigned target items to free slots in priority order
+  let freeIdx = 0;
+  for (const itemIdx of targetIndices) {
+    if (!assignedItems.has(itemIdx)) {
+      if (freeIdx < freeSlotIndices.length) {
+        const slotIdx = freeSlotIndices[freeIdx++];
+        const newItem = items[itemIdx];
+        const newTop = newItem.topY;
+        const newH   = newItem.height;
+        const newId  = String(getItemId(newItem) ?? itemIdx);
+        next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId };
+      }
+    }
+  }
+
+  // Pass 4: Park any remaining free slots off-screen
+  while (freeIdx < freeSlotIndices.length) {
+    const slotIdx = freeSlotIndices[freeIdx++];
     if (next[slotIdx].colItemIdx !== -1) {
       next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined };
     }
@@ -466,7 +472,7 @@ function computeFocalAnchoredScrollY<T>(
 
 // ─── Media URI & Video Extraction Helpers for Flight Tiles ─────────────────────
 
-function getMediaDisplayUri(item: any): string {
+export function getMediaDisplayUri(item: any): string {
   if (!item) return '';
   if (typeof item === 'string') return item;
   const isVideoFile = (u: string | null | undefined) => {
@@ -801,6 +807,8 @@ export function MasonryFlashList<T = any>({
   mainScrollRef,
   refreshControl,
   isPinchingShared,
+  onMomentumScrollEnd,
+  onScrollEndDrag,
 }: MasonryFlashListProps<T>) {
   // ─── Shared Values ─────────────────────────────────────────────────────────
   const pinchScale = useSharedValue(1);
@@ -927,12 +935,35 @@ export function MasonryFlashList<T = any>({
     endReachedFiredRef.current = false;
   }, [data]);
 
+  const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (trailingUpdateTimerRef.current) {
+        clearTimeout(trailingUpdateTimerRef.current);
+        trailingUpdateTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // ─── Slot Updates from Scroll Worklet ──────────────────────────────────────
-  const updateSlotsFromY = useCallback((y: number) => {
+  const updateSlotsFromY = useCallback((y: number, force: boolean = false) => {
     if (isPinchingState || isTransitioning) return;
 
     const now = Date.now();
-    if (now - lastUpdateRef.current < 16) return;
+    if (!force && now - lastUpdateRef.current < 16) {
+      if (trailingUpdateTimerRef.current) {
+        clearTimeout(trailingUpdateTimerRef.current);
+      }
+      trailingUpdateTimerRef.current = setTimeout(() => {
+        updateSlotsFromY(scrollYRef.current, true);
+      }, 32);
+      return;
+    }
+    if (trailingUpdateTimerRef.current) {
+      clearTimeout(trailingUpdateTimerRef.current);
+      trailingUpdateTimerRef.current = null;
+    }
     lastUpdateRef.current = now;
     scrollYRef.current = y;
 
@@ -1295,6 +1326,14 @@ export function MasonryFlashList<T = any>({
             style={styles.scrollView}
             contentContainerStyle={styles.contentContainer}
             refreshControl={refreshControl}
+            onMomentumScrollEnd={(e) => {
+              updateSlotsFromY(e.nativeEvent.contentOffset.y, true);
+              onMomentumScrollEnd?.(e);
+            }}
+            onScrollEndDrag={(e) => {
+              updateSlotsFromY(e.nativeEvent.contentOffset.y, true);
+              onScrollEndDrag?.(e);
+            }}
           >
             {/* Child 0: Hero cover */}
             {renderHeroCover ? (

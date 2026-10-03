@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MasonryFlashList } from '../common/MasonryFlashList';
+import { MasonryFlashList, getMediaDisplayUri } from '../common/MasonryFlashList';
 import { getPhotoAspect } from '../../utils/photoDimensionCache';
 import { getThumbnailUrl, getFullPhotoUrl } from '../../utils/imageUrl';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -319,6 +319,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   // Column Density & Pinch-to-Zoom State (1 = editorial, 2 = masonry, 3 = compact grid)
   const [galleryColumns, setGalleryColumns] = useState<number>(2);
+  const galleryColumnsRef = useRef<number>(2);
+  galleryColumnsRef.current = galleryColumns;
+  const scheduleBatchPrefetchRef = useRef<((mappedList: Photo[], cols?: number) => void) | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem('mycircle_gallery_columns').then((val) => {
@@ -326,6 +329,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const parsed = parseInt(val, 10);
         if (parsed >= 1 && parsed <= 5) {
           setGalleryColumns(parsed);
+          galleryColumnsRef.current = parsed;
         }
       }
     }).catch(() => {});
@@ -333,7 +337,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const handleGalleryColumnsChange = useCallback((newCols: number) => {
     setGalleryColumns(newCols);
+    galleryColumnsRef.current = newCols;
     AsyncStorage.setItem('mycircle_gallery_columns', String(newCols)).catch(() => {});
+    if (activeListRef.current && activeListRef.current.length > 0) {
+      scheduleBatchPrefetchRef.current?.(activeListRef.current, newCols);
+    }
   }, []);
 
   const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
@@ -524,21 +532,31 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       tabOffsetsRef.current[activeTab.trim().toUpperCase()] = offsetY;
     }
 
+    const currentCols = galleryColumnsRef.current || 2;
     const heroHeight = Math.round(screenHeight * 0.70);
     const relativeY = Math.max(0, offsetY - heroHeight);
-    const newEnd = Math.max(0, Math.floor(relativeY / 220) * 2 - 4) + 20;
+    const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
+    const currentRow = Math.floor(relativeY / rowH);
+    const visibleStartIndex = Math.max(0, currentRow * currentCols);
 
-    // Viewport-Proximity Pre-fetch: pre-fetch the next 12 cards right below the user's screen
-    const upcomingPhotos = activeListRef.current.slice(newEnd, newEnd + 12);
+    // Viewport-Proximity Pre-fetch: pre-fetch upcoming thumbnail cards ahead of the user's screen
+    // Dynamically scale prefetch count based on column count (e.g. 30 for 1-2 cols, 45 for 3 cols, 60 for 4 cols, 75 for 5 cols)
+    const prefetchWindow = Math.max(30, currentCols * 15);
+    const upcomingPhotos = activeListRef.current.slice(visibleStartIndex, visibleStartIndex + prefetchWindow);
+    const urlsToPrefetch: string[] = [];
     upcomingPhotos.forEach((photo) => {
-      const uri = photo.r2Url || photo.uri || photo.fullUri;
+      const uri = getMediaDisplayUri(photo);
       if (uri && !prefetchedUrlsRef.current.has(uri)) {
         prefetchedUrlsRef.current.add(uri);
-        Image.prefetch(uri);
+        urlsToPrefetch.push(uri);
       }
     });
+    if (urlsToPrefetch.length > 0) {
+      Image.prefetch(urlsToPrefetch, 'memory-disk');
+    }
 
-    const isNearBottom = layoutHeight + offsetY >= contentHeight - 8000;
+    const nearBottomThreshold = currentCols >= 4 ? 12000 : 8000;
+    const isNearBottom = layoutHeight + offsetY >= contentHeight - nearBottomThreshold;
     if (isNearBottom && hasMorePhotos && !isFetchingMoreRef.current && loadMorePhotosRef.current) {
       loadMorePhotosRef.current();
     }
@@ -609,20 +627,38 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [eventSlug]);
 
-  // Viewport-Proximity & Page Batch Pre-Fetch Engine: Prefetches upcoming 20 thumbnail photos into native image cache
-  const scheduleBatchPrefetch = useCallback((mappedList: Photo[]) => {
+  // Viewport-Proximity & Page Batch Pre-Fetch Engine: Prefetches upcoming thumbnail photos into native image cache
+  const scheduleBatchPrefetch = useCallback((mappedList: Photo[], cols?: number) => {
     if (!mappedList || mappedList.length === 0) return;
 
-    // Prefetch next 20 thumbnail photos (~3 screens ahead) without choking network connection sockets
-    const chunk = mappedList.slice(0, 20);
-    chunk.forEach((p) => {
-      const targetUri = p.uri || p.r2Url || p.fullUri;
-      if (targetUri && !prefetchedUrlsRef.current.has(targetUri)) {
-        prefetchedUrlsRef.current.add(targetUri);
-        Image.prefetch(targetUri);
-      }
-    });
+    const activeCols = cols ?? galleryColumnsRef.current ?? 2;
+    // Scale prefetch batch dynamically: 60 for 1-2 cols, 90 for 3 cols, 120 for 4 cols, 150 for 5 cols
+    const targetCount = Math.max(60, activeCols * 30);
+    const targetItems = mappedList.slice(0, targetCount);
+
+    const chunkSize = 20;
+    for (let i = 0; i < targetItems.length; i += chunkSize) {
+      const chunk = targetItems.slice(i, i + chunkSize);
+      const delay = Math.floor(i / chunkSize) * 60;
+      setTimeout(() => {
+        const uris: string[] = [];
+        chunk.forEach((p) => {
+          const targetUri = getMediaDisplayUri(p);
+          if (targetUri && !prefetchedUrlsRef.current.has(targetUri)) {
+            prefetchedUrlsRef.current.add(targetUri);
+            uris.push(targetUri);
+          }
+        });
+        if (uris.length > 0) {
+          Image.prefetch(uris, 'memory-disk');
+        }
+      }, delay);
+    }
   }, []);
+
+  useEffect(() => {
+    scheduleBatchPrefetchRef.current = scheduleBatchPrefetch;
+  }, [scheduleBatchPrefetch]);
 
 
 
@@ -709,11 +745,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         : (familyToken ? { Authorization: `Bearer ${familyToken}` } : {});
 
       // 3. Parallel photo fetch
+      const initialFetchLimit = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
         guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
           return { data: [], status: e?.response?.status };
         }),
-        guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${PAGE_SIZE}&offset=0`, { headers: eventHeaders }).catch((e) => {
+        guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${initialFetchLimit}&offset=0`, { headers: eventHeaders }).catch((e) => {
           return { data: [], status: e?.response?.status };
         }),
         guestApi.get(`/api/gallery/public/events/${eventSlug}/favorites`, { headers: eventHeaders }).catch((e) => {
@@ -1022,11 +1059,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(activeTab)}` : '';
       const eventHeaders = eventHeadersRef.current;
+      const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       const loadMoreStartTime = Date.now();
-      console.log(`[MYCIRCLE DEBUG 📥] Pre-fetching next page for '${normTab}' -> offset=${currentOffset}, limit=${PAGE_SIZE}...`);
+      console.log(`[MYCIRCLE DEBUG 📥] Pre-fetching next page for '${normTab}' -> offset=${currentOffset}, limit=${dynamicPageSize}...`);
 
       const allRes = await guestApi.get(
-        `/api/gallery/public/events/${eventSlug}/photos?limit=${PAGE_SIZE}&offset=${currentOffset}${tabQuery}`,
+        `/api/gallery/public/events/${eventSlug}/photos?limit=${dynamicPageSize}&offset=${currentOffset}${tabQuery}`,
         { headers: eventHeaders }
       );
       const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
@@ -1940,15 +1978,24 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const masonryColWidth = Math.floor((width - 16 - 6) / 2);
 
-  // Pre-fetch top 12 images (both left & right columns) into native cache for 100% simultaneous 0ms paint
+  // Pre-fetch top images into native cache for 100% simultaneous 0ms paint
   useEffect(() => {
     if (!activeList || activeList.length === 0) return;
-    const topItems = activeList.slice(0, 12);
+    const currentCols = galleryColumnsRef.current || 2;
+    const count = Math.max(30, currentCols * 12);
+    const topItems = activeList.slice(0, count);
+    const uris: string[] = [];
     topItems.forEach((photo: any) => {
-      const uri = photo.r2Url || photo.uri || photo.fullUri;
-      if (uri) Image.prefetch(uri);
+      const uri = getMediaDisplayUri(photo);
+      if (uri && !prefetchedUrlsRef.current.has(uri)) {
+        prefetchedUrlsRef.current.add(uri);
+        uris.push(uri);
+      }
     });
-  }, [activeTab, activeList]);
+    if (uris.length > 0) {
+      Image.prefetch(uris, 'memory-disk');
+    }
+  }, [activeTab, activeList, galleryColumns]);
 
   // Bounds measurement for smooth Lightbox opening & background page auto-scrolling
   const getBoundsForIndex = useCallback((idx: number, callback: (bounds: LightboxBounds) => void) => {
@@ -2337,12 +2384,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                     <View style={[styles.masonryCard, styles.skeletonCard, { width: '100%', height: '100%' }]} />
                   ) : (
                     <MasonryCard
+                      key={item.id ? String(item.id) : (item.r2Url || `photo-${index}`)}
                       img={item}
                       index={index}
                       isColumn0={isColumn0}
                       columnIndex={columnIndex}
                       numColumns={numColumns}
-                      isHighPriority={index < 12}
+                      isHighPriority={index < Math.max(24, (numColumns || 2) * 12)}
                       onSelect={(bounds) => openLightbox(item, bounds)}
                       onRegisterRef={(id, ref) => {
                         const refId = item.id ? String(item.id) : (item.r2Url || `photo-${index}`);

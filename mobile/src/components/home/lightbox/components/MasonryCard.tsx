@@ -31,6 +31,9 @@ export const MasonryCard = React.memo(function MasonryCard({
     ? (img.blurhash || img.blur_hash || img.blurHash)
     : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
+  useEffect(() => {
+    setFailedUri(null);
+  }, [primaryUri]);
   const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
 
   const colIdx = typeof columnIndex === 'number' ? columnIndex : (isColumn0 ? 0 : 1);
