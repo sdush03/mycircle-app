@@ -476,7 +476,13 @@ export default function SettingsModal({
                         <View key={ev.slug || ev.id || index}>
                           <View style={styles.eventItemRow}>
                             {cover ? (
-                              <ExpoImage source={{ uri: cover }} style={styles.eventThumbnail} />
+                              <ExpoImage
+                                source={{ uri: cover }}
+                                style={styles.eventThumbnail}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                transition={150}
+                              />
                             ) : (
                               <View style={styles.eventThumbnailPlaceholder}>
                                 <Ionicons name="images-outline" size={16} color="#888888" />

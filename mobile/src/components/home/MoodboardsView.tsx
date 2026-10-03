@@ -5,11 +5,11 @@ import {
   Text,
   Modal,
   ScrollView,
-  Image,
   Pressable,
   Dimensions,
   BackHandler,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CollectionGridView, { CollectionItem } from './CollectionGridView';
 import { formatUniversalGalleryImages } from '../../utils/masonryHelper';
@@ -169,7 +169,13 @@ export default function MoodboardsView({
             <View style={styles.gridContainer}>
               {(activeBoard.images || []).map((img, idx) => (
                 <View key={idx} style={styles.gridCard}>
-                  <Image source={typeof img === 'string' ? { uri: img } : img} style={styles.gridImage} />
+                  <ExpoImage
+                    source={typeof img === 'string' ? { uri: img } : img}
+                    style={styles.gridImage}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={150}
+                  />
                 </View>
               ))}
             </View>

@@ -75,10 +75,17 @@ export default function CollectionGridView({
   const isClickBusyRef = useRef(false);
   const storyDetailsCacheRef = useRef<Record<string, any>>({});
 
-  // Background pre-fetch story details into memory cache
+  // Background pre-fetch story details into memory cache & pre-warm disk cache for covers
   React.useEffect(() => {
     if (isOpen && items && items.length > 0) {
       items.forEach((item) => {
+        // Pre-warm disk cache for both vertical and horizontal covers
+        const covers = [
+          typeof item.coverImage === 'string' ? item.coverImage : item.coverImage?.uri,
+          typeof item.horizontalCoverImage === 'string' ? item.horizontalCoverImage : item.horizontalCoverImage?.uri,
+        ].filter(Boolean);
+        covers.forEach((c) => ExpoImage.prefetch(c));
+
         const raw = item.rawItem;
         if (raw && raw.slug && !storyDetailsCacheRef.current[raw.slug] && (!raw.images || raw.images.length === 0)) {
           fetch(`https://www.mistyvisuals.com/api/website/stories/${raw.slug}`)
@@ -113,7 +120,14 @@ export default function CollectionGridView({
         }
       });
     }
-  }, [isOpen, items]);
+
+    if (isOpen && customCategoryCards && customCategoryCards.length > 0) {
+      customCategoryCards.forEach((card) => {
+        const c = typeof card.coverImage === 'string' ? card.coverImage : card.coverImage?.uri;
+        if (c) ExpoImage.prefetch(c);
+      });
+    }
+  }, [isOpen, items, customCategoryCards]);
 
   const handleItemClick = async (item: CollectionItem) => {
     if (isClickBusyRef.current || activeStoryModalItem !== null) return;
@@ -497,13 +511,16 @@ export default function CollectionGridView({
                           onPress={() => selectCategoryWithPush(catCard.name)}
                         >
                         {catCard.coverImage ? (
-                          <Image
+                          <ExpoImage
                             source={
                               typeof catCard.coverImage === 'string'
                                 ? { uri: catCard.coverImage }
                                 : catCard.coverImage
                             }
                             style={styles.cover}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={150}
                           />
                         ) : (
                           <View style={[styles.cover, { backgroundColor: '#18181b' }]} />
@@ -535,13 +552,17 @@ export default function CollectionGridView({
                         onPress={() => handleItemClick(featuredItem)}
                       >
                         {(featuredItem.horizontalCoverImage || featuredItem.coverImage) ? (
-                          <Image
+                          <ExpoImage
                             source={
                               typeof (featuredItem.horizontalCoverImage || featuredItem.coverImage) === 'string'
                                 ? { uri: featuredItem.horizontalCoverImage || featuredItem.coverImage }
                                 : (featuredItem.horizontalCoverImage || featuredItem.coverImage)
                             }
                             style={styles.featuredCover}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            priority="high"
+                            transition={150}
                           />
                         ) : (
                           <View style={[styles.featuredCover, { backgroundColor: '#18181b' }]} />
@@ -588,7 +609,13 @@ export default function CollectionGridView({
                             onPress={() => handleItemClick(item)}
                           >
                             {imageSource ? (
-                              <Image source={imageSource} style={styles.cover} />
+                              <ExpoImage
+                                source={imageSource}
+                                style={styles.cover}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                transition={150}
+                              />
                             ) : (
                               <View style={[styles.cover, { backgroundColor: '#18181b' }]} />
                             )}

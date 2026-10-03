@@ -896,7 +896,7 @@ export function MasonryFlashList<T = any>({
         const toCols = pendingAutoCommitRef.current;
         pendingAutoCommitRef.current = null;
         transitionProgress.value = withTiming(1, {
-          duration: 220,
+          duration: 350,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, () => {
           runOnJS(commitTransitionOnJS)(toCols);
@@ -1329,11 +1329,11 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            // Pinch-in: scale goes from 0.985 (threshold) down to ~0.765 (full progress)
-            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.22));
+            // Pinch-in: scale goes from 0.985 (threshold) down to ~0.735 (full progress)
+            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.25));
           } else if (pinchDirection.value === -1) {
-            // Pinch-out: scale goes from 1.015 (threshold) up to ~1.235 (full progress)
-            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.22));
+            // Pinch-out: scale goes from 1.015 (threshold) up to ~1.265 (full progress)
+            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.25));
           }
 
           if (hasTransitionCardsShared.value) {
@@ -1359,9 +1359,9 @@ export function MasonryFlashList<T = any>({
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
               // Smoothly complete remaining flight to 1.0
-              // Duration scales with how much is left — if user already dragged to 0.9, snap is instant
+              // Duration scales with how much is left, with generous minimum for visibility
               const remaining = 1 - currentP;
-              const duration = Math.max(60, Math.round(remaining * 220));
+              const duration = Math.max(150, Math.round(remaining * 350));
               transitionProgress.value = withTiming(1, {
                 duration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
@@ -1376,8 +1376,9 @@ export function MasonryFlashList<T = any>({
             // Cancel transition: animate cards back to 0:
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
+              const cancelDuration = Math.max(120, Math.round(currentP * 250));
               transitionProgress.value = withTiming(0, {
-                duration: 180,
+                duration: cancelDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, () => {
                 runOnJS(cancelTransitionOnJS)();

@@ -5,12 +5,12 @@ import {
   Text, 
   Modal, 
   ScrollView, 
-  Image, 
   Pressable,
   StatusBar,
   Dimensions,
   BackHandler,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, Easing, runOnJS } from 'react-native-reanimated';
@@ -162,7 +162,14 @@ export default function ArticleView({ isOpen, onClose, article }: ArticleViewPro
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Cover Image */}
           <View style={styles.coverContainer}>
-            <Image source={article.coverImage} style={styles.coverImage} />
+            <ExpoImage
+              source={article.coverImage}
+              style={styles.coverImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              priority="high"
+              transition={150}
+            />
             <View style={styles.coverOverlay} />
           </View>
 
