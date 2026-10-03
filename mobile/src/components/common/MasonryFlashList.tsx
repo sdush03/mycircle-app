@@ -858,7 +858,7 @@ export function MasonryFlashList<T = any>({
         const toCols = pendingAutoCommitRef.current;
         pendingAutoCommitRef.current = null;
         transitionProgress.value = withTiming(1, {
-          duration: 480,
+          duration: 560,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, (finished) => {
           if (finished) {
@@ -1222,9 +1222,9 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // Smoothly complete remaining flight to 1.0 (480ms) with elegant iOS spring-like curve:
+              // Smoothly complete remaining flight to 1.0 (560ms) with elegant iOS spring-like curve:
               transitionProgress.value = withTiming(1, {
-                duration: 480,
+                duration: 560,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 if (finished) {
