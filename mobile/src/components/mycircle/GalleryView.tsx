@@ -632,9 +632,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (!mappedList || mappedList.length === 0) return;
 
     const activeCols = cols ?? galleryColumnsRef.current ?? 2;
+    const heroHeight = Math.round(screenHeight * 0.70);
+    const relativeY = Math.max(0, currentYRef.current - heroHeight);
+    const rowH = activeCols === 1 ? 380 : (activeCols === 2 ? 220 : (activeCols === 3 ? 145 : (activeCols === 4 ? 105 : 80)));
+    const currentRow = Math.floor(relativeY / rowH);
+    const visibleStartIndex = Math.max(0, (currentRow - 2) * activeCols);
     // Scale prefetch batch dynamically: 80 for 1-2 cols, 120 for 3 cols, 160 for 4 cols, 200 for 5 cols
     const targetCount = Math.max(80, activeCols * 40);
-    const targetItems = mappedList.slice(0, targetCount);
+    const targetItems = mappedList.slice(visibleStartIndex, visibleStartIndex + targetCount);
 
     const chunkSize = 25;
     for (let i = 0; i < targetItems.length; i += chunkSize) {

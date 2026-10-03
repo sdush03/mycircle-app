@@ -368,12 +368,11 @@ function findFocalAnchorItem<T>(
 ): ColumnItem<T> | null {
   if (!layout || !layout.columns || layout.columns.length === 0) return null;
 
-  const contentX = focalX - HORIZONTAL_MARGIN;
-  const contentY = currentScrollY + screenFocalY - headerHeight;
+  const effectiveFocalX = (typeof focalX === 'number' && focalX > 0) ? focalX : SCREEN_WIDTH / 2;
+  const effectiveFocalY = (typeof screenFocalY === 'number' && screenFocalY > 0) ? screenFocalY : SCREEN_HEIGHT / 2;
 
-  if (contentY < 0) {
-    return null; // Finger touch is above photos in the header area
-  }
+  const contentX = effectiveFocalX - HORIZONTAL_MARGIN;
+  const contentY = currentScrollY + effectiveFocalY - headerHeight;
 
   // 1. Check column closest to contentX:
   const colW = layout.colWidth;
@@ -390,7 +389,7 @@ function findFocalAnchorItem<T>(
     }
   }
 
-  // 2. Fallback: find item in any column with center closest to (focalX, contentY):
+  // 2. Fallback: find item in any column with center closest to (effectiveFocalX, contentY):
   let bestItem: ColumnItem<T> | null = null;
   let bestDist = Infinity;
 
@@ -402,7 +401,7 @@ function findFocalAnchorItem<T>(
     for (let i = 0; i < column.items.length; i++) {
       const it = column.items[i];
       const itCenterY = it.topY + it.height / 2;
-      const dx = colCenterX - focalX;
+      const dx = colCenterX - effectiveFocalX;
       const dy = itCenterY - contentY;
       const dist = dx * dx + dy * dy;
       if (dist < bestDist) {
@@ -424,14 +423,17 @@ function computeFocalAnchoredScrollY<T>(
   currentLayout: MasonryLayout<T>,
   targetLayout: MasonryLayout<T>,
 ): number {
-  const contentY = currentScrollY + screenFocalY - headerHeight;
-  if (contentY < 0) {
-    return currentScrollY;
+  const fromScrollable = Math.max(1, currentLayout.maxHeight + headerHeight - screenHeight);
+  const toScrollable = Math.max(1, targetLayout.maxHeight + headerHeight - screenHeight);
+  const proportionalFallback = Math.round(Math.max(0, Math.min(1, currentScrollY / fromScrollable)) * toScrollable);
+
+  if (currentScrollY <= 20) {
+    return 0;
   }
 
   const anchorItem = findFocalAnchorItem(currentLayout, currentScrollY, headerHeight, focalX, screenFocalY);
   if (!anchorItem) {
-    return currentScrollY;
+    return proportionalFallback;
   }
 
   // Anchor item's center Y in current layout:
@@ -459,7 +461,7 @@ function computeFocalAnchoredScrollY<T>(
   }
 
   if (!targetItem) {
-    return currentScrollY;
+    return proportionalFallback;
   }
 
   // Align targetItem so its center lands at the EXACT SAME anchorItemScreenY:
@@ -826,6 +828,8 @@ export function MasonryFlashList<T = any>({
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
   const pendingTargetLayoutRef = useRef<MasonryLayout<T> | null>(null);
   const pendingAutoCommitRef = useRef<number | null>(null);
+  const pendingScrollRestorationRef = useRef<number | null>(null);
+  const transitionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitTransitionRef = useRef<(cols: number) => void>(() => {});
 
   const commitTransitionOnJS = useCallback((cols: number) => {
@@ -849,6 +853,13 @@ export function MasonryFlashList<T = any>({
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
 
+  const finalizeGestureIfStuck = useCallback(() => {
+    setIsPinchingState(false);
+    if (!isTransitioningRef.current) {
+      isTransitioningShared.value = false;
+    }
+  }, [isTransitioningShared]);
+
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
       hasTransitionCardsShared.value = true;
@@ -858,12 +869,10 @@ export function MasonryFlashList<T = any>({
         const toCols = pendingAutoCommitRef.current;
         pendingAutoCommitRef.current = null;
         transitionProgress.value = withTiming(1, {
-          duration: 560,
+          duration: 220,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-        }, (finished) => {
-          if (finished) {
-            runOnJS(commitTransitionOnJS)(toCols);
-          }
+        }, () => {
+          runOnJS(commitTransitionOnJS)(toCols);
         });
       }
     } else {
@@ -1052,6 +1061,10 @@ export function MasonryFlashList<T = any>({
 
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   const finalizeCommit = useCallback(() => {
+    if (transitionWatchdogTimerRef.current) {
+      clearTimeout(transitionWatchdogTimerRef.current);
+      transitionWatchdogTimerRef.current = null;
+    }
     pendingAutoCommitRef.current = null;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
@@ -1070,26 +1083,37 @@ export function MasonryFlashList<T = any>({
 
     // 1. Immediately switch base grid state to target columns and slots:
     if (targetLayout && targetSlots) {
-      performScrollTo(targetScrollY);
+      pendingScrollRestorationRef.current = targetScrollY;
+      currentColsShared.value = targetCols;
       setCurrentCols(targetCols);
       setColumnSlots(targetSlots);
       columnSlotsRef.current = targetSlots;
       layoutRef.current = targetLayout;
+
+      performScrollTo(targetScrollY);
+      requestAnimationFrame(() => {
+        performScrollTo(targetScrollY);
+      });
+      setTimeout(() => {
+        performScrollTo(targetScrollY);
+      }, 40);
     }
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Keep the transition overlay cards visible for 140ms while React + native
-    // mount and paint the new base grid views in native.
-    // Then cleanly swap in a single tick (NO crossfade, NO background ghost photo):
+    // 2. Snappy seamless hand-off: keep overlay visible for only 50ms while native mounts
     setTimeout(() => {
       finalizeCommit();
-    }, 140);
-  }, [performScrollTo, onNumColumnsChange, finalizeCommit]);
+    }, 50);
+  }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared]);
 
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
+    if (transitionWatchdogTimerRef.current) {
+      clearTimeout(transitionWatchdogTimerRef.current);
+      transitionWatchdogTimerRef.current = null;
+    }
     pendingAutoCommitRef.current = null;
     hasTransitionCardsShared.value = false;
     isTransitioningShared.value = false;
@@ -1109,6 +1133,14 @@ export function MasonryFlashList<T = any>({
     if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
       return;
     }
+
+    // Safety watchdog: guarantee the grid NEVER remains locked for more than 450ms
+    if (transitionWatchdogTimerRef.current) {
+      clearTimeout(transitionWatchdogTimerRef.current);
+    }
+    transitionWatchdogTimerRef.current = setTimeout(() => {
+      finalizeCommit();
+    }, 450);
 
     const currentScrollY = scrollSharedValue ? scrollSharedValue.value : scrollYRef.current;
     const currentHeaderHeight = headerHeightRef.current;
@@ -1145,7 +1177,7 @@ export function MasonryFlashList<T = any>({
     setTransitionCards(cards);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
-  }, [currentCols, minColumns, maxColumns, scrollSharedValue]);
+  }, [currentCols, minColumns, maxColumns, scrollSharedValue, finalizeCommit]);
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
@@ -1222,14 +1254,12 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // Smoothly complete remaining flight to 1.0 (560ms) with elegant iOS spring-like curve:
+              // Smoothly complete remaining flight to 1.0 (snappy 220ms) with elegant iOS curve:
               transitionProgress.value = withTiming(1, {
-                duration: 560,
+                duration: 220,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-              }, (finished) => {
-                if (finished) {
-                  runOnJS(commitTransitionOnJS)(targetCols);
-                }
+              }, () => {
+                runOnJS(commitTransitionOnJS)(targetCols);
               });
             } else {
               // Quick flick finished before overlay finished mounting across bridge:
@@ -1240,12 +1270,10 @@ export function MasonryFlashList<T = any>({
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               transitionProgress.value = withTiming(0, {
-                duration: 320,
+                duration: 180,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-              }, (finished) => {
-                if (finished) {
-                  runOnJS(cancelTransition)();
-                }
+              }, () => {
+                runOnJS(cancelTransition)();
               });
             } else {
               runOnJS(cancelTransition)();
@@ -1260,10 +1288,7 @@ export function MasonryFlashList<T = any>({
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
-        if (pinchDirection.value === 0) {
-          runOnJS(setIsPinchingState)(false);
-          isTransitioningShared.value = false;
-        }
+        runOnJS(finalizeGestureIfStuck)();
       });
   }, [
     enablePinchToZoom,
@@ -1285,6 +1310,7 @@ export function MasonryFlashList<T = any>({
     cancelTransition,
     setPendingAutoCommit,
     clearPendingAutoCommit,
+    finalizeGestureIfStuck,
   ]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
@@ -1324,7 +1350,18 @@ export function MasonryFlashList<T = any>({
             scrollEnabled={!isPinchingState && !isTransitioning}
             stickyHeaderIndices={renderStickyHeader ? [1] : undefined}
             style={styles.scrollView}
-            contentContainerStyle={styles.contentContainer}
+            contentContainerStyle={[
+              styles.contentContainer,
+              { minHeight: layout.maxHeight + headerHeight },
+            ]}
+            onContentSizeChange={(_w, _h) => {
+              if (pendingScrollRestorationRef.current !== null) {
+                const targetY = pendingScrollRestorationRef.current;
+                pendingScrollRestorationRef.current = null;
+                performScrollTo(targetY);
+                updateSlotsFromY(targetY, true);
+              }
+            }}
             refreshControl={refreshControl}
             onMomentumScrollEnd={(e) => {
               updateSlotsFromY(e.nativeEvent.contentOffset.y, true);
