@@ -1406,11 +1406,20 @@ export function MasonryFlashList<T = any>({
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
     // Grid is ALWAYS visible — the overlay covers it from above when overlayOpacity > 0.
-    // This means the grid starts painting immediately during transitions, and by the time
-    // the overlay fades out (150ms cross-fade), the grid has had plenty of time to paint.
-    return {
-      opacity: 1,
-    };
+    // When overlay is not yet visible (JS still computing), apply a subtle scale effect
+    // driven directly by the pinch gesture on the UI thread — gives instant feedback.
+    if (overlayOpacity.value > 0.5) {
+      // Overlay is covering — just show grid at normal size underneath
+      return { opacity: 1, transform: [{ scale: 1 }] };
+    }
+    if (pinchDirection.value !== 0 && !hasTransitionCardsShared.value) {
+      // Pinch detected but overlay not yet ready — show immediate scale feedback
+      const scaleBase = pinchDirection.value === 1 ? 0.97 : 1.03; // pinch-in shrinks, pinch-out grows
+      const p = transitionProgress.value;
+      const scale = 1 + (scaleBase - 1) * Math.min(1, p * 3);
+      return { opacity: 1, transform: [{ scale }] };
+    }
+    return { opacity: 1, transform: [{ scale: 1 }] };
   });
 
   const renderedFooter = useMemo(() => {

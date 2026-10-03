@@ -2682,7 +2682,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f2eee8',
+    backgroundColor: 'transparent',
   },
   cinemaOverlayContainer: {
     ...StyleSheet.absoluteFillObject,
