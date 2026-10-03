@@ -885,7 +885,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const errData = err?.response?.data;
         const errCode = errData?.code;
 
-        console.warn(`[MYCIRCLE BUNDLE ⚠️] Status: ${status}, Code: ${errCode}`, errData);
+        if (status === 404) {
+          console.log(`[MYCIRCLE BUNDLE] /bundle not present on backend (404), falling back to standard endpoints.`);
+        } else {
+          console.warn(`[MYCIRCLE BUNDLE ⚠️] Status: ${status}, Code: ${errCode}`, errData);
+        }
 
         // Security Fundamental 1: Guest was blocked or removed by admin
         if (status === 403) {
