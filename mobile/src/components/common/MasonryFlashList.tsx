@@ -891,12 +891,12 @@ export function MasonryFlashList<T = any>({
       hasTransitionCardsShared.value = true;
       overlayOpacity.value = 1; // Overlay covers grid instantly
 
-      // If user did a quick flick and lifted fingers before overlay finished mounting:
       if (pendingAutoCommitRef.current !== null) {
         const toCols = pendingAutoCommitRef.current;
         pendingAutoCommitRef.current = null;
+        // TEMPORARY SLOW-MOTION TEST: 1200ms so flight can be observed frame-by-frame
         transitionProgress.value = withTiming(1, {
-          duration: 350,
+          duration: 1200,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, () => {
           runOnJS(commitTransitionOnJS)(toCols);
@@ -1114,11 +1114,9 @@ export function MasonryFlashList<T = any>({
     // Force slot refresh at current scroll position so correct photos show immediately:
     updateSlotsFromY(scrollYRef.current, true);
 
-    // Smooth cross-fade: animate overlay opacity from 1 → 0 over 150ms.
-    // The base grid is already visible underneath (always opacity 1).
-    // This gives the grid time to fully paint while the overlay masks any gaps.
+    // Smooth cross-fade: animate overlay opacity from 1 → 0 over 400ms (temporary slow-mo test)
     overlayOpacity.value = withTiming(0, {
-      duration: 150,
+      duration: 400,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1183,7 +1181,7 @@ export function MasonryFlashList<T = any>({
     updateSlotsFromY(scrollYRef.current, true);
     // Cross-fade overlay out, then clean up cards:
     overlayOpacity.value = withTiming(0, {
-      duration: 120,
+      duration: 300,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1219,7 +1217,7 @@ export function MasonryFlashList<T = any>({
       if (isTransitioningRef.current && !isPinching.value) {
         finalizeCommit();
       }
-    }, 2000);
+    }, 6000); // 6000ms for slow-mo testing
 
     // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
     // scrollSharedValue.value on JS thread which can be stale across the bridge.
@@ -1358,10 +1356,9 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // Smoothly complete remaining flight to 1.0
-              // Duration scales with how much is left, with generous minimum for visibility
+              // TEMPORARY SLOW-MOTION TEST: 1200ms completion flight
               const remaining = 1 - currentP;
-              const duration = Math.max(150, Math.round(remaining * 350));
+              const duration = Math.max(600, Math.round(remaining * 1200));
               transitionProgress.value = withTiming(1, {
                 duration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
@@ -1376,7 +1373,7 @@ export function MasonryFlashList<T = any>({
             // Cancel transition: animate cards back to 0:
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
-              const cancelDuration = Math.max(120, Math.round(currentP * 250));
+              const cancelDuration = Math.max(400, Math.round(currentP * 800));
               transitionProgress.value = withTiming(0, {
                 duration: cancelDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
