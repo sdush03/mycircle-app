@@ -1634,19 +1634,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       'worklet';
       if (isLightboxOpen.value || isPinching.value) {
         touchStartedOnLeftEdge.value = false;
-        screenSwipeX.value = 0;
         return;
       }
       touchStartedOnLeftEdge.value = e.x <= 45;
     })
     .onUpdate((e) => {
       'worklet';
-      if (isPinching.value) {
-        touchStartedOnLeftEdge.value = false;
-        screenSwipeX.value = 0;
-        return;
-      }
-      if (!touchStartedOnLeftEdge.value) return;
+      if (!touchStartedOnLeftEdge.value || isPinching.value) return;
       if (e.translationX > 0) {
         if (isCinemaShared.value) {
           cinemaSwipeX.value = e.translationX;
