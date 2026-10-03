@@ -19,6 +19,8 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, Dimensions } from 'react-native';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useAnimatedReaction,
   runOnJS,
@@ -95,6 +97,8 @@ function getItemId<T>(item: ColumnItem<T> | undefined): string | undefined {
 export interface TransitionCardData<T> {
   id: string | number;
   item: T;
+  uri: string;
+  isVideo: boolean;
   originalIndex: number;
   targetCol: number;
   startX: number;
@@ -107,6 +111,10 @@ export interface TransitionCardData<T> {
   endW: number;
   endH: number;
   endOpacity: number;
+  tx: number;
+  ty: number;
+  scaleDelta: number;
+  opacityDelta: number;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -458,6 +466,39 @@ function computeFocalAnchoredScrollY<T>(
   return Math.max(0, Math.min(maxScroll, Math.round(desiredScrollY)));
 }
 
+// ─── Media URI & Video Extraction Helpers for Flight Tiles ─────────────────────
+
+function getMediaDisplayUri(item: any): string {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  const isVideoFile = (u: string | null | undefined) => {
+    if (!u || typeof u !== 'string') return false;
+    const clean = u.split('?')[0].toLowerCase();
+    return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.endsWith('.webm');
+  };
+  const primaryUri = item.uri || '';
+  const fallbackUri = item.fullUri || '';
+  const activeUri = primaryUri || fallbackUri;
+  const rawThumb = item.thumbnailUrl || item.thumbUri;
+  const validThumb = rawThumb && !isVideoFile(rawThumb) ? rawThumb : null;
+  let candidateUri = validThumb || (!isVideoFile(activeUri) ? activeUri : null) || item.r2Url || item.photoUrl;
+  if (candidateUri && typeof candidateUri === 'string' && candidateUri.startsWith('/')) {
+    candidateUri = `https://mycircle.mistyvisuals.com${candidateUri}`;
+  }
+  return typeof candidateUri === 'string' ? candidateUri : '';
+}
+
+function checkIsVideo(item: any): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.isVideo ||
+    (typeof item.tabName === 'string' && item.tabName.trim().toUpperCase() === 'CINEMA') ||
+    (typeof item.videoUrl === 'string' && item.videoUrl.length > 0) ||
+    (typeof item.uri === 'string' && (item.uri.endsWith('.mp4') || item.uri.endsWith('.mov'))) ||
+    (typeof item.fullUri === 'string' && (item.fullUri.endsWith('.mp4') || item.fullUri.endsWith('.mov')))
+  );
+}
+
 // ─── Apple Photos Multi-Element Flight Cards Builder ──────────────────────────
 
 function buildTransitionCards<T>(
@@ -470,8 +511,8 @@ function buildTransitionCards<T>(
   const cardsMap = new Map<string | number, TransitionCardData<T>>();
 
   // Screen visible bounds with edge padding to smoothly catch entering/leaving cards
-  const screenMinY = -180;
-  const screenMaxY = SCREEN_HEIGHT + 180;
+  const screenMinY = -140;
+  const screenMaxY = SCREEN_HEIGHT + 140;
 
   // 1. Process items visible in fromLayout:
   fromLayout.columns.forEach((col, cIdx) => {
@@ -522,10 +563,9 @@ function buildTransitionCards<T>(
         } else {
           // Scenario B: Visible before, but exits the viewport in the new column density ->
           // Naturally slide off the screen edge towards target position (clamped just beyond edge).
-          // Keeps card fully visible while sliding out so no white voids appear on screen!
           const clampedEndY = targetEndY > screenMaxY
-            ? SCREEN_HEIGHT + 80
-            : (targetEndY < screenMinY ? -targetEndH - 80 : targetEndY);
+            ? SCREEN_HEIGHT + 60
+            : (targetEndY < screenMinY ? -targetEndH - 60 : targetEndY);
           endX = targetEndX;
           endY = clampedEndY;
           endW = targetEndW;
@@ -541,9 +581,18 @@ function buildTransitionCards<T>(
         endOpacity = 0;
       }
 
+      const uri = getMediaDisplayUri(item.item);
+      const isVideo = checkIsVideo(item.item);
+      const tx = (endX - startX) + (endW - startW) / 2;
+      const ty = (endY - startY) + (endH - startH) / 2;
+      const scaleDelta = startW > 0 ? (endW / startW) - 1 : 0;
+      const opacityDelta = endOpacity - startOpacity;
+
       cardsMap.set(id, {
         id,
         item: item.item,
+        uri,
+        isVideo,
         originalIndex: item.originalIndex,
         targetCol,
         startX,
@@ -556,6 +605,10 @@ function buildTransitionCards<T>(
         endW,
         endH,
         endOpacity,
+        tx,
+        ty,
+        scaleDelta,
+        opacityDelta,
       });
     });
   });
@@ -577,15 +630,24 @@ function buildTransitionCards<T>(
       if (id === undefined || cardsMap.has(id)) return;
 
       // Scenario C: Newly appearing on screen in toLayout ->
-      // Smoothly fade in right in its target slot with a gentle scale up (NO supersonic rocket from 4,000px away)!
+      // Smoothly fade in right in its target slot with a gentle scale up
       const startW = targetEndW * 0.92;
       const startH = targetEndH * 0.92;
       const startX = targetEndX + (targetEndW - startW) / 2;
-      const startY = targetEndY + 15;
+      const startY = targetEndY + 12;
+
+      const uri = getMediaDisplayUri(item.item);
+      const isVideo = checkIsVideo(item.item);
+      const tx = (targetEndX - startX) + (targetEndW - startW) / 2;
+      const ty = (targetEndY - startY) + (targetEndH - startH) / 2;
+      const scaleDelta = startW > 0 ? (targetEndW / startW) - 1 : 0;
+      const opacityDelta = 1 - 0;
 
       cardsMap.set(id, {
         id,
         item: item.item,
+        uri,
+        isVideo,
         originalIndex: item.originalIndex,
         targetCol: cIdx,
         startX,
@@ -598,6 +660,10 @@ function buildTransitionCards<T>(
         endW: targetEndW,
         endH: targetEndH,
         endOpacity: 1,
+        tx,
+        ty,
+        scaleDelta,
+        opacityDelta,
       });
     });
   });
@@ -605,41 +671,24 @@ function buildTransitionCards<T>(
   return Array.from(cardsMap.values());
 }
 
-
-
-// ─── Animating Flight Card Component ──────────────────────────────────────────
+// ─── High-Performance Hardware-Accelerated Animating Flight Tile ─────────────
 
 interface AnimatingCardProps {
   card: TransitionCardData<any>;
   progress: SharedValue<number>;
-  renderItem: (info: {
-    item: any;
-    index: number;
-    isColumn0: boolean;
-    columnIndex?: number;
-    numColumns?: number;
-  }) => React.ReactElement;
-  toCols: number;
 }
 
 const AnimatingCard = React.memo(function AnimatingCard({
   card,
   progress,
-  renderItem: renderFn,
-  toCols,
 }: AnimatingCardProps) {
   const animatedStyle = useAnimatedStyle(() => {
+    'worklet';
     const p = progress.value;
-    const curW = interpolate(p, [0, 1], [card.startW, card.endW]);
-    const curH = interpolate(p, [0, 1], [card.startH, card.endH]);
-    const curX = interpolate(p, [0, 1], [card.startX, card.endX]);
-    const curY = interpolate(p, [0, 1], [card.startY, card.endY]);
-
-    const scaleX = card.startW > 0 ? curW / card.startW : 1;
-    const scaleY = card.startH > 0 ? curH / card.startH : 1;
-    const translateX = (curX - card.startX) + (curW - card.startW) / 2;
-    const translateY = (curY - card.startY) + (curH - card.startH) / 2;
-    const opacity = interpolate(p, [0, 1], [card.startOpacity, card.endOpacity]);
+    const translateX = p * card.tx;
+    const translateY = p * card.ty;
+    const scale = 1 + p * card.scaleDelta;
+    const opacity = card.startOpacity + p * card.opacityDelta;
 
     return {
       position: 'absolute',
@@ -650,24 +699,32 @@ const AnimatingCard = React.memo(function AnimatingCard({
       transform: [
         { translateX },
         { translateY },
-        { scaleX },
-        { scaleY },
+        { scale },
       ],
       opacity,
       overflow: 'hidden',
-      backgroundColor: 'transparent',
+      backgroundColor: '#1c1c1e',
     };
   });
 
   return (
     <Animated.View style={animatedStyle}>
-      {renderFn({
-        item: card.item,
-        index: card.originalIndex,
-        isColumn0: card.targetCol === 0,
-        columnIndex: card.targetCol,
-        numColumns: toCols,
-      })}
+      {card.uri ? (
+        <Image
+          source={{ uri: card.uri }}
+          style={StyleSheet.absoluteFillObject}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={0}
+        />
+      ) : null}
+      {card.isVideo ? (
+        <View style={styles.playIconOverlay} pointerEvents="none">
+          <View style={styles.playIconCircleMini}>
+            <Ionicons name="play" size={13} color="#ffffff" style={{ marginLeft: 1 }} />
+          </View>
+        </View>
+      ) : null}
     </Animated.View>
   );
 });
@@ -758,9 +815,8 @@ export function MasonryFlashList<T = any>({
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const hasTransitionCardsShared = useSharedValue(false);
   const isTransitioningShared = useSharedValue(false);
-  const isOverlayReadyShared = useSharedValue(false);
-  const hasStartedFlight = useSharedValue(false);
-  const shouldCommitOnMount = useSharedValue(false);
+  const isCommittingShared = useSharedValue(false);
+  const overlayOpacity = useSharedValue(1);
 
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
@@ -788,40 +844,34 @@ export function MasonryFlashList<T = any>({
   const [isPinchingState, setIsPinchingState] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCards, setTransitionCards] = useState<TransitionCardData<T>[] | null>(null);
-  const [transitionToCols, setTransitionToCols] = useState(numColumnsProp || 2);
 
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
       hasTransitionCardsShared.value = true;
-      // Allow 2 native animation frames (~40ms) for overlay images to bind GPU textures
-      // while the base grid remains 100% visible underneath:
-      const timer = setTimeout(() => {
-        isOverlayReadyShared.value = true;
-        // If gesture already ended intentionally while overlay was mounting across bridge:
-        if (pendingAutoCommitRef.current !== null) {
-          const toCols = pendingAutoCommitRef.current;
-          pendingAutoCommitRef.current = null;
-          shouldCommitOnMount.value = false;
-          transitionProgress.value = withTiming(1, {
-            duration: 450,
-            easing: Easing.bezier(0.2, 0.9, 0.3, 1),
-          }, (finished) => {
-            if (finished) {
-              runOnJS(commitTransitionOnJS)(toCols);
-            }
-          });
-        }
-      }, 40);
-      return () => clearTimeout(timer);
+      overlayOpacity.value = 1;
+      isCommittingShared.value = false;
+
+      // If user did a quick flick and lifted fingers before overlay finished mounting:
+      if (pendingAutoCommitRef.current !== null) {
+        const toCols = pendingAutoCommitRef.current;
+        pendingAutoCommitRef.current = null;
+        transitionProgress.value = withTiming(1, {
+          duration: 480,
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+        }, (finished) => {
+          if (finished) {
+            runOnJS(commitTransitionOnJS)(toCols);
+          }
+        });
+      }
     } else {
       hasTransitionCardsShared.value = false;
-      isOverlayReadyShared.value = false;
-      hasStartedFlight.value = false;
-      shouldCommitOnMount.value = false;
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
+      overlayOpacity.value = 1;
+      isCommittingShared.value = false;
     }
-  }, [transitionCards, hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, transitionProgress, commitTransitionOnJS]);
+  }, [transitionCards, hasTransitionCardsShared, overlayOpacity, isCommittingShared, transitionProgress, commitTransitionOnJS]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -980,23 +1030,24 @@ export function MasonryFlashList<T = any>({
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   const finalizeCommit = useCallback(() => {
     pendingAutoCommitRef.current = null;
+    isCommittingShared.value = false;
     hasTransitionCardsShared.value = false;
-    isOverlayReadyShared.value = false;
-    hasStartedFlight.value = false;
-    shouldCommitOnMount.value = false;
     isTransitioningShared.value = false;
+    overlayOpacity.value = 1;
+    transitionProgress.value = 0;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, isTransitioningShared, pinchDirection]);
+  }, [isCommittingShared, hasTransitionCardsShared, isTransitioningShared, overlayOpacity, transitionProgress, pinchDirection]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
     const targetSlots = pendingTargetSlotsRef.current;
     const targetLayout = pendingTargetLayoutRef.current;
 
+    // 1. Immediately switch base grid state to target columns and slots:
     if (targetLayout && targetSlots) {
       performScrollTo(targetScrollY);
       setCurrentCols(targetCols);
@@ -1007,29 +1058,38 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
 
-    // Keep the transition overlay cards visible for 180ms while React + native
-    // mount and paint the new base grid views in native.
-    // Then cleanly swap in a single tick (NO crossfade that reveals duplicate background photos):
+    // 2. Reveal base grid (100% visible) underneath the overlay cards:
+    isCommittingShared.value = true;
+
+    // 3. Keep overlay solid for 70ms while native base grid paints underneath,
+    //    then smoothly crossfade overlay out over 130ms for zero-flash seamless handoff:
     setTimeout(() => {
-      finalizeCommit();
-    }, 180);
-  }, [performScrollTo, onNumColumnsChange, finalizeCommit]);
+      overlayOpacity.value = withTiming(0, {
+        duration: 130,
+        easing: Easing.out(Easing.quad),
+      }, (finished) => {
+        if (finished) {
+          runOnJS(finalizeCommit)();
+        }
+      });
+    }, 70);
+  }, [performScrollTo, onNumColumnsChange, isCommittingShared, overlayOpacity, finalizeCommit]);
 
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
     pendingAutoCommitRef.current = null;
+    isCommittingShared.value = false;
     hasTransitionCardsShared.value = false;
-    isOverlayReadyShared.value = false;
-    hasStartedFlight.value = false;
-    shouldCommitOnMount.value = false;
     isTransitioningShared.value = false;
+    overlayOpacity.value = 1;
+    transitionProgress.value = 0;
     setTransitionCards(null);
     setIsTransitioning(false);
     isTransitioningRef.current = false;
     setIsPinchingState(false);
     pinchDirection.value = 0;
-  }, [hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, isTransitioningShared, pinchDirection]);
+  }, [isCommittingShared, hasTransitionCardsShared, isTransitioningShared, overlayOpacity, transitionProgress, pinchDirection]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1073,30 +1133,9 @@ export function MasonryFlashList<T = any>({
     pendingTargetLayoutRef.current = targetLayout;
 
     setTransitionCards(cards);
-    setTransitionToCols(targetCols);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
   }, [currentCols, minColumns, maxColumns, scrollSharedValue]);
-
-  useAnimatedReaction(
-    () => isOverlayReadyShared.value,
-    (ready) => {
-      'worklet';
-      if (ready && shouldCommitOnMount.value) {
-        shouldCommitOnMount.value = false;
-        const targetCols = targetColsShared.value;
-        transitionProgress.value = withTiming(1, {
-          duration: 450,
-          easing: Easing.bezier(0.2, 0.9, 0.3, 1),
-        }, (finished) => {
-          if (finished) {
-            runOnJS(commitTransition)(targetCols);
-          }
-        });
-      }
-    },
-    [commitTransition],
-  );
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
@@ -1119,16 +1158,13 @@ export function MasonryFlashList<T = any>({
         focalYShared.value = e.focalY;
         pinchDirection.value = 0;
         transitionProgress.value = 0;
-        hasStartedFlight.value = false;
-        shouldCommitOnMount.value = false;
+        overlayOpacity.value = 1;
+        isCommittingShared.value = false;
         hasTransitionCardsShared.value = false;
-        isOverlayReadyShared.value = false;
         runOnJS(setIsPinchingState)(true);
       })
       .onUpdate((e) => {
         'worklet';
-        if (isTransitioningShared.value && !hasTransitionCardsShared.value) return;
-
         focalXShared.value = e.focalX;
         focalYShared.value = e.focalY;
 
@@ -1147,8 +1183,8 @@ export function MasonryFlashList<T = any>({
           }
         }
 
-        // Live interactive gesture flight progress once overlay is mounted and warmed up:
-        if (isOverlayReadyShared.value) {
+        // Live interactive gesture flight progress while user holds and moves fingers:
+        if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
             targetP = Math.max(0, Math.min(0.85, (0.985 - e.scale) / 0.28));
@@ -1156,17 +1192,7 @@ export function MasonryFlashList<T = any>({
             targetP = Math.max(0, Math.min(0.85, (e.scale - 1.015) / 0.28));
           }
 
-          if (!hasStartedFlight.value) {
-            hasStartedFlight.value = true;
-            if (targetP > 0.04) {
-              transitionProgress.value = withTiming(targetP, {
-                duration: 90,
-                easing: Easing.out(Easing.quad),
-              });
-            } else {
-              transitionProgress.value = targetP;
-            }
-          } else {
+          if (hasTransitionCardsShared.value) {
             transitionProgress.value = targetP;
           }
         }
@@ -1183,33 +1209,31 @@ export function MasonryFlashList<T = any>({
           const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
           const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
 
-          // Intentional pinch if progress >= 0.15, scale delta >= 0.03, or flicked with velocity:
-          const isIntentional = currentP >= 0.15 || scaleDelta >= 0.03 || hasVelocity;
+          // Intentional pinch if user moved >= 0.05 progress, scale delta >= 0.015, or flicked with velocity:
+          const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
 
           if (isIntentional) {
-            if (isOverlayReadyShared.value) {
-              // Overlay is ready: smoothly complete remaining flight to 1.0 (420ms):
+            if (hasTransitionCardsShared.value) {
+              // Smoothly complete remaining flight to 1.0 (480ms) with elegant iOS spring-like curve:
               transitionProgress.value = withTiming(1, {
-                duration: 420,
-                easing: Easing.bezier(0.2, 0.9, 0.3, 1),
+                duration: 480,
+                easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 if (finished) {
-                  runOnJS(commitTransition)(targetCols);
+                  runOnJS(commitTransitionOnJS)(targetCols);
                 }
               });
             } else {
-              // Fast flick occurred before overlay finished mounting across bridge:
-              shouldCommitOnMount.value = true;
+              // Quick flick finished before overlay finished mounting across bridge:
               runOnJS(setPendingAutoCommit)(targetCols);
             }
           } else {
             // Cancel transition: animate cards back to 0:
-            shouldCommitOnMount.value = false;
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               transitionProgress.value = withTiming(0, {
-                duration: 340,
-                easing: Easing.bezier(0.2, 0.9, 0.3, 1),
+                duration: 320,
+                easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 if (finished) {
                   runOnJS(cancelTransition)();
@@ -1239,40 +1263,44 @@ export function MasonryFlashList<T = any>({
     isPinchingShared,
     isPinching,
     isTransitioningShared,
-    isOverlayReadyShared,
-    hasStartedFlight,
-    shouldCommitOnMount,
+    hasTransitionCardsShared,
     focalXShared,
     focalYShared,
     pinchDirection,
     targetColsShared,
     transitionProgress,
+    overlayOpacity,
+    isCommittingShared,
     currentColsShared,
     maxColumns,
     minColumns,
     startInteractiveTransition,
-    commitTransition,
+    commitTransitionOnJS,
     cancelTransition,
     setPendingAutoCommit,
     clearPendingAutoCommit,
   ]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
     return {
-      opacity: hasTransitionCardsShared.value ? 1 : 0,
+      opacity: hasTransitionCardsShared.value ? overlayOpacity.value : 0,
     };
   });
 
   const gridVisibilityStyle = useAnimatedStyle(() => {
-    // Keep base grid 100% visible while overlay is mounting or warming up:
-    if (!hasTransitionCardsShared.value || !isOverlayReadyShared.value) {
+    'worklet';
+    if (!hasTransitionCardsShared.value) {
       return { opacity: 1 };
     }
-    // Only hide base grid once cards have actually started moving into flight:
-    if (transitionProgress.value < 0.04) {
+    // During commit handoff, base grid is already in new columns and must be 100% visible:
+    if (isCommittingShared.value) {
       return { opacity: 1 };
     }
-    return { opacity: 0 };
+    // During flight, smoothly dissolve base grid so no duplicate photos show in background:
+    const p = transitionProgress.value;
+    const opacity = interpolate(p, [0, 0.10], [1, 0], Extrapolation.CLAMP);
+    return { opacity };
   });
 
   const renderedFooter = useMemo(() => {
@@ -1389,8 +1417,6 @@ export function MasonryFlashList<T = any>({
               key={`trans-${card.id}`}
               card={card}
               progress={transitionProgress}
-              renderItem={renderItem}
-              toCols={transitionToCols}
             />
           ))}
 
@@ -1448,5 +1474,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 999,
+  },
+  playIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playIconCircleMini: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
