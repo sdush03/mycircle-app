@@ -822,6 +822,7 @@ export function MasonryFlashList<T = any>({
   const isPinching = useSharedValue(false);
   const currentColsShared = useSharedValue(numColumnsProp || 2);
   const hasTransitionCardsShared = useSharedValue(false);
+  const overlayOpacity = useSharedValue(0);
   const isTransitioningShared = useSharedValue(false);
   const isScrollRestoringShared = useSharedValue(false);
 
@@ -832,6 +833,7 @@ export function MasonryFlashList<T = any>({
   const pendingScrollRestorationRef = useRef<number | null>(null);
   const transitionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitTransitionRef = useRef<(cols: number) => void>(() => {});
+  const layoutCacheRef = useRef<Map<number, MasonryLayout<T>>>(new Map());
 
   const commitTransitionOnJS = useCallback((cols: number) => {
     commitTransitionRef.current?.(cols);
@@ -865,25 +867,31 @@ export function MasonryFlashList<T = any>({
 
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
-      hasTransitionCardsShared.value = true;
+      // Wait 1 frame so expo-image views inside the overlay have mounted and decoded textures
+      const raf = requestAnimationFrame(() => {
+        hasTransitionCardsShared.value = true;
+        overlayOpacity.value = 1;
 
-      // If user did a quick flick and lifted fingers before overlay finished mounting:
-      if (pendingAutoCommitRef.current !== null) {
-        const toCols = pendingAutoCommitRef.current;
-        pendingAutoCommitRef.current = null;
-        transitionProgress.value = withTiming(1, {
-          duration: 220,
-          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-        }, () => {
-          runOnJS(commitTransitionOnJS)(toCols);
-        });
-      }
+        // If user did a quick flick and lifted fingers before overlay finished mounting:
+        if (pendingAutoCommitRef.current !== null) {
+          const toCols = pendingAutoCommitRef.current;
+          pendingAutoCommitRef.current = null;
+          transitionProgress.value = withTiming(1, {
+            duration: 200,
+            easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+          }, () => {
+            runOnJS(commitTransitionOnJS)(toCols);
+          });
+        }
+      });
+      return () => cancelAnimationFrame(raf);
     } else {
       hasTransitionCardsShared.value = false;
+      overlayOpacity.value = 0;
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS]);
+  }, [transitionCards, hasTransitionCardsShared, overlayOpacity, transitionProgress, commitTransitionOnJS]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -936,16 +944,19 @@ export function MasonryFlashList<T = any>({
   useEffect(() => {
     layoutRef.current = layout;
     dataRef.current = data;
+    layoutCacheRef.current.set(currentCols, layout);
     if (isTransitioningRef.current) return;
     const y = scrollYRef.current;
     const newSlots = computeAllColumnSlots(layout, y, poolSize, headerHeight, columnSlotsRef.current);
     setColumnSlots(newSlots);
     columnSlotsRef.current = newSlots;
-  }, [layout, poolSize, headerHeight, data]);
+  }, [layout, poolSize, headerHeight, data, currentCols]);
 
   useEffect(() => {
+    layoutCacheRef.current.clear();
+    layoutCacheRef.current.set(currentCols, layout);
     endReachedFiredRef.current = false;
-  }, [data]);
+  }, [data, currentCols, layout]);
 
   const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1072,6 +1083,7 @@ export function MasonryFlashList<T = any>({
     pendingAutoCommitRef.current = null;
     isScrollRestoringShared.value = false;
     hasTransitionCardsShared.value = false;
+    overlayOpacity.value = 0;
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
     isTransitioningRef.current = false;
@@ -1081,7 +1093,7 @@ export function MasonryFlashList<T = any>({
     pinchDirection.value = 0;
     // Force slot refresh at current scroll position so correct photos show immediately:
     updateSlotsFromY(scrollYRef.current, true);
-  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
+  }, [hasTransitionCardsShared, overlayOpacity, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
 
   const commitTransition = useCallback((targetCols: number) => {
     const targetScrollY = pendingTargetScrollYRef.current;
@@ -1099,25 +1111,30 @@ export function MasonryFlashList<T = any>({
       layoutRef.current = targetLayout;
       setContainerMinHeight(targetLayout.maxHeight + headerHeightRef.current);
 
-      // Scroll to target position — first call is immediate, second lands after React commits
+      // Scroll to target position
       performScrollTo(targetScrollY);
       requestAnimationFrame(() => {
         performScrollTo(targetScrollY);
-        isScrollRestoringShared.value = false;
+        setTimeout(() => {
+          isScrollRestoringShared.value = false;
+        }, 120);
       });
     }
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Seamless hand-off: keep overlay visible for exactly 2 paint frames (double RAF)
-    // so native base grid has committed at least 1 full layout + paint cycle before revealing.
-    // This eliminates the white flash that a fixed timer could race against on slower devices.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        finalizeCommit();
-      });
+    // 2. Unhide target base grid underneath the overlay
+    hasTransitionCardsShared.value = false;
+
+    // 3. Smooth cross-dissolve: fade out overlay over 120ms to reveal the identical base grid
+    // This completely eliminates any white flash or hard cut!
+    overlayOpacity.value = withTiming(0, { duration: 120, easing: Easing.out(Easing.quad) }, (finished) => {
+      'worklet';
+      if (finished) {
+        runOnJS(finalizeCommit)();
+      }
     });
-  }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared, isScrollRestoringShared]);
+  }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared, isScrollRestoringShared, hasTransitionCardsShared, overlayOpacity]);
 
   commitTransitionRef.current = commitTransition;
 
@@ -1132,13 +1149,18 @@ export function MasonryFlashList<T = any>({
     isTransitioningShared.value = false;
     transitionProgress.value = 0;
     isTransitioningRef.current = false;
-    setTransitionCards(null);
+    overlayOpacity.value = withTiming(0, { duration: 100 }, (finished) => {
+      'worklet';
+      if (finished) {
+        runOnJS(setTransitionCards)(null);
+      }
+    });
     setIsTransitioning(false);
     setIsPinchingState(false);
     pinchDirection.value = 0;
     // Refresh slots so grid is correct if cancel brings user back to original layout:
     updateSlotsFromY(scrollYRef.current, true);
-  }, [hasTransitionCardsShared, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
+  }, [hasTransitionCardsShared, overlayOpacity, isTransitioningShared, isScrollRestoringShared, transitionProgress, pinchDirection, updateSlotsFromY]);
 
   const startInteractiveTransition = useCallback((
     targetCols: number,
@@ -1146,11 +1168,9 @@ export function MasonryFlashList<T = any>({
     focalY: number,
   ) => {
     // Guard: reject if invalid cols, same cols, or already mid-transition on JS thread
-    if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
-      return;
-    }
-    if (isTransitioningRef.current) {
-      // Already mid-transition — don't clobber pending state; watchdog will clean up
+    if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols || isTransitioningRef.current) {
+      isTransitioningShared.value = false;
+      pinchDirection.value = 0;
       return;
     }
 
@@ -1162,12 +1182,17 @@ export function MasonryFlashList<T = any>({
       finalizeCommit();
     }, 500);
 
-    // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
-    // scrollSharedValue.value on JS thread which can be stale across the bridge.
     const currentScrollY = scrollYRef.current;
     const currentHeaderHeight = headerHeightRef.current;
     const currentLayout = layoutRef.current;
-    const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+
+    // Use cached layout if available (0ms lookup instead of heavy O(N) computation)
+    let targetLayout = layoutCacheRef.current.get(targetCols);
+    if (!targetLayout) {
+      targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+      layoutCacheRef.current.set(targetCols, targetLayout);
+    }
+
     const targetPool = getPoolSizeForCols(targetCols);
 
     // PINCH ANCHOR: Compute targetScrollY based on the exact photo under (focalX, focalY)
@@ -1202,7 +1227,7 @@ export function MasonryFlashList<T = any>({
     setTransitionCards(cards);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
-  }, [currentCols, minColumns, maxColumns, finalizeCommit]);
+  }, [currentCols, minColumns, maxColumns, finalizeCommit, isTransitioningShared, pinchDirection]);
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
   const pinchGesture = useMemo(() => {
@@ -1233,14 +1258,14 @@ export function MasonryFlashList<T = any>({
         focalXShared.value = e.focalX;
         focalYShared.value = e.focalY;
 
-        // Detect pinch direction as fingers move:
+        // Detect pinch direction once fingers move past natural touch jitter threshold (8%):
         if (pinchDirection.value === 0) {
-          if (e.scale < 0.985 && currentColsShared.value < maxColumns) {
+          if (e.scale < 0.92 && currentColsShared.value < maxColumns) {
             pinchDirection.value = 1; // Pinch in -> Add column (e.g. 2 -> 3)
             targetColsShared.value = currentColsShared.value + 1;
             isTransitioningShared.value = true;
             runOnJS(startInteractiveTransition)(currentColsShared.value + 1, e.focalX, e.focalY);
-          } else if (e.scale > 1.015 && currentColsShared.value > minColumns) {
+          } else if (e.scale > 1.08 && currentColsShared.value > minColumns) {
             pinchDirection.value = -1; // Pinch out -> Remove column (e.g. 3 -> 2, 2 -> 1)
             targetColsShared.value = currentColsShared.value - 1;
             isTransitioningShared.value = true;
@@ -1252,9 +1277,9 @@ export function MasonryFlashList<T = any>({
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            targetP = Math.max(0, Math.min(0.85, (0.985 - e.scale) / 0.28));
+            targetP = Math.max(0, Math.min(1.0, (0.92 - e.scale) / 0.22));
           } else if (pinchDirection.value === -1) {
-            targetP = Math.max(0, Math.min(0.85, (e.scale - 1.015) / 0.28));
+            targetP = Math.max(0, Math.min(1.0, (e.scale - 1.08) / 0.22));
           }
 
           if (hasTransitionCardsShared.value) {
@@ -1271,23 +1296,21 @@ export function MasonryFlashList<T = any>({
           const currentP = transitionProgress.value;
           const targetCols = targetColsShared.value;
           const isPinchIn = pinchDirection.value === 1;
-          const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
-          const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
+          const scaleDelta = isPinchIn ? (0.92 - e.scale) : (e.scale - 1.08);
+          const hasVelocity = isPinchIn ? (e.velocity < -0.1) : (e.velocity > 0.1);
 
-          // Intentional pinch if user moved >= 0.05 progress, scale delta >= 0.015, or flicked with velocity:
-          const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
+          // Intentional pinch if user moved >= 0.12 progress, scale delta >= 0.04, or flicked with velocity:
+          const isIntentional = currentP >= 0.12 || scaleDelta >= 0.04 || hasVelocity;
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // Smoothly complete remaining flight to 1.0 (snappy 220ms) with elegant iOS curve:
               transitionProgress.value = withTiming(1, {
-                duration: 220,
+                duration: 200,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, () => {
                 runOnJS(commitTransitionOnJS)(targetCols);
               });
             } else {
-              // Quick flick finished before overlay finished mounting across bridge:
               runOnJS(setPendingAutoCommit)(targetCols);
             }
           } else {
@@ -1295,7 +1318,7 @@ export function MasonryFlashList<T = any>({
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               transitionProgress.value = withTiming(0, {
-                duration: 180,
+                duration: 150,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, () => {
                 runOnJS(cancelTransition)();
@@ -1313,6 +1336,9 @@ export function MasonryFlashList<T = any>({
         'worklet';
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
+        if (pinchDirection.value === 0) {
+          isTransitioningShared.value = false;
+        }
         runOnJS(finalizeGestureIfStuck)();
       });
   }, [
@@ -1341,7 +1367,7 @@ export function MasonryFlashList<T = any>({
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
     return {
-      opacity: hasTransitionCardsShared.value ? 1 : 0,
+      opacity: overlayOpacity.value,
     };
   });
 

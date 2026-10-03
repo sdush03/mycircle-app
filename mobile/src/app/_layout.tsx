@@ -368,7 +368,7 @@ function RootLayoutContent() {
           <>
             <StatusBar barStyle="dark-content" backgroundColor={eventSlug ? '#f2eee8' : '#ffffff'} translucent={false} />
             {/* Global Header — Centered Logo */}
-            <View style={[styles.globalHeader, { height: headerHeight, paddingTop: topInset }]}>
+            <View style={[styles.globalHeader, { height: headerHeight, paddingTop: topInset, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff', borderBottomColor: eventSlug ? '#e5e0d8' : '#f3f4f6' }]}>
               <ExpoImage
                 source={require('@/assets/images/logo-header-black.png')}
                 style={styles.headerLogo}
@@ -391,9 +391,9 @@ function RootLayoutContent() {
         )}
 
         <GestureDetector gesture={mainTabSwipeGesture}>
-          <View style={{ flex: 1, overflow: 'hidden' }}>
-            <Animated.View style={[{ flexDirection: 'row', width: width * 4, flex: 1 }, mainTabAnimatedStyle]}>
-              <View style={{ width, flex: 1 }}>
+          <View style={{ flex: 1, overflow: 'hidden', backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }}>
+            <Animated.View style={[{ flexDirection: 'row', width: width * 4, flex: 1, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }, mainTabAnimatedStyle]}>
+              <View style={{ width, flex: 1, backgroundColor: eventSlug ? '#f2eee8' : '#ffffff' }}>
                 <HomeScreen />
               </View>
               <View style={{ width, flex: 1 }}>
