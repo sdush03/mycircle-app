@@ -824,6 +824,8 @@ export function MasonryFlashList<T = any>({
   const hasTransitionCardsShared = useSharedValue(false);
   const isTransitioningShared = useSharedValue(false);
   const isScrollRestoringShared = useSharedValue(false);
+  const isFlightAnimatingShared = useSharedValue(false);
+  const isGestureAcceptedShared = useSharedValue(false);
   // Smooth cross-fade shared value — drives the overlay→grid handoff opacity transition
   const overlayOpacity = useSharedValue(0);
 
@@ -834,6 +836,7 @@ export function MasonryFlashList<T = any>({
   const pendingScrollRestorationRef = useRef<number | null>(null);
   const transitionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitTransitionRef = useRef<(cols: number) => void>(() => {});
+  const transitionCardsRef = useRef<TransitionCardData<T>[] | null>(null);
   // Layout cache: avoids re-running O(N) buildMasonryLayout for column counts we've already computed
   const layoutCacheRef = useRef<Map<number, MasonryLayout<T>>>(new Map());
 
@@ -860,8 +863,23 @@ export function MasonryFlashList<T = any>({
   }, []);
 
   const setPendingAutoCommit = useCallback((cols: number) => {
-    pendingAutoCommitRef.current = cols;
-  }, []);
+    console.log(`[PINCH-DEBUG 🔍] setPendingAutoCommit called for ${cols} cols. Existing cards in ref:`, transitionCardsRef.current?.length);
+    if (transitionCardsRef.current && transitionCardsRef.current.length > 0) {
+      console.log(`[PINCH-DEBUG 🔍] 🚀 setPendingAutoCommit: cards already mounted! Triggering flight immediately.`);
+      pendingAutoCommitRef.current = null;
+      isFlightAnimatingShared.value = true;
+      transitionProgress.value = withTiming(1, {
+        duration: 1200,
+        easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+      }, (finished) => {
+        'worklet';
+        console.log(`[PINCH-DEBUG 🔍] 🛬 pendingAutoCommit (immediate) finished=${finished}, calling commitTransitionOnJS(${cols})`);
+        runOnJS(commitTransitionOnJS)(cols);
+      });
+    } else {
+      pendingAutoCommitRef.current = cols;
+    }
+  }, [commitTransitionOnJS, transitionProgress, isFlightAnimatingShared]);
 
   const clearPendingAutoCommit = useCallback(() => {
     pendingAutoCommitRef.current = null;
@@ -882,11 +900,13 @@ export function MasonryFlashList<T = any>({
     if (!isTransitioningRef.current) {
       isTransitioningShared.value = false;
       isScrollRestoringShared.value = false;
+      isFlightAnimatingShared.value = false;
     }
-  }, [isTransitioningShared, isScrollRestoringShared]);
+  }, [isTransitioningShared, isScrollRestoringShared, isFlightAnimatingShared]);
   finalizeGestureIfStuckRef.current = finalizeGestureIfStuck;
 
   useEffect(() => {
+    transitionCardsRef.current = transitionCards;
     if (transitionCards && transitionCards.length > 0) {
       console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards mounted with ${transitionCards.length} cards. pendingAutoCommit=${pendingAutoCommitRef.current}`);
       hasTransitionCardsShared.value = true;
@@ -896,6 +916,7 @@ export function MasonryFlashList<T = any>({
         const toCols = pendingAutoCommitRef.current;
         console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over 1200ms...`);
         pendingAutoCommitRef.current = null;
+        isFlightAnimatingShared.value = true;
         // TEMPORARY SLOW-MOTION TEST: 1200ms so flight can be observed frame-by-frame
         transitionProgress.value = withTiming(1, {
           duration: 1200,
@@ -912,7 +933,7 @@ export function MasonryFlashList<T = any>({
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity]);
+  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity, isFlightAnimatingShared]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -1104,9 +1125,11 @@ export function MasonryFlashList<T = any>({
     }
     console.log('[PINCH-DEBUG 🔍] 🧹 cleanupAfterTransition: clearing transitionCards & resetting progress');
     setTransitionCards(null);
+    transitionCardsRef.current = null;
     hasTransitionCardsShared.value = false;
+    isFlightAnimatingShared.value = false;
     transitionProgress.value = 0;
-  }, [hasTransitionCardsShared, transitionProgress]);
+  }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared]);
 
   const finalizeCommit = useCallback(() => {
     console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Starting overlay cross-fade (400ms)');
@@ -1115,7 +1138,7 @@ export function MasonryFlashList<T = any>({
       transitionWatchdogTimerRef.current = null;
     }
     pendingAutoCommitRef.current = null;
-    isScrollRestoringShared.value = false;
+    isFlightAnimatingShared.value = false;
     isTransitioningShared.value = false;
     isTransitioningRef.current = false;
     setIsTransitioning(false);
@@ -1135,7 +1158,7 @@ export function MasonryFlashList<T = any>({
         runOnJS(cleanupAfterTransition)();
       }
     });
-  }, [isTransitioningShared, isScrollRestoringShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
+  }, [isTransitioningShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
 
   const commitTransition = useCallback((targetCols: number) => {
     console.log(`[PINCH-DEBUG 🔍] 💾 commitTransition: committing targetCols=${targetCols}`);
@@ -1183,6 +1206,7 @@ export function MasonryFlashList<T = any>({
     }
     pendingAutoCommitRef.current = null;
     isScrollRestoringShared.value = false;
+    isFlightAnimatingShared.value = false;
     isTransitioningShared.value = false;
     isTransitioningRef.current = false;
     setIsTransitioning(false);
@@ -1203,7 +1227,7 @@ export function MasonryFlashList<T = any>({
         runOnJS(cleanupAfterTransition)();
       }
     });
-  }, [isTransitioningShared, isScrollRestoringShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
+  }, [isTransitioningShared, isScrollRestoringShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
   cancelTransitionRef.current = cancelTransition;
 
   const startInteractiveTransition = useCallback((
@@ -1286,6 +1310,7 @@ export function MasonryFlashList<T = any>({
 
     console.log(`[PINCH-DEBUG 🔍] ✅ startInteractiveTransition: built ${cards.length} cards, setting state`);
     setTransitionCards(cards);
+    transitionCardsRef.current = cards;
     setIsTransitioning(true);
     isTransitioningRef.current = true;
   }, [currentCols, minColumns, maxColumns, finalizeCommit]);
@@ -1310,12 +1335,14 @@ export function MasonryFlashList<T = any>({
     return g
       .onStart((e) => {
         'worklet';
-        if (isTransitioningShared.value) {
-          console.log('[PINCH-DEBUG 🔍] ⛔ onStart REJECTED: already transitioning');
+        if (isFlightAnimatingShared.value || isTransitioningShared.value) {
+          console.log('[PINCH-DEBUG 🔍] ⛔ onStart REJECTED: already transitioning or animating');
+          isGestureAcceptedShared.value = false;
           return;
         }
 
         console.log(`[PINCH-DEBUG 🔍] 👉 onStart: scale=${e.scale.toFixed(3)}, focal=(${Math.round(e.focalX)}, ${Math.round(e.focalY)}), currentCols=${currentColsShared.value}`);
+        isGestureAcceptedShared.value = true;
         isPinching.value = true;
         if (isPinchingShared) isPinchingShared.value = true;
         focalXShared.value = e.focalX;
@@ -1327,6 +1354,10 @@ export function MasonryFlashList<T = any>({
       })
       .onUpdate((e) => {
         'worklet';
+        if (!isGestureAcceptedShared.value || isFlightAnimatingShared.value) {
+          return;
+        }
+
         focalXShared.value = e.focalX;
         focalYShared.value = e.focalY;
 
@@ -1368,6 +1399,17 @@ export function MasonryFlashList<T = any>({
       })
       .onEnd((e) => {
         'worklet';
+        if (!isGestureAcceptedShared.value) {
+          console.log('[PINCH-DEBUG 🔍] 🛡️ onEnd IGNORED: gesture was not accepted onStart');
+          return;
+        }
+        isGestureAcceptedShared.value = false;
+
+        if (isFlightAnimatingShared.value) {
+          console.log('[PINCH-DEBUG 🔍] 🛡️ onEnd IGNORED: flight animation is already active');
+          return;
+        }
+
         console.log(`[PINCH-DEBUG 🔍] 🏁 onEnd: dir=${pinchDirection.value}, scale=${e.scale.toFixed(3)}, vel=${e.velocity.toFixed(2)}, progress=${transitionProgress.value.toFixed(2)}, hasCards=${hasTransitionCardsShared.value}, targetCols=${targetColsShared.value}`);
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
@@ -1387,6 +1429,7 @@ export function MasonryFlashList<T = any>({
             if (hasTransitionCardsShared.value) {
               // TEMPORARY SLOW-MOTION TEST: Guaranteed 1200ms flight from current preview to 1.0
               const duration = 1200;
+              isFlightAnimatingShared.value = true;
               console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming to 1 (duration=${duration}ms from P=${currentP.toFixed(2)})`);
               transitionProgress.value = withTiming(1, {
                 duration,
@@ -1426,6 +1469,7 @@ export function MasonryFlashList<T = any>({
       .onFinalize(() => {
         'worklet';
         console.log('[PINCH-DEBUG 🔍] onFinalize: gesture ended');
+        isGestureAcceptedShared.value = false;
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
         runOnJS(finalizeGestureOnJS)();
@@ -1438,6 +1482,8 @@ export function MasonryFlashList<T = any>({
     isPinching,
     isTransitioningShared,
     hasTransitionCardsShared,
+    isFlightAnimatingShared,
+    isGestureAcceptedShared,
     focalXShared,
     focalYShared,
     pinchDirection,
