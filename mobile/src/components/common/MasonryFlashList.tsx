@@ -40,9 +40,25 @@ import { analyticsService } from '../../services/analyticsService';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Layout constants:
-const HORIZONTAL_MARGIN = 9;
-const CARD_GAP = 6;
+export const DEFAULT_HORIZONTAL_MARGIN = 6;
+export const DEFAULT_CARD_GAP = 5;
+export const HORIZONTAL_MARGIN = 6;
+export const CARD_GAP = 5;
 const OVERSCAN = 1200;
+
+export const getCardGapForCols = (cols: number): number => {
+  switch (cols) {
+    case 1: return 5;
+    case 2: return 5;
+    case 3: return 4;
+    case 4: return 3;
+    case 5: default: return 2;
+  }
+};
+
+export const getHorizontalMarginForCols = (_cols?: number): number => {
+  return 6;
+};
 
 export const getPoolSizeForCols = (cols: number): number => {
   switch (cols) {
@@ -74,6 +90,8 @@ export interface MasonryLayout<T> {
   columns: ColumnData<T>[];
   maxHeight: number;
   colWidth: number;
+  colGap: number;
+  horizontalMargin: number;
   itemMap: Map<string | number, ColumnItem<T>>;
 }
 
@@ -157,8 +175,13 @@ export function buildMasonryLayout<T>(
   screenWidth: number = SCREEN_WIDTH,
 ): MasonryLayout<T> {
   const safeCols = Math.max(1, Math.min(5, numColumns || 2));
-  const totalGaps = CARD_GAP * Math.max(0, safeCols - 1);
-  const colWidth = Math.max(30, Math.floor((screenWidth - (HORIZONTAL_MARGIN * 2) - totalGaps) / safeCols));
+  const colGap = getCardGapForCols(safeCols);
+  const horizontalMargin = getHorizontalMarginForCols(safeCols);
+  const totalGaps = colGap * Math.max(0, safeCols - 1);
+  const availableWidth = screenWidth - (horizontalMargin * 2) - totalGaps;
+  const colWidth = Math.max(30, availableWidth / safeCols);
+  const totalGridWidth = safeCols * colWidth + totalGaps;
+  const actualMargin = Math.max(0, (screenWidth - totalGridWidth) / 2);
 
   const columns: ColumnData<T>[] = Array.from({ length: safeCols }, () => ({
     items: [],
@@ -167,7 +190,7 @@ export function buildMasonryLayout<T>(
   const itemMap = new Map<string | number, ColumnItem<T>>();
 
   if (!data || !Array.isArray(data) || data.length === 0) {
-    return { numColumns: safeCols, columns, maxHeight: 0, colWidth, itemMap };
+    return { numColumns: safeCols, columns, maxHeight: 0, colWidth, colGap, horizontalMargin: actualMargin, itemMap };
   }
 
   data.forEach((item: any, idx: number) => {
@@ -195,7 +218,7 @@ export function buildMasonryLayout<T>(
     };
 
     columns[shortestCol].items.push(colItem);
-    columns[shortestCol].height += cardHeight + CARD_GAP;
+    columns[shortestCol].height += cardHeight + colGap;
 
     const id = getItemId(colItem);
     if (id !== undefined) {
@@ -204,7 +227,7 @@ export function buildMasonryLayout<T>(
   });
 
   const maxHeight = Math.max(0, ...columns.map((c) => c.height));
-  return { numColumns: safeCols, columns, maxHeight, colWidth, itemMap };
+  return { numColumns: safeCols, columns, maxHeight, colWidth, colGap, horizontalMargin: actualMargin, itemMap };
 }
 
 // ─── Slot Assignment ──────────────────────────────────────────────────────────
@@ -372,12 +395,14 @@ function findFocalAnchorItem<T>(
   const effectiveFocalX = (typeof focalX === 'number' && focalX > 0) ? focalX : SCREEN_WIDTH / 2;
   const effectiveFocalY = (typeof screenFocalY === 'number' && screenFocalY > 0) ? screenFocalY : SCREEN_HEIGHT / 2;
 
-  const contentX = effectiveFocalX - HORIZONTAL_MARGIN;
+  const colW = layout.colWidth;
+  const gap = layout.colGap ?? getCardGapForCols(layout.numColumns);
+  const margin = layout.horizontalMargin ?? getHorizontalMarginForCols(layout.numColumns);
+
+  const contentX = effectiveFocalX - margin;
   const contentY = currentScrollY + effectiveFocalY - headerHeight;
 
   // 1. Check column closest to contentX:
-  const colW = layout.colWidth;
-  const gap = CARD_GAP;
   const cIdx = Math.max(0, Math.min(layout.columns.length - 1, Math.floor(contentX / (colW + gap))));
 
   const col = layout.columns[cIdx];
@@ -397,7 +422,7 @@ function findFocalAnchorItem<T>(
   for (let c = 0; c < layout.columns.length; c++) {
     const column = layout.columns[c];
     if (!column || !column.items) continue;
-    const colCenterX = HORIZONTAL_MARGIN + c * (colW + gap) + colW / 2;
+    const colCenterX = margin + c * (colW + gap) + colW / 2;
 
     for (let i = 0; i < column.items.length; i++) {
       const it = column.items[i];
@@ -521,10 +546,15 @@ function buildTransitionCards<T>(
   const screenMinY = -140;
   const screenMaxY = SCREEN_HEIGHT + 140;
 
+  const fromGap = fromLayout.colGap ?? getCardGapForCols(fromLayout.numColumns);
+  const fromMargin = fromLayout.horizontalMargin ?? getHorizontalMarginForCols(fromLayout.numColumns);
+  const toGap = toLayout.colGap ?? getCardGapForCols(toLayout.numColumns);
+  const toMargin = toLayout.horizontalMargin ?? getHorizontalMarginForCols(toLayout.numColumns);
+
   // 1. Process items visible in fromLayout:
   fromLayout.columns.forEach((col, cIdx) => {
     col.items.forEach((item) => {
-      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
+      const startX = fromMargin + cIdx * (fromLayout.colWidth + fromGap);
       const startY = headerHeight + item.topY - fromScrollY;
       const startW = fromLayout.colWidth;
       const startH = item.height;
@@ -552,7 +582,7 @@ function buildTransitionCards<T>(
 
       if (targetItem) {
         targetCol = targetItem.colIndex;
-        const targetEndX = HORIZONTAL_MARGIN + targetItem.colIndex * (toLayout.colWidth + CARD_GAP);
+        const targetEndX = toMargin + targetItem.colIndex * (toLayout.colWidth + toGap);
         const targetEndY = headerHeight + targetItem.topY - toScrollY;
         const targetEndW = toLayout.colWidth;
         const targetEndH = targetItem.height;
@@ -623,7 +653,7 @@ function buildTransitionCards<T>(
   // 2. Process items visible in toLayout that were NOT visible in fromLayout:
   toLayout.columns.forEach((col, cIdx) => {
     col.items.forEach((item) => {
-      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+      const targetEndX = toMargin + cIdx * (toLayout.colWidth + toGap);
       const targetEndY = headerHeight + item.topY - toScrollY;
       const targetEndW = toLayout.colWidth;
       const targetEndH = item.height;
@@ -827,10 +857,12 @@ export function MasonryFlashList<T = any>({
   const isScrollRestoringShared = useSharedValue(false);
   const isFlightAnimatingShared = useSharedValue(false);
   const isGestureAcceptedShared = useSharedValue(false);
-  // Smooth cross-fade shared value — drives the overlay→grid handoff opacity transition
+  // Smooth handoff shared values — drives the overlay→grid handoff without background bleed-through
   const overlayOpacity = useSharedValue(0);
+  const isBaseGridRevealedShared = useSharedValue(false);
   const fromScrollYShared = useSharedValue(0);
   const targetScrollYShared = useSharedValue(0);
+  const gestureStartTimeShared = useSharedValue(0);
 
   const internalScrollRef = useAnimatedRef<Animated.ScrollView>();
   const effectiveScrollRef = (mainScrollRef || internalScrollRef) as any;
@@ -874,8 +906,13 @@ export function MasonryFlashList<T = any>({
       console.log(`[PINCH-DEBUG 🔍] 🚀 setPendingAutoCommit: cards already mounted! Triggering flight immediately.`);
       pendingAutoCommitRef.current = null;
       isFlightAnimatingShared.value = true;
+      hasTransitionCardsShared.value = true;
+      overlayOpacity.value = 1;
+      isBaseGridRevealedShared.value = false;
+      const startP = transitionProgress.value;
+      const duration = Math.round(Math.max(240, (1 - startP) * 300));
       transitionProgress.value = withTiming(1, {
-        duration: 350,
+        duration,
         easing: Easing.bezier(0.25, 0.1, 0.25, 1),
       }, (finished) => {
         'worklet';
@@ -885,7 +922,7 @@ export function MasonryFlashList<T = any>({
     } else {
       pendingAutoCommitRef.current = cols;
     }
-  }, [commitTransitionOnJS, transitionProgress, isFlightAnimatingShared]);
+  }, [commitTransitionOnJS, transitionProgress, isFlightAnimatingShared, hasTransitionCardsShared, overlayOpacity, isBaseGridRevealedShared]);
 
   const clearPendingAutoCommit = useCallback(() => {
     pendingAutoCommitRef.current = null;
@@ -916,15 +953,18 @@ export function MasonryFlashList<T = any>({
     if (transitionCards && transitionCards.length > 0) {
       console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards mounted with ${transitionCards.length} cards. pendingAutoCommit=${pendingAutoCommitRef.current}`);
       hasTransitionCardsShared.value = true;
+      isBaseGridRevealedShared.value = false;
       overlayOpacity.value = 1; // Overlay covers grid instantly
 
       if (pendingAutoCommitRef.current !== null) {
         const toCols = pendingAutoCommitRef.current;
-        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over 350ms...`);
+        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over animated flight...`);
         pendingAutoCommitRef.current = null;
         isFlightAnimatingShared.value = true;
+        const startP = transitionProgress.value;
+        const duration = Math.round(Math.max(240, (1 - startP) * 300));
         transitionProgress.value = withTiming(1, {
-          duration: 350,
+          duration,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, (finished) => {
           'worklet';
@@ -935,11 +975,12 @@ export function MasonryFlashList<T = any>({
     } else {
       console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards is null/empty. Resetting hasTransitionCardsShared=false.`);
       hasTransitionCardsShared.value = false;
+      isBaseGridRevealedShared.value = false;
       pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
       overlayOpacity.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity, isFlightAnimatingShared]);
+  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity, isFlightAnimatingShared, isBaseGridRevealedShared]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -1149,24 +1190,26 @@ export function MasonryFlashList<T = any>({
   }, [effectiveScrollRef, scrollSharedValue]);
 
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
-  // Internal cleanup — called AFTER the cross-fade animation finishes
+  // Internal cleanup — called AFTER the dissolve animation finishes
   const cleanupAfterTransition = useCallback(() => {
-    // Guard: if a NEW transition started during the cross-fade, don't clobber it
-    if (isTransitioningRef.current) {
-      console.log('[PINCH-DEBUG 🔍] 🛡️ cleanupAfterTransition: skipped because new transition is active');
-      return;
-    }
     console.log('[PINCH-DEBUG 🔍] 🧹 cleanupAfterTransition: clearing transitionCards & resetting progress');
     setTransitionCards(null);
     transitionCardsRef.current = null;
     hasTransitionCardsShared.value = false;
+    isBaseGridRevealedShared.value = false;
     isFlightAnimatingShared.value = false;
+    isTransitioningShared.value = false;
+    isTransitioningRef.current = false;
+    setIsTransitioning(false);
+    setIsPinchingState(false);
+    if (isPinchingShared) isPinchingShared.value = false;
+    isPinching.value = false;
     transitionProgress.value = 0;
     overlayOpacity.value = 0;
-  }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared, overlayOpacity]);
+  }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared, overlayOpacity, isBaseGridRevealedShared, isTransitioningShared, isPinching, isPinchingShared]);
 
   const finalizeCommit = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Starting overlay cross-fade (400ms)');
+    console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Revealing base grid (100% opacity) & dissolving overlay (140ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1177,13 +1220,18 @@ export function MasonryFlashList<T = any>({
     isTransitioningRef.current = false;
     setIsTransitioning(false);
     setIsPinchingState(false);
+    if (isPinchingShared) isPinchingShared.value = false;
+    isPinching.value = false;
     pinchDirection.value = 0;
-    // Force slot refresh at current scroll position so correct photos show immediately:
-    updateSlotsFromY(scrollYRef.current, true);
 
-    // Smooth cross-fade: animate overlay opacity from 1 → 0 over 180ms
+    // 1. Reveal base grid at 100% solid opacity UNDERNEATH the overlay.
+    // The overlay is currently at 100% opacity on top of it, so this handoff is visually seamless.
+    isBaseGridRevealedShared.value = true;
+
+    // 2. Smooth dissolve: fade overlay out from 1 → 0 over 140ms.
+    // Since base grid underneath is ALREADY 100% solid, NO cream/white background can bleed through!
     overlayOpacity.value = withTiming(0, {
-      duration: 180,
+      duration: 140,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1192,10 +1240,14 @@ export function MasonryFlashList<T = any>({
         runOnJS(cleanupAfterTransition)();
       }
     });
-  }, [isTransitioningShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
+  }, [isTransitioningShared, isFlightAnimatingShared, isPinching, isPinchingShared, pinchDirection, overlayOpacity, cleanupAfterTransition, isBaseGridRevealedShared]);
 
   const commitTransition = useCallback((targetCols: number) => {
     console.log(`[PINCH-DEBUG 🔍] 💾 commitTransition: committing targetCols=${targetCols}`);
+    if (transitionWatchdogTimerRef.current) {
+      clearTimeout(transitionWatchdogTimerRef.current);
+      transitionWatchdogTimerRef.current = null;
+    }
     const targetScrollY = pendingTargetScrollYRef.current;
     const targetSlots = pendingTargetSlotsRef.current;
     const targetLayout = pendingTargetLayoutRef.current;
@@ -1221,19 +1273,20 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
 
-    // 2. Seamless hand-off: keep overlay visible for exactly 2 paint frames (double RAF)
-    // so native base grid has committed at least 1 full layout + paint cycle before revealing.
-    // This eliminates the white flash that a fixed timer could race against on slower devices.
+    // 2. Seamless hand-off: wait 3 paint frames so native views have fully laid out and
+    // expo-image has resolved memory cache bitmaps before revealing base grid & dissolving overlay:
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        finalizeCommit();
+        requestAnimationFrame(() => {
+          finalizeCommit();
+        });
       });
     });
   }, [performScrollTo, onNumColumnsChange, finalizeCommit, currentColsShared, isScrollRestoringShared]);
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and cross-fading overlay out (150ms)');
+    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and dissolving overlay out (140ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1245,16 +1298,20 @@ export function MasonryFlashList<T = any>({
     isTransitioningRef.current = false;
     setIsTransitioning(false);
     setIsPinchingState(false);
+    if (isPinchingShared) isPinchingShared.value = false;
+    isPinching.value = false;
     pinchDirection.value = 0;
     // Reset expanded container height (was inflated for the transition target):
     setContainerMinHeight(0);
     // Restore scroll position to fromScrollY:
     performScrollTo(fromScrollYShared.value);
-    // Refresh slots so grid is correct after cancel:
-    updateSlotsFromY(fromScrollYShared.value, true);
-    // Cross-fade overlay out, then clean up cards:
+
+    // Reveal base grid (which has original layout) at solid opacity 1:
+    isBaseGridRevealedShared.value = true;
+
+    // Dissolve overlay out, then clean up cards:
     overlayOpacity.value = withTiming(0, {
-      duration: 150,
+      duration: 140,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1263,7 +1320,7 @@ export function MasonryFlashList<T = any>({
         runOnJS(cleanupAfterTransition)();
       }
     });
-  }, [isTransitioningShared, isScrollRestoringShared, isFlightAnimatingShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition, performScrollTo, fromScrollYShared]);
+  }, [isScrollRestoringShared, isFlightAnimatingShared, isTransitioningShared, isPinching, isPinchingShared, pinchDirection, overlayOpacity, cleanupAfterTransition, performScrollTo, fromScrollYShared, isBaseGridRevealedShared]);
   cancelTransitionRef.current = cancelTransition;
 
   const startInteractiveTransition = useCallback((
@@ -1349,9 +1406,10 @@ export function MasonryFlashList<T = any>({
     console.log(`[PINCH-DEBUG 🔍] ✅ startInteractiveTransition: built ${cards.length} cards, setting state`);
     setTransitionCards(cards);
     transitionCardsRef.current = cards;
+    overlayOpacity.value = 1;
     setIsTransitioning(true);
     isTransitioningRef.current = true;
-  }, [currentCols, minColumns, maxColumns, finalizeCommit, fromScrollYShared, targetScrollYShared]);
+  }, [currentCols, minColumns, maxColumns, finalizeCommit, fromScrollYShared, targetScrollYShared, overlayOpacity]);
   startInteractiveTransitionRef.current = startInteractiveTransition;
 
   // ─── Pinch Gesture with Real-Time Interactive Column Flight ─────────────────
@@ -1380,6 +1438,7 @@ export function MasonryFlashList<T = any>({
         }
 
         console.log(`[PINCH-DEBUG 🔍] 👉 onStart: scale=${e.scale.toFixed(3)}, focal=(${Math.round(e.focalX)}, ${Math.round(e.focalY)}), currentCols=${currentColsShared.value}`);
+        gestureStartTimeShared.value = Date.now();
         isGestureAcceptedShared.value = true;
         isPinching.value = true;
         if (isPinchingShared) isPinchingShared.value = true;
@@ -1388,6 +1447,7 @@ export function MasonryFlashList<T = any>({
         pinchDirection.value = 0;
         transitionProgress.value = 0;
         hasTransitionCardsShared.value = false;
+        isBaseGridRevealedShared.value = false;
         overlayOpacity.value = 0;
         const startY = scrollSharedValue ? Math.max(0, scrollSharedValue.value) : 0;
         fromScrollYShared.value = startY;
@@ -1421,15 +1481,17 @@ export function MasonryFlashList<T = any>({
         }
 
         // Live interactive gesture flight progress while user holds and moves fingers:
-        // Full 0.0 -> 1.0 range so pinching and holding follows fingers all the way to the end!
+        // Capped at 0.60 so releasing fingers always triggers a full, smooth 240ms+ flight into final slots!
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            // Pinch-in: scale goes from 0.985 down to ~0.735 (full 1.0 progress)
-            targetP = Math.max(0, Math.min(1.0, (0.985 - e.scale) / 0.25));
+            // Pinch-in: scale goes from 0.985 down to ~0.65 (cap interactive progress at 0.60)
+            const rawP = Math.max(0, (0.985 - e.scale) / 0.35);
+            targetP = Math.min(0.60, rawP);
           } else if (pinchDirection.value === -1) {
-            // Pinch-out: scale goes from 1.015 up to ~1.265 (full 1.0 progress)
-            targetP = Math.max(0, Math.min(1.0, (e.scale - 1.015) / 0.25));
+            // Pinch-out: scale goes from 1.015 up to ~1.45 (cap interactive progress at 0.60)
+            const rawP = Math.max(0, (e.scale - 1.015) / 0.45);
+            targetP = Math.min(0.60, rawP);
           }
 
           if (hasTransitionCardsShared.value) {
@@ -1460,19 +1522,23 @@ export function MasonryFlashList<T = any>({
           const isPinchIn = pinchDirection.value === 1;
           const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
           const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
+          const gestureDuration = Date.now() - gestureStartTimeShared.value;
+          const isFastGesture = gestureDuration < 280 || Math.abs(e.velocity) > 0.4;
 
           // Intentional pinch if user moved >= 0.05 progress, scale delta >= 0.015, or flicked with velocity:
           const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
-          console.log(`[PINCH-DEBUG 🔍] onEnd decision: currentP=${currentP.toFixed(2)}, scaleDelta=${scaleDelta.toFixed(3)}, hasVel=${hasVelocity}, intentional=${isIntentional}`);
+          console.log(`[PINCH-DEBUG 🔍] onEnd decision: currentP=${currentP.toFixed(2)}, scaleDelta=${scaleDelta.toFixed(3)}, vel=${e.velocity.toFixed(2)}, duration=${gestureDuration}ms, isFast=${isFastGesture}, intentional=${isIntentional}`);
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
               const remaining = 1 - currentP;
-              const duration = currentP >= 0.98 ? 60 : Math.max(180, Math.round(remaining * 350));
+              // Minimum 240ms so the user ALWAYS sees the complete, smooth flight animation into the final slots!
+              const flightDuration = Math.round(Math.max(240, remaining * 300));
+
               isFlightAnimatingShared.value = true;
-              console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming to 1 (duration=${duration}ms from P=${currentP.toFixed(2)})`);
+              console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming from P=${currentP.toFixed(2)} to 1 (duration=${flightDuration}ms)`);
               transitionProgress.value = withTiming(1, {
-                duration,
+                duration: flightDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 'worklet';
@@ -1525,6 +1591,7 @@ export function MasonryFlashList<T = any>({
     hasTransitionCardsShared,
     isFlightAnimatingShared,
     isGestureAcceptedShared,
+    gestureStartTimeShared,
     focalXShared,
     focalYShared,
     pinchDirection,
@@ -1557,20 +1624,14 @@ export function MasonryFlashList<T = any>({
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
     if (hasTransitionCardsShared.value) {
-      // Cross-fade handoff: grid opacity is inverse of overlay opacity
+      // While transition cards are flying in the overlay, hide base grid (0% opacity).
+      // At commit handoff, reveal base grid at solid 100% opacity BEFORE overlay dissolves,
+      // guaranteeing the light/cream background NEVER bleeds through (zero white flash).
+      const opacity = isBaseGridRevealedShared.value ? 1 : 0;
       return {
-        opacity: 1 - overlayOpacity.value,
+        opacity,
         transform: [{ scale: 1 }],
       };
-    }
-    if (pinchDirection.value !== 0 && !hasTransitionCardsShared.value) {
-      // Pinch detected but overlay not yet ready — show immediate visual feedback
-      const scaleBase = pinchDirection.value === 1 ? 0.94 : 1.06; // pinch-in shrinks, pinch-out grows
-      const p = transitionProgress.value;
-      const t = Math.min(1, p * 3);
-      const scale = 1 + (scaleBase - 1) * t;
-      const opacity = 1 - 0.08 * t; // subtle 8% dim to emphasize the effect
-      return { opacity, transform: [{ scale }] };
     }
     return { opacity: 1, transform: [{ scale: 1 }] };
   });
@@ -1652,10 +1713,20 @@ export function MasonryFlashList<T = any>({
             ) : null}
 
             {/* Child 2: Base Recycled Masonry Grid */}
-            <Animated.View style={[styles.gridRow, gridVisibilityStyle]}>
+            <Animated.View
+              style={[
+                styles.gridRow,
+                {
+                  alignSelf: 'center',
+                  width: layout.columns.length * layout.colWidth + Math.max(0, layout.columns.length - 1) * (layout.colGap ?? getCardGapForCols(currentCols)),
+                },
+                gridVisibilityStyle,
+              ]}
+            >
               {layout.columns.map((col, colIdx) => {
                 const isLastCol = colIdx === layout.columns.length - 1;
                 const slots = columnSlots[colIdx] || [];
+                const gap = layout.colGap ?? getCardGapForCols(currentCols);
 
                 return (
                   <View
@@ -1665,7 +1736,7 @@ export function MasonryFlashList<T = any>({
                       {
                         width: layout.colWidth,
                         height: col.height,
-                        marginRight: isLastCol ? 0 : CARD_GAP,
+                        marginRight: isLastCol ? 0 : gap,
                         overflow: 'hidden',
                       },
                     ]}
@@ -1744,8 +1815,6 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     flexDirection: 'row',
-    marginLeft: HORIZONTAL_MARGIN,
-    marginRight: HORIZONTAL_MARGIN,
     backgroundColor: '#f2eee8',
   },
   column: {
