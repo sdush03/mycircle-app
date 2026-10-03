@@ -35,6 +35,7 @@ import type { SharedValue } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { getPhotoCardAspect } from '../../utils/photoDimensionCache';
 import { analyticsService } from '../../services/analyticsService';
+import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -834,6 +835,8 @@ export function MasonryFlashList<T = any>({
   const pendingScrollRestorationRef = useRef<number | null>(null);
   const transitionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitTransitionRef = useRef<(cols: number) => void>(() => {});
+  // Layout cache: avoids re-running O(N) buildMasonryLayout for column counts we've already computed
+  const layoutCacheRef = useRef<Map<number, MasonryLayout<T>>>(new Map());
 
   // ─── Stable callback refs for the pinch gesture (prevents gesture handler recreation) ───
   const startInteractiveTransitionRef = useRef<(cols: number, fX: number, fY: number) => void>(() => {});
@@ -967,6 +970,8 @@ export function MasonryFlashList<T = any>({
 
   useEffect(() => {
     endReachedFiredRef.current = false;
+    // Invalidate layout cache — data changed, cached layouts are stale
+    layoutCacheRef.current.clear();
   }, [data]);
 
   const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1088,6 +1093,8 @@ export function MasonryFlashList<T = any>({
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   // Internal cleanup — called AFTER the cross-fade animation finishes
   const cleanupAfterTransition = useCallback(() => {
+    // Guard: if a NEW transition started during the cross-fade, don't clobber it
+    if (isTransitioningRef.current) return;
     setTransitionCards(null);
     hasTransitionCardsShared.value = false;
     transitionProgress.value = 0;
@@ -1171,6 +1178,8 @@ export function MasonryFlashList<T = any>({
     setIsTransitioning(false);
     setIsPinchingState(false);
     pinchDirection.value = 0;
+    // Reset expanded container height (was inflated for the transition target):
+    setContainerMinHeight(0);
     // Refresh slots so grid is correct after cancel:
     updateSlotsFromY(scrollYRef.current, true);
     // Cross-fade overlay out, then clean up cards:
@@ -1200,6 +1209,9 @@ export function MasonryFlashList<T = any>({
       return;
     }
 
+    // Haptic feedback — like Apple Photos, subtle tap when crossing column threshold
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
     // Safety watchdog: guarantee the grid NEVER remains locked for more than 500ms
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
@@ -1214,7 +1226,18 @@ export function MasonryFlashList<T = any>({
     const currentScrollY = scrollYRef.current;
     const currentHeaderHeight = headerHeightRef.current;
     const currentLayout = layoutRef.current;
-    const targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+
+    // Use cached layout if available — avoids O(N) buildMasonryLayout on repeated pinches
+    let targetLayout = layoutCacheRef.current.get(targetCols);
+    if (!targetLayout) {
+      targetLayout = buildMasonryLayout(dataRef.current, targetCols, SCREEN_WIDTH);
+      layoutCacheRef.current.set(targetCols, targetLayout);
+    }
+    // Also cache current layout for future reverse pinch (e.g. 3→2→3)
+    if (!layoutCacheRef.current.has(currentCols)) {
+      layoutCacheRef.current.set(currentCols, currentLayout);
+    }
+
     const targetPool = getPoolSizeForCols(targetCols);
 
     // PINCH ANCHOR: Compute targetScrollY based on the exact photo under (focalX, focalY)
@@ -1406,18 +1429,20 @@ export function MasonryFlashList<T = any>({
   const gridVisibilityStyle = useAnimatedStyle(() => {
     'worklet';
     // Grid is ALWAYS visible — the overlay covers it from above when overlayOpacity > 0.
-    // When overlay is not yet visible (JS still computing), apply a subtle scale effect
+    // When overlay is not yet visible (JS still computing), apply a scale + opacity effect
     // driven directly by the pinch gesture on the UI thread — gives instant feedback.
     if (overlayOpacity.value > 0.5) {
       // Overlay is covering — just show grid at normal size underneath
       return { opacity: 1, transform: [{ scale: 1 }] };
     }
     if (pinchDirection.value !== 0 && !hasTransitionCardsShared.value) {
-      // Pinch detected but overlay not yet ready — show immediate scale feedback
-      const scaleBase = pinchDirection.value === 1 ? 0.97 : 1.03; // pinch-in shrinks, pinch-out grows
+      // Pinch detected but overlay not yet ready — show immediate visual feedback
+      const scaleBase = pinchDirection.value === 1 ? 0.94 : 1.06; // pinch-in shrinks, pinch-out grows
       const p = transitionProgress.value;
-      const scale = 1 + (scaleBase - 1) * Math.min(1, p * 3);
-      return { opacity: 1, transform: [{ scale }] };
+      const t = Math.min(1, p * 3);
+      const scale = 1 + (scaleBase - 1) * t;
+      const opacity = 1 - 0.08 * t; // subtle 8% dim to emphasize the effect
+      return { opacity, transform: [{ scale }] };
     }
     return { opacity: 1, transform: [{ scale: 1 }] };
   });
