@@ -1,9 +1,10 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withDelay,
   Easing,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -37,12 +38,30 @@ export const MasonryCard = React.memo(function MasonryCard({
     ? (img.blurhash || img.blur_hash || img.blurHash)
     : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
-  const scale = useSharedValue(1.06);
+
+  // Stable organic pseudo-random timing so cards don't animate in lockstep simultaneously
+  const animConfig = useMemo(() => {
+    let hash = (index * 97 + 13) % 1000;
+    const rawId = img?.id || img?.uri || img?.r2Url;
+    if (rawId) {
+      const str = String(rawId);
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash * 31 + str.charCodeAt(i)) % 1000;
+      }
+    }
+    const delay = (hash % 180) + 10; // 10ms - 190ms organic stagger
+    const duration = 400 + (hash % 100); // 400ms - 500ms smooth settle
+    const initialScale = 1.05 + ((hash % 4) * 0.01); // 1.05 - 1.08 subtle scale
+    const transitionDuration = 320 + (hash % 80); // 320ms - 400ms organic dissolve
+    return { delay, duration, initialScale, transitionDuration };
+  }, [index, img?.id, img?.uri, img?.r2Url]);
+
+  const scale = useSharedValue(animConfig.initialScale);
 
   useEffect(() => {
     setFailedUri(null);
-    scale.value = 1.06;
-  }, [primaryUri, scale]);
+    scale.value = animConfig.initialScale;
+  }, [primaryUri, animConfig.initialScale, scale]);
 
   const animatedImageStyle = useAnimatedStyle(() => {
     'worklet';
@@ -146,15 +165,18 @@ export const MasonryCard = React.memo(function MasonryCard({
             cachePolicy="memory-disk"
             placeholder={placeholderSource}
             placeholderContentFit="cover"
-            transition={{ duration: 350, effect: 'cross-dissolve', timing: 'ease-out' }}
+            transition={{ duration: animConfig.transitionDuration, effect: 'cross-dissolve', timing: 'ease-out' }}
             onLoadStart={() => {
               loadStartTimeRef.current = Date.now();
             }}
             onLoad={(e) => {
-              scale.value = withTiming(1, {
-                duration: 440,
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              });
+              scale.value = withDelay(
+                animConfig.delay,
+                withTiming(1, {
+                  duration: animConfig.duration,
+                  easing: Easing.bezier(0.16, 1, 0.3, 1),
+                })
+              );
               if (e.source?.width && e.source?.height) {
                 const aspect = e.source.width / e.source.height;
                 if (cardId) savePhotoAspect(cardId, aspect);
