@@ -1378,17 +1378,15 @@ export function MasonryFlashList<T = any>({
         }
 
         // Live interactive gesture flight progress while user holds and moves fingers:
-        // CRITICAL: Cap interactive preview progress at 0.30 so the flight NEVER finishes
-        // at finger-speed (80ms). When fingers release, the cards ALWAYS have 70%+ of their
-        // flight path remaining, guaranteeing the user sees the smooth flight animation!
+        // Full 0.0 -> 1.0 range so pinching and holding follows fingers all the way to the end!
         if (pinchDirection.value !== 0) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            // Pinch-in: preview up to 0.30 progress
-            targetP = Math.max(0, Math.min(0.30, ((0.985 - e.scale) / 0.25) * 0.30));
+            // Pinch-in: scale goes from 0.985 down to ~0.735 (full 1.0 progress)
+            targetP = Math.max(0, Math.min(1.0, (0.985 - e.scale) / 0.25));
           } else if (pinchDirection.value === -1) {
-            // Pinch-out: preview up to 0.30 progress
-            targetP = Math.max(0, Math.min(0.30, ((e.scale - 1.015) / 0.25) * 0.30));
+            // Pinch-out: scale goes from 1.015 up to ~1.265 (full 1.0 progress)
+            targetP = Math.max(0, Math.min(1.0, (e.scale - 1.015) / 0.25));
           }
 
           if (hasTransitionCardsShared.value) {
@@ -1426,7 +1424,8 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              const duration = 350;
+              const remaining = 1 - currentP;
+              const duration = currentP >= 0.98 ? 60 : Math.max(180, Math.round(remaining * 350));
               isFlightAnimatingShared.value = true;
               console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming to 1 (duration=${duration}ms from P=${currentP.toFixed(2)})`);
               transitionProgress.value = withTiming(1, {
