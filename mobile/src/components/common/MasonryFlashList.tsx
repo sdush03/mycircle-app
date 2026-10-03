@@ -169,62 +169,38 @@ export function buildMasonryLayout<T>(
     return { numColumns: safeCols, columns, maxHeight: 0, colWidth, itemMap };
   }
 
-  if (safeCols >= 3) {
-    // ─── Compact Grid Mode (3, 4, 5 columns): Strict Row-Wise Grid ───────────
-    // Every row has aligned heights and cards strictly flow left-to-right, row-by-row
-    const cardHeight = colWidth; // Clean square tiles matching Apple Photos & Instagram
-    data.forEach((item: any, idx: number) => {
-      if (!item) return;
-      const targetCol = idx % safeCols;
-      const rowIdx = Math.floor(idx / safeCols);
-      const topY = rowIdx * (cardHeight + CARD_GAP);
+  data.forEach((item: any, idx: number) => {
+    if (!item) return;
 
-      const colItem: ColumnItem<T> = {
-        item,
-        originalIndex: idx,
-        topY,
-        height: cardHeight,
-        colIndex: targetCol,
-      };
-
-      columns[targetCol].items.push(colItem);
-      columns[targetCol].height = topY + cardHeight + CARD_GAP;
-
-      const id = getItemId(colItem);
-      if (id !== undefined) {
-        itemMap.set(id, colItem);
+    let shortestCol = 0;
+    for (let c = 1; c < safeCols; c++) {
+      if (columns[c].height < columns[shortestCol].height) {
+        shortestCol = c;
       }
-    });
-  } else {
-    // ─── Editorial / Masonry Mode (1 or 2 columns): Strict Row-Wise Alternation ─
-    // Photos strictly alternate left-to-right across rows (idx % safeCols)
-    data.forEach((item: any, idx: number) => {
-      if (!item) return;
-      const targetCol = idx % safeCols;
+    }
 
-      const aspect = getPhotoCardAspect(item, idx, targetCol, safeCols);
-      const maxCardH = safeCols === 1 ? Math.round(SCREEN_HEIGHT * 0.72) : 600;
-      const minCardH = safeCols === 1 ? 160 : 80;
-      const cardHeight = Math.max(minCardH, Math.min(maxCardH, Math.round(colWidth / (aspect || 0.75))));
+    const aspect = getPhotoCardAspect(item, idx, shortestCol, safeCols);
+    const maxCardH = safeCols === 1 ? Math.round(SCREEN_HEIGHT * 0.72) : (safeCols >= 4 ? 300 : 600);
+    const minCardH = safeCols === 1 ? 160 : (safeCols >= 4 ? 40 : (safeCols === 3 ? 60 : 80));
+    const cardHeight = Math.max(minCardH, Math.min(maxCardH, Math.round(colWidth / (aspect || 0.75))));
 
-      const topY = columns[targetCol].height;
-      const colItem: ColumnItem<T> = {
-        item,
-        originalIndex: idx,
-        topY,
-        height: cardHeight,
-        colIndex: targetCol,
-      };
+    const topY = columns[shortestCol].height;
+    const colItem: ColumnItem<T> = {
+      item,
+      originalIndex: idx,
+      topY,
+      height: cardHeight,
+      colIndex: shortestCol,
+    };
 
-      columns[targetCol].items.push(colItem);
-      columns[targetCol].height += cardHeight + CARD_GAP;
+    columns[shortestCol].items.push(colItem);
+    columns[shortestCol].height += cardHeight + CARD_GAP;
 
-      const id = getItemId(colItem);
-      if (id !== undefined) {
-        itemMap.set(id, colItem);
-      }
-    });
-  }
+    const id = getItemId(colItem);
+    if (id !== undefined) {
+      itemMap.set(id, colItem);
+    }
+  });
 
   const maxHeight = Math.max(0, ...columns.map((c) => c.height));
   return { numColumns: safeCols, columns, maxHeight, colWidth, itemMap };
