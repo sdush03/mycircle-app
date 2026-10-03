@@ -29,6 +29,11 @@ export function getPhotoCardAspect(
     return 16 / 9;
   }
 
+  // 3. Compact grids (3, 4, 5 columns): Uniform 1:1 square aspect (Apple / Google Photos standard)
+  if (numColumns >= 3) {
+    return 1;
+  }
+
   // 3. Check actual dimensions to distinguish landscape vs portrait
   const cachedAspect = getPhotoAspect(item?.id) || getPhotoAspect(item?.uri) || getPhotoAspect(item?.r2Url);
   const w = Number(item?.width) || Number(item?.img_width) || Number(item?.imageWidth) || Number(item?.meta?.width) || Number(item?.metadata?.width) || Number(item?.exif?.PixelXDimension) || Number(item?.exif?.ImageWidth) || 0;

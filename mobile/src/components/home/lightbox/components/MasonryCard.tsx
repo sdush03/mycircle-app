@@ -127,7 +127,7 @@ export const MasonryCard = React.memo(function MasonryCard({
           cachePolicy="memory-disk"
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={0}
+          transition={{ duration: 160, effect: 'cross-dissolve', timing: 'ease-out' }}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
@@ -211,7 +211,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: 'transparent',
+    backgroundColor: '#f0ece5',
     overflow: 'hidden',
     position: 'relative',
   },

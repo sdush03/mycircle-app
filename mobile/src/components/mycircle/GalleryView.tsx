@@ -2805,11 +2805,11 @@ const styles = StyleSheet.create({
   },
   masonryCard: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f0ece5',
     overflow: 'hidden',
   },
   skeletonCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f0ece5',
     opacity: 1,
   },
   emptyContainer: {
