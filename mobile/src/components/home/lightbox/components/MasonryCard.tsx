@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -39,29 +39,34 @@ export const MasonryCard = React.memo(function MasonryCard({
     : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
 
-  // Stable organic pseudo-random timing so cards don't animate in lockstep simultaneously
-  const animConfig = useMemo(() => {
-    let hash = (index * 97 + 13) % 1000;
-    const rawId = img?.id || img?.uri || img?.r2Url;
-    if (rawId) {
-      const str = String(rawId);
-      for (let i = 0; i < str.length; i++) {
-        hash = (hash * 31 + str.charCodeAt(i)) % 1000;
-      }
+  // Generate deterministic organic stagger & duration based on cardId/index
+  const { randomDelay, randomDuration, startScale } = React.useMemo(() => {
+    let hash = 0;
+    const key = `${cardId}-${index}`;
+    for (let i = 0; i < key.length; i++) {
+      hash = (hash << 5) - hash + key.charCodeAt(i);
+      hash |= 0;
     }
-    const delay = (hash % 180) + 10; // 10ms - 190ms organic stagger
-    const duration = 400 + (hash % 100); // 400ms - 500ms smooth settle
-    const initialScale = 1.05 + ((hash % 4) * 0.01); // 1.05 - 1.08 subtle scale
-    const transitionDuration = 320 + (hash % 80); // 320ms - 400ms organic dissolve
-    return { delay, duration, initialScale, transitionDuration };
-  }, [index, img?.id, img?.uri, img?.r2Url]);
+    const abs = Math.abs(hash);
 
-  const scale = useSharedValue(animConfig.initialScale);
+    // Stagger delay between 0ms and 210ms in organic intervals (0, 28, 56, 84, 112, 140, 168, etc.)
+    const delay = ((abs % 7) * 28) + ((abs % 3) * 12); // Range: 0 to 192ms
+    // Duration between 380ms and 480ms
+    const duration = 380 + (abs % 5) * 22; // Range: 380 to 468ms
+    // Start scale slightly varied: 1.05 to 1.08
+    const scaleVal = 1.05 + (abs % 4) * 0.01;
+
+    return { randomDelay: delay, randomDuration: duration, startScale: scaleVal };
+  }, [cardId, index]);
+
+  const scale = useSharedValue(startScale);
+  const opacity = useSharedValue(0);
 
   useEffect(() => {
     setFailedUri(null);
-    scale.value = animConfig.initialScale;
-  }, [primaryUri, animConfig.initialScale, scale]);
+    scale.value = startScale;
+    opacity.value = 0;
+  }, [primaryUri, startScale, scale, opacity]);
 
   const animatedImageStyle = useAnimatedStyle(() => {
     'worklet';
@@ -69,6 +74,7 @@ export const MasonryCard = React.memo(function MasonryCard({
       width: '100%',
       height: '100%',
       transform: [{ scale: scale.value }],
+      opacity: opacity.value,
     };
   });
   const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
@@ -165,16 +171,23 @@ export const MasonryCard = React.memo(function MasonryCard({
             cachePolicy="memory-disk"
             placeholder={placeholderSource}
             placeholderContentFit="cover"
-            transition={{ duration: animConfig.transitionDuration, effect: 'cross-dissolve', timing: 'ease-out' }}
+            transition={0}
             onLoadStart={() => {
               loadStartTimeRef.current = Date.now();
             }}
             onLoad={(e) => {
               scale.value = withDelay(
-                animConfig.delay,
+                randomDelay,
                 withTiming(1, {
-                  duration: animConfig.duration,
+                  duration: randomDuration,
                   easing: Easing.bezier(0.16, 1, 0.3, 1),
+                })
+              );
+              opacity.value = withDelay(
+                randomDelay,
+                withTiming(1, {
+                  duration: Math.max(280, randomDuration - 40),
+                  easing: Easing.out(Easing.quad),
                 })
               );
               if (e.source?.width && e.source?.height) {
@@ -186,7 +199,7 @@ export const MasonryCard = React.memo(function MasonryCard({
               const cacheType = elapsed < 35 ? '💾 CACHE HIT (0-35ms)' : `🌐 NETWORK DOWNLOAD (${elapsed}ms)`;
               const isThumb = imageDisplayUri.includes('thumb') || imageDisplayUri.includes('mobile') || imageDisplayUri.includes('/api/gallery/resize') || (e.source?.width && e.source.width <= 600);
               const resTag = isThumb ? '🖼️ [THUMBNAIL]' : '4️⃣K [FULL RES ORIGINAL]';
-              console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
+              console.log(`[MYCIRCLE DEBUG 📱 PAINTED ON SCREEN] Grid Card #${index + 1} | Stagger: +${randomDelay}ms | Type: ${resTag} | ${cacheType} | Rendered Res: ${e.source?.width}x${e.source?.height}px`);
             }}
             onError={() => {
               console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
