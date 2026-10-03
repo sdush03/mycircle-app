@@ -869,7 +869,7 @@ export function MasonryFlashList<T = any>({
       pendingAutoCommitRef.current = null;
       isFlightAnimatingShared.value = true;
       transitionProgress.value = withTiming(1, {
-        duration: 1200,
+        duration: 350,
         easing: Easing.bezier(0.25, 0.1, 0.25, 1),
       }, (finished) => {
         'worklet';
@@ -914,12 +914,11 @@ export function MasonryFlashList<T = any>({
 
       if (pendingAutoCommitRef.current !== null) {
         const toCols = pendingAutoCommitRef.current;
-        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over 1200ms...`);
+        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over 350ms...`);
         pendingAutoCommitRef.current = null;
         isFlightAnimatingShared.value = true;
-        // TEMPORARY SLOW-MOTION TEST: 1200ms so flight can be observed frame-by-frame
         transitionProgress.value = withTiming(1, {
-          duration: 1200,
+          duration: 350,
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, (finished) => {
           'worklet';
@@ -1147,9 +1146,9 @@ export function MasonryFlashList<T = any>({
     // Force slot refresh at current scroll position so correct photos show immediately:
     updateSlotsFromY(scrollYRef.current, true);
 
-    // Smooth cross-fade: animate overlay opacity from 1 → 0 over 400ms (temporary slow-mo test)
+    // Smooth cross-fade: animate overlay opacity from 1 → 0 over 180ms
     overlayOpacity.value = withTiming(0, {
-      duration: 400,
+      duration: 180,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1199,7 +1198,7 @@ export function MasonryFlashList<T = any>({
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and cross-fading overlay out (300ms)');
+    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and cross-fading overlay out (150ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1218,7 +1217,7 @@ export function MasonryFlashList<T = any>({
     updateSlotsFromY(scrollYRef.current, true);
     // Cross-fade overlay out, then clean up cards:
     overlayOpacity.value = withTiming(0, {
-      duration: 300,
+      duration: 150,
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
@@ -1258,7 +1257,7 @@ export function MasonryFlashList<T = any>({
         console.log('[PINCH-DEBUG 🔍] ⚠️ WATCHDOG FIRED! Forcing finalizeCommit');
         finalizeCommit();
       }
-    }, 6000); // 6000ms for slow-mo testing
+    }, 1500); // 6000ms for slow-mo testing
 
     // Use scrollYRef (kept in sync by scroll handler) — more reliable than reading
     // scrollSharedValue.value on JS thread which can be stale across the bridge.
@@ -1427,8 +1426,7 @@ export function MasonryFlashList<T = any>({
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
-              // TEMPORARY SLOW-MOTION TEST: Guaranteed 1200ms flight from current preview to 1.0
-              const duration = 1200;
+              const duration = 350;
               isFlightAnimatingShared.value = true;
               console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming to 1 (duration=${duration}ms from P=${currentP.toFixed(2)})`);
               transitionProgress.value = withTiming(1, {
@@ -1447,7 +1445,7 @@ export function MasonryFlashList<T = any>({
             console.log('[PINCH-DEBUG 🔍] ❌ onEnd: NOT INTENTIONAL -> Canceling transition back to 0');
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
-              const cancelDuration = Math.max(400, Math.round(currentP * 800));
+              const cancelDuration = Math.max(150, Math.round(currentP * 250));
               transitionProgress.value = withTiming(0, {
                 duration: cancelDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
