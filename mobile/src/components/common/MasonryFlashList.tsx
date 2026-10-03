@@ -765,6 +765,20 @@ export function MasonryFlashList<T = any>({
   const pendingTargetScrollYRef = useRef(0);
   const pendingTargetSlotsRef = useRef<SlotState[][] | null>(null);
   const pendingTargetLayoutRef = useRef<MasonryLayout<T> | null>(null);
+  const pendingAutoCommitRef = useRef<number | null>(null);
+  const commitTransitionRef = useRef<(cols: number) => void>(() => {});
+
+  const commitTransitionOnJS = useCallback((cols: number) => {
+    commitTransitionRef.current?.(cols);
+  }, []);
+
+  const setPendingAutoCommit = useCallback((cols: number) => {
+    pendingAutoCommitRef.current = cols;
+  }, []);
+
+  const clearPendingAutoCommit = useCallback(() => {
+    pendingAutoCommitRef.current = null;
+  }, []);
 
   // ─── Component State ───────────────────────────────────────────────────────
   const [currentCols, setCurrentCols] = useState<number>(() => {
@@ -779,19 +793,35 @@ export function MasonryFlashList<T = any>({
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
       hasTransitionCardsShared.value = true;
-      // Allow 2 native animation frames (~45ms) for overlay images to bind GPU textures
+      // Allow 2 native animation frames (~40ms) for overlay images to bind GPU textures
       // while the base grid remains 100% visible underneath:
       const timer = setTimeout(() => {
         isOverlayReadyShared.value = true;
-      }, 45);
+        // If gesture already ended intentionally while overlay was mounting across bridge:
+        if (pendingAutoCommitRef.current !== null) {
+          const toCols = pendingAutoCommitRef.current;
+          pendingAutoCommitRef.current = null;
+          shouldCommitOnMount.value = false;
+          transitionProgress.value = withTiming(1, {
+            duration: 450,
+            easing: Easing.bezier(0.2, 0.9, 0.3, 1),
+          }, (finished) => {
+            if (finished) {
+              runOnJS(commitTransitionOnJS)(toCols);
+            }
+          });
+        }
+      }, 40);
       return () => clearTimeout(timer);
     } else {
       hasTransitionCardsShared.value = false;
       isOverlayReadyShared.value = false;
       hasStartedFlight.value = false;
+      shouldCommitOnMount.value = false;
+      pendingAutoCommitRef.current = null;
       transitionProgress.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, transitionProgress]);
+  }, [transitionCards, hasTransitionCardsShared, isOverlayReadyShared, hasStartedFlight, shouldCommitOnMount, transitionProgress, commitTransitionOnJS]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -949,6 +979,7 @@ export function MasonryFlashList<T = any>({
 
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   const finalizeCommit = useCallback(() => {
+    pendingAutoCommitRef.current = null;
     hasTransitionCardsShared.value = false;
     isOverlayReadyShared.value = false;
     hasStartedFlight.value = false;
@@ -976,15 +1007,18 @@ export function MasonryFlashList<T = any>({
 
     onNumColumnsChange?.(targetCols);
 
-    // Keep the transition overlay cards visible for 140ms while React + native
+    // Keep the transition overlay cards visible for 180ms while React + native
     // mount and paint the new base grid views in native.
     // Then cleanly swap in a single tick (NO crossfade that reveals duplicate background photos):
     setTimeout(() => {
       finalizeCommit();
-    }, 140);
+    }, 180);
   }, [performScrollTo, onNumColumnsChange, finalizeCommit]);
 
+  commitTransitionRef.current = commitTransition;
+
   const cancelTransition = useCallback(() => {
+    pendingAutoCommitRef.current = null;
     hasTransitionCardsShared.value = false;
     isOverlayReadyShared.value = false;
     hasStartedFlight.value = false;
@@ -1052,8 +1086,8 @@ export function MasonryFlashList<T = any>({
         shouldCommitOnMount.value = false;
         const targetCols = targetColsShared.value;
         transitionProgress.value = withTiming(1, {
-          duration: 240,
-          easing: Easing.bezier(0.25, 1, 0.5, 1),
+          duration: 450,
+          easing: Easing.bezier(0.2, 0.9, 0.3, 1),
         }, (finished) => {
           if (finished) {
             runOnJS(commitTransition)(targetCols);
@@ -1117,9 +1151,9 @@ export function MasonryFlashList<T = any>({
         if (isOverlayReadyShared.value) {
           let targetP = 0;
           if (pinchDirection.value === 1) {
-            targetP = Math.max(0, Math.min(1, (0.985 - e.scale) / 0.20));
+            targetP = Math.max(0, Math.min(0.85, (0.985 - e.scale) / 0.28));
           } else if (pinchDirection.value === -1) {
-            targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.20));
+            targetP = Math.max(0, Math.min(0.85, (e.scale - 1.015) / 0.28));
           }
 
           if (!hasStartedFlight.value) {
@@ -1149,15 +1183,15 @@ export function MasonryFlashList<T = any>({
           const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
           const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
 
-          // Intentional pinch if progress >= 0.18, scale delta >= 0.035, or flicked with velocity:
-          const isIntentional = currentP >= 0.18 || scaleDelta >= 0.035 || hasVelocity;
+          // Intentional pinch if progress >= 0.15, scale delta >= 0.03, or flicked with velocity:
+          const isIntentional = currentP >= 0.15 || scaleDelta >= 0.03 || hasVelocity;
 
           if (isIntentional) {
             if (isOverlayReadyShared.value) {
-              // Overlay is ready: smoothly complete remaining flight to 1.0 (220ms):
+              // Overlay is ready: smoothly complete remaining flight to 1.0 (420ms):
               transitionProgress.value = withTiming(1, {
-                duration: 220,
-                easing: Easing.bezier(0.25, 1, 0.5, 1),
+                duration: 420,
+                easing: Easing.bezier(0.2, 0.9, 0.3, 1),
               }, (finished) => {
                 if (finished) {
                   runOnJS(commitTransition)(targetCols);
@@ -1165,16 +1199,17 @@ export function MasonryFlashList<T = any>({
               });
             } else {
               // Fast flick occurred before overlay finished mounting across bridge:
-              // Flag so that the exact moment overlay warms up, it smoothly animates 0 -> 1!
               shouldCommitOnMount.value = true;
+              runOnJS(setPendingAutoCommit)(targetCols);
             }
           } else {
             // Cancel transition: animate cards back to 0:
             shouldCommitOnMount.value = false;
+            runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               transitionProgress.value = withTiming(0, {
-                duration: 180,
-                easing: Easing.bezier(0.25, 1, 0.5, 1),
+                duration: 340,
+                easing: Easing.bezier(0.2, 0.9, 0.3, 1),
               }, (finished) => {
                 if (finished) {
                   runOnJS(cancelTransition)();
@@ -1218,6 +1253,8 @@ export function MasonryFlashList<T = any>({
     startInteractiveTransition,
     commitTransition,
     cancelTransition,
+    setPendingAutoCommit,
+    clearPendingAutoCommit,
   ]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
