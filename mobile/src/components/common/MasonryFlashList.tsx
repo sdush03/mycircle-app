@@ -230,11 +230,7 @@ function assignSlots<T>(
 
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
-    if (topY > maxY) {
-      // Items are ordered by topY ascending — all subsequent items are below maxY
-      break;
-    }
-    if (topY + height >= minY) {
+    if (topY + height >= minY && topY <= maxY) {
       candidates.push(i);
       if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
         onScreenSet.add(i);
@@ -525,28 +521,23 @@ function buildTransitionCards<T>(
   const screenMaxY = SCREEN_HEIGHT + 140;
 
   // 1. Process items visible in fromLayout:
-  for (let cIdx = 0; cIdx < fromLayout.columns.length; cIdx++) {
-    const col = fromLayout.columns[cIdx];
-    for (let i = 0; i < col.items.length; i++) {
-      const item = col.items[i];
+  fromLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
+      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
       const startY = headerHeight + item.topY - fromScrollY;
-
-      // Since col.items are ordered by topY ascending, all subsequent items are below screen:
-      if (startY > screenMaxY) {
-        break;
-      }
-
       const startW = fromLayout.colWidth;
       const startH = item.height;
 
       // Only track items currently visible on the screen in fromLayout:
-      if (startY + startH < screenMinY) {
-        continue;
+      const isVisibleInFrom =
+        startY + startH >= screenMinY && startY <= screenMaxY;
+
+      if (!isVisibleInFrom) {
+        return;
       }
 
-      const startX = HORIZONTAL_MARGIN + cIdx * (fromLayout.colWidth + CARD_GAP);
       const id = getItemId(item);
-      if (id === undefined) continue;
+      if (id === undefined) return;
 
       // Find where this item lands in toLayout:
       const targetItem = toLayout.itemMap.get(id);
@@ -625,32 +616,24 @@ function buildTransitionCards<T>(
         scaleDelta,
         opacityDelta,
       });
-    }
-  }
+    });
+  });
 
   // 2. Process items visible in toLayout that were NOT visible in fromLayout:
-  for (let cIdx = 0; cIdx < toLayout.columns.length; cIdx++) {
-    const col = toLayout.columns[cIdx];
-    for (let i = 0; i < col.items.length; i++) {
-      const item = col.items[i];
+  toLayout.columns.forEach((col, cIdx) => {
+    col.items.forEach((item) => {
+      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
       const targetEndY = headerHeight + item.topY - toScrollY;
-
-      // Ordered by topY ascending:
-      if (targetEndY > screenMaxY) {
-        break;
-      }
-
       const targetEndW = toLayout.colWidth;
       const targetEndH = item.height;
 
-      if (targetEndY + targetEndH < screenMinY) {
-        continue;
-      }
+      const isVisibleInTo =
+        targetEndY + targetEndH >= screenMinY && targetEndY <= screenMaxY;
+
+      if (!isVisibleInTo) return;
 
       const id = getItemId(item);
-      if (id === undefined || cardsMap.has(id)) continue;
-
-      const targetEndX = HORIZONTAL_MARGIN + cIdx * (toLayout.colWidth + CARD_GAP);
+      if (id === undefined || cardsMap.has(id)) return;
 
       // Scenario C: Newly appearing on screen in toLayout ->
       // Smoothly fade in right in its target slot with a gentle scale up
@@ -688,8 +671,8 @@ function buildTransitionCards<T>(
         scaleDelta,
         opacityDelta,
       });
-    }
-  }
+    });
+  });
 
   return Array.from(cardsMap.values());
 }
@@ -905,13 +888,31 @@ export function MasonryFlashList<T = any>({
 
   useEffect(() => {
     if (transitionCards && transitionCards.length > 0) {
+      console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards mounted with ${transitionCards.length} cards. pendingAutoCommit=${pendingAutoCommitRef.current}`);
       hasTransitionCardsShared.value = true;
       overlayOpacity.value = 1; // Overlay covers grid instantly
+
+      if (pendingAutoCommitRef.current !== null) {
+        const toCols = pendingAutoCommitRef.current;
+        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over 1200ms...`);
+        pendingAutoCommitRef.current = null;
+        // TEMPORARY SLOW-MOTION TEST: 1200ms so flight can be observed frame-by-frame
+        transitionProgress.value = withTiming(1, {
+          duration: 1200,
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+        }, (finished) => {
+          'worklet';
+          console.log(`[PINCH-DEBUG 🔍] 🛬 pendingAutoCommit withTiming finished=${finished}, calling commitTransitionOnJS(${toCols})`);
+          runOnJS(commitTransitionOnJS)(toCols);
+        });
+      }
     } else {
+      console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards is null/empty. Resetting hasTransitionCardsShared=false.`);
       hasTransitionCardsShared.value = false;
       pendingAutoCommitRef.current = null;
+      transitionProgress.value = 0;
     }
-  }, [transitionCards, hasTransitionCardsShared, overlayOpacity]);
+  }, [transitionCards, hasTransitionCardsShared, transitionProgress, commitTransitionOnJS, overlayOpacity]);
 
   useEffect(() => {
     currentColsShared.value = currentCols;
@@ -1097,13 +1098,18 @@ export function MasonryFlashList<T = any>({
   // Internal cleanup — called AFTER the cross-fade animation finishes
   const cleanupAfterTransition = useCallback(() => {
     // Guard: if a NEW transition started during the cross-fade, don't clobber it
-    if (isTransitioningRef.current) return;
+    if (isTransitioningRef.current) {
+      console.log('[PINCH-DEBUG 🔍] 🛡️ cleanupAfterTransition: skipped because new transition is active');
+      return;
+    }
+    console.log('[PINCH-DEBUG 🔍] 🧹 cleanupAfterTransition: clearing transitionCards & resetting progress');
     setTransitionCards(null);
     hasTransitionCardsShared.value = false;
     transitionProgress.value = 0;
   }, [hasTransitionCardsShared, transitionProgress]);
 
   const finalizeCommit = useCallback(() => {
+    console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Starting overlay cross-fade (400ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1124,6 +1130,7 @@ export function MasonryFlashList<T = any>({
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
+      console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit overlay withTiming finished=', finished);
       if (finished) {
         runOnJS(cleanupAfterTransition)();
       }
@@ -1131,6 +1138,7 @@ export function MasonryFlashList<T = any>({
   }, [isTransitioningShared, isScrollRestoringShared, pinchDirection, updateSlotsFromY, overlayOpacity, cleanupAfterTransition]);
 
   const commitTransition = useCallback((targetCols: number) => {
+    console.log(`[PINCH-DEBUG 🔍] 💾 commitTransition: committing targetCols=${targetCols}`);
     const targetScrollY = pendingTargetScrollYRef.current;
     const targetSlots = pendingTargetSlotsRef.current;
     const targetLayout = pendingTargetLayoutRef.current;
@@ -1168,6 +1176,7 @@ export function MasonryFlashList<T = any>({
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
+    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and cross-fading overlay out (300ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1189,6 +1198,7 @@ export function MasonryFlashList<T = any>({
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
+      console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition overlay withTiming finished=', finished);
       if (finished) {
         runOnJS(cleanupAfterTransition)();
       }
@@ -1201,12 +1211,14 @@ export function MasonryFlashList<T = any>({
     focalX: number,
     focalY: number,
   ) => {
+    console.log(`[PINCH-DEBUG 🔍] 🚀 startInteractiveTransition: targetCols=${targetCols}, currentCols=${currentCols}, focal=(${Math.round(focalX)}, ${Math.round(focalY)})`);
     // Guard: reject if invalid cols, same cols, or already mid-transition on JS thread
     if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
+      console.log(`[PINCH-DEBUG 🔍] ⛔ startInteractiveTransition REJECTED: targetCols=${targetCols}, currentCols=${currentCols}`);
       return;
     }
     if (isTransitioningRef.current) {
-      // Already mid-transition — don't clobber pending state; watchdog will clean up
+      console.log(`[PINCH-DEBUG 🔍] ⛔ startInteractiveTransition REJECTED: already mid-transition`);
       return;
     }
 
@@ -1219,6 +1231,7 @@ export function MasonryFlashList<T = any>({
     transitionWatchdogTimerRef.current = setTimeout(() => {
       // Only force-finalize if the pinch gesture is done but transition is still stuck
       if (isTransitioningRef.current && !isPinching.value) {
+        console.log('[PINCH-DEBUG 🔍] ⚠️ WATCHDOG FIRED! Forcing finalizeCommit');
         finalizeCommit();
       }
     }, 6000); // 6000ms for slow-mo testing
@@ -1271,6 +1284,7 @@ export function MasonryFlashList<T = any>({
     pendingTargetSlotsRef.current = targetSlots;
     pendingTargetLayoutRef.current = targetLayout;
 
+    console.log(`[PINCH-DEBUG 🔍] ✅ startInteractiveTransition: built ${cards.length} cards, setting state`);
     setTransitionCards(cards);
     setIsTransitioning(true);
     isTransitioningRef.current = true;
@@ -1296,8 +1310,12 @@ export function MasonryFlashList<T = any>({
     return g
       .onStart((e) => {
         'worklet';
-        if (isTransitioningShared.value) return;
+        if (isTransitioningShared.value) {
+          console.log('[PINCH-DEBUG 🔍] ⛔ onStart REJECTED: already transitioning');
+          return;
+        }
 
+        console.log(`[PINCH-DEBUG 🔍] 👉 onStart: scale=${e.scale.toFixed(3)}, focal=(${Math.round(e.focalX)}, ${Math.round(e.focalY)}), currentCols=${currentColsShared.value}`);
         isPinching.value = true;
         if (isPinchingShared) isPinchingShared.value = true;
         focalXShared.value = e.focalX;
@@ -1315,11 +1333,13 @@ export function MasonryFlashList<T = any>({
         // Detect pinch direction as fingers move:
         if (pinchDirection.value === 0) {
           if (e.scale < 0.985 && currentColsShared.value < maxColumns) {
+            console.log(`[PINCH-DEBUG 🔍] ⚡ Detected PINCH-IN: scale=${e.scale.toFixed(3)} -> targetCols=${currentColsShared.value + 1}`);
             pinchDirection.value = 1; // Pinch in -> Add column (e.g. 2 -> 3)
             targetColsShared.value = currentColsShared.value + 1;
             isTransitioningShared.value = true;
             runOnJS(startTransitionOnJS)(currentColsShared.value + 1, e.focalX, e.focalY);
           } else if (e.scale > 1.015 && currentColsShared.value > minColumns) {
+            console.log(`[PINCH-DEBUG 🔍] ⚡ Detected PINCH-OUT: scale=${e.scale.toFixed(3)} -> targetCols=${currentColsShared.value - 1}`);
             pinchDirection.value = -1; // Pinch out -> Remove column (e.g. 3 -> 2, 2 -> 1)
             targetColsShared.value = currentColsShared.value - 1;
             isTransitioningShared.value = true;
@@ -1338,12 +1358,14 @@ export function MasonryFlashList<T = any>({
             targetP = Math.max(0, Math.min(1, (e.scale - 1.015) / 0.25));
           }
 
-          // ALWAYS track gesture progress immediately on UI thread so it's never stuck at 0:
-          transitionProgress.value = targetP;
+          if (hasTransitionCardsShared.value) {
+            transitionProgress.value = targetP;
+          }
         }
       })
       .onEnd((e) => {
         'worklet';
+        console.log(`[PINCH-DEBUG 🔍] 🏁 onEnd: dir=${pinchDirection.value}, scale=${e.scale.toFixed(3)}, vel=${e.velocity.toFixed(2)}, progress=${transitionProgress.value.toFixed(2)}, hasCards=${hasTransitionCardsShared.value}, targetCols=${targetColsShared.value}`);
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
 
@@ -1356,26 +1378,37 @@ export function MasonryFlashList<T = any>({
 
           // Intentional pinch if user moved >= 0.05 progress, scale delta >= 0.015, or flicked with velocity:
           const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
+          console.log(`[PINCH-DEBUG 🔍] onEnd decision: currentP=${currentP.toFixed(2)}, scaleDelta=${scaleDelta.toFixed(3)}, hasVel=${hasVelocity}, intentional=${isIntentional}`);
 
           if (isIntentional) {
-            // ALWAYS launch completion animation directly on the UI thread without bridge race condition:
-            const remaining = Math.max(0, 1 - currentP);
-            const duration = Math.max(600, Math.round(remaining * 1200)); // Test duration 1200ms
-            transitionProgress.value = withTiming(1, {
-              duration,
-              easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-            }, () => {
-              runOnJS(commitTransitionOnJS)(targetCols);
-            });
+            if (hasTransitionCardsShared.value) {
+              // TEMPORARY SLOW-MOTION TEST: 1200ms completion flight
+              const remaining = 1 - currentP;
+              const duration = Math.max(600, Math.round(remaining * 1200));
+              console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming to 1 (duration=${duration}ms from P=${currentP.toFixed(2)})`);
+              transitionProgress.value = withTiming(1, {
+                duration,
+                easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+              }, (finished) => {
+                'worklet';
+                console.log(`[PINCH-DEBUG 🔍] 🛬 onEnd withTiming finished=${finished}, calling commitTransitionOnJS(${targetCols})`);
+                runOnJS(commitTransitionOnJS)(targetCols);
+              });
+            } else {
+              console.log(`[PINCH-DEBUG 🔍] ⏳ onEnd: hasCards=FALSE! Calling setPendingAutoCommit(${targetCols})`);
+              runOnJS(setPendingAutoCommit)(targetCols);
+            }
           } else {
-            // Cancel transition: animate cards back to 0:
+            console.log('[PINCH-DEBUG 🔍] ❌ onEnd: NOT INTENTIONAL -> Canceling transition back to 0');
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               const cancelDuration = Math.max(400, Math.round(currentP * 800));
               transitionProgress.value = withTiming(0, {
                 duration: cancelDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-              }, () => {
+              }, (finished) => {
+                'worklet';
+                console.log(`[PINCH-DEBUG 🔍] ↩️ cancel withTiming finished=${finished}`);
                 runOnJS(cancelTransitionOnJS)();
               });
             } else {
@@ -1383,12 +1416,14 @@ export function MasonryFlashList<T = any>({
             }
           }
         } else {
+          console.log('[PINCH-DEBUG 🔍] onEnd: pinchDirection was 0 (threshold never crossed)');
           runOnJS(setIsPinchingState)(false);
           isTransitioningShared.value = false;
         }
       })
       .onFinalize(() => {
         'worklet';
+        console.log('[PINCH-DEBUG 🔍] onFinalize: gesture ended');
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
         runOnJS(finalizeGestureOnJS)();
