@@ -569,11 +569,17 @@ export function EditorialLightbox({
         storySlug: storySlug || (storyId && isNaN(Number(storyId)) ? storyId : null),
       });
       const displayTitle = title || 'the celebration';
-      await Share.share({
-        message: `Check out this photo from ${displayTitle} on MyCircle:\n${shareUrl}`,
-        url: shareUrl,
-        title: `Photo from ${displayTitle}`,
+      const content = Platform.select({
+        ios: {
+          message: `Check out this photo from ${displayTitle} on MyCircle:`,
+          url: shareUrl,
+        },
+        default: {
+          message: `Check out this photo from ${displayTitle} on MyCircle:\n${shareUrl}`,
+          url: shareUrl,
+        },
       });
+      await Share.share(content);
     } catch (e) {
       console.warn('Share failed:', e);
     }

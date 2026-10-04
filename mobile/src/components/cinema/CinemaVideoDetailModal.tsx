@@ -1038,12 +1038,17 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
       const shareUrl = getAppShareUrl({ tab: 'Cinema' });
-      const message = `Watch "${title}" from ${eventTitle || 'the wedding celebration'} on MyCircle Cinema!\n${shareUrl}`;
-      await Share.share({
-        message,
-        url: shareUrl,
-        title: `Watch "${title}" on MyCircle Cinema`,
+      const content = Platform.select({
+        ios: {
+          message: `Watch "${title}" from ${eventTitle || 'the wedding celebration'} on MyCircle Cinema!`,
+          url: shareUrl,
+        },
+        default: {
+          message: `Watch "${title}" from ${eventTitle || 'the wedding celebration'} on MyCircle Cinema!\n${shareUrl}`,
+          url: shareUrl,
+        },
       });
+      await Share.share(content);
     } catch {}
   };
 
