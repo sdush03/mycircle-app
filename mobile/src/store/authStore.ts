@@ -44,8 +44,10 @@ interface AuthState {
   openedFrom: 'home' | 'mycircle' | null;
   isTabBarCollapsed: boolean;
   galleryCache: Record<string, GalleryCacheEntry>;
-  pendingInvite: { slug: string; passcode: string | null } | null;
-  setPendingInvite: (invite: { slug: string; passcode: string | null } | null) => void;
+  pendingInvite: { slug: string; passcode: string | null; tab?: string | null } | null;
+  initialTab: string | null;
+  setPendingInvite: (invite: { slug: string; passcode: string | null; tab?: string | null } | null) => void;
+  clearInitialTab: () => void;
   setPhoneSkipped: (skipped: boolean) => void;
   setTabBarCollapsed: (collapsed: boolean) => void;
   setUserEvents: (events: any[]) => void;
@@ -56,7 +58,7 @@ interface AuthState {
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
   updateToken: (token: string) => Promise<void>;
   updateProfile: (profile: Partial<GuestProfile>) => Promise<void>;
-  setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null, openedFrom?: 'home' | 'mycircle' | null) => void;
+  setEventDetails: (slug: string | null, passcode: string | null, coverUrl?: string | null, title?: string | null, openedFrom?: 'home' | 'mycircle' | null, initialTab?: string | null) => void;
   leaveEvent: (eventSlugOrId: string | number) => Promise<void>;
   loadStoredAuth: () => Promise<void>;
   logout: () => Promise<void>;
@@ -76,8 +78,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isTabBarCollapsed: false,
   galleryCache: {},
   pendingInvite: null,
+  initialTab: null,
   
   setPendingInvite: (pendingInvite) => set({ pendingInvite }),
+  clearInitialTab: () => set({ initialTab: null }),
   setPhoneSkipped: (skipped) => set({ isPhoneSkipped: skipped }),
   setTabBarCollapsed: (collapsed) => set({ isTabBarCollapsed: collapsed }),
   setUserEvents: (events) => set({ userEvents: events }),
@@ -130,7 +134,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           pendingInvite: null,
           eventSlug: pending.slug,
           passcode: pending.passcode,
-          openedFrom: 'mycircle'
+          openedFrom: 'mycircle',
+          initialTab: pending.tab || null,
         });
         import('../services/galleryPrefetch').then((m) => {
           m.prefetchEventGalleryData(pending.slug, pending.passcode);
@@ -170,7 +175,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     passcode: string | null,
     eventCoverUrl?: string | null,
     eventTitle?: string | null,
-    openedFrom?: 'home' | 'mycircle' | null
+    openedFrom?: 'home' | 'mycircle' | null,
+    initialTab?: string | null
   ) => {
     if (!eventSlug) {
       set({
@@ -179,6 +185,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         eventCoverUrl: null,
         eventTitle: null,
         openedFrom: null,
+        initialTab: null,
       });
       return;
     }
@@ -197,6 +204,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       eventCoverUrl: eventCoverUrl !== undefined ? eventCoverUrl : currentCoverUrl,
       eventTitle: eventTitle !== undefined ? eventTitle : currentTitle,
       openedFrom: openedFrom !== undefined ? openedFrom : (currentOpenedFrom || 'mycircle'),
+      initialTab: initialTab !== undefined ? initialTab : get().initialTab,
     });
 
     import('../services/galleryPrefetch').then((m) => {

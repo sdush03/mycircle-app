@@ -18,7 +18,7 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 const SCREEN = Dimensions.get('screen');
@@ -56,6 +56,17 @@ interface LoginViewProps {
 }
 
 export default function LoginView({ onSuccess, startAnimation = true }: LoginViewProps) {
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = Dimensions.get('window');
+
+  const topBarTop = Math.max(insets.top, Platform.OS === 'android' ? 24 : 44) + (Platform.OS === 'android' ? 12 : 8);
+  const bottomSectionBottom = Math.max(insets.bottom, 16) + 16;
+  // Dynamic height of bottom buttons section
+  // iOS has Google + Apple + Email link + Terms (≈ 204px)
+  // Android has Google + Email button + Terms (≈ 164px)
+  const bottomContentHeight = Platform.OS === 'ios' ? 204 : 164;
+  const centerSectionBottom = bottomSectionBottom + bottomContentHeight + 24;
+
   const profile = useAuthStore((state) => state.profile);
   const token = useAuthStore((state) => state.token);
   const isPhoneSkipped = Platform.OS === 'ios' && useAuthStore((state) => state.isPhoneSkipped);
@@ -112,7 +123,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
   // Interpolate logo movement from center down to top header
   const logoTranslateY = logoPosAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [SCREEN.height * 0.32, 0],
+    outputRange: [windowHeight * 0.30, 0],
   });
 
   const logoScale = logoPosAnim.interpolate({
@@ -438,26 +449,33 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
 
   return (
     <View style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        translucent={true}
+        backgroundColor="transparent"
+      />
 
       {/* ── Full-Bleed Background Image ── */}
       <AnimatedExpoImage
         source={require('@/assets/images/login-bg.jpg')}
         style={[styles.bgImage, { transform: [{ scale: bgScale }] }]}
         contentFit="cover"
+        priority="high"
+        cachePolicy="memory-disk"
       />
 
-      {/* ── Netflix-style multi-stop cinematic gradient ── */}
-      <Animated.View style={[styles.topGradient, { opacity: gradientOpacity }]}>
+      {/* ── Cinematic multi-stop gradient ── */}
+      <Animated.View style={[styles.topGradient, { height: windowHeight * 0.28, opacity: gradientOpacity }]}>
         <LinearGradient
-          colors={['rgba(0,0,0,0.55)', 'transparent']}
-          locations={[0, 1]}
+          colors={['rgba(0,0,0,0.65)', 'rgba(0,0,0,0.25)', 'transparent']}
+          locations={[0, 0.5, 1]}
           style={StyleSheet.absoluteFill}
         />
       </Animated.View>
-      <Animated.View style={[styles.bottomGradient, { opacity: gradientOpacity }]}>
+      <Animated.View style={[styles.bottomGradient, { height: windowHeight * 0.54, opacity: gradientOpacity }]}>
         <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.60)', 'rgba(0,0,0,0.92)', '#000000']}
-          locations={[0, 0.35, 0.7, 1]}
+          colors={['transparent', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.70)', 'rgba(0,0,0,0.95)', '#000000']}
+          locations={[0, 0.25, 0.55, 0.85, 1]}
           style={StyleSheet.absoluteFill}
         />
       </Animated.View>
@@ -467,6 +485,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
         style={[
           styles.topBar,
           {
+            top: topBarTop,
             opacity: logoFadeAnim,
             transform: [
               { translateY: logoTranslateY },
@@ -512,7 +531,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
           <Animated.View
             style={[
               styles.centerSection,
-              { opacity: fadeAnim },
+              { bottom: centerSectionBottom, opacity: fadeAnim },
             ]}
           >
             <Text style={styles.headline}>MY CIRCLE</Text>
@@ -522,7 +541,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
 
 
       {/* ── Bottom: Sign-In Buttons ── */}
-      <View style={styles.bottomSection}>
+      <View style={[styles.bottomSection, { bottom: bottomSectionBottom }]}>
         {isLoggingIn ? (
           <ActivityIndicator size="large" color="#ffffff" style={styles.loader} />
         ) : (
@@ -548,8 +567,8 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
               </Pressable>
             </Animated.View>
 
-            {/* Apple Button — outline ghost style with medium slide-fade (iOS only) */}
-            {Platform.OS === 'ios' && (
+            {/* Apple Button on iOS / Email Button on Android — luxury outline ghost style with medium slide-fade */}
+            {Platform.OS === 'ios' ? (
               <Animated.View
                 style={{
                   width: '100%',
@@ -569,10 +588,7 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
                   <Text style={styles.secondaryBtnLabel}>Continue with Apple</Text>
                 </Pressable>
               </Animated.View>
-            )}
-
-            {/* Facebook Button — outline ghost style with medium slide-fade (Android only) */}
-            {Platform.OS === 'android' && (
+            ) : (
               <Animated.View
                 style={{
                   width: '100%',
@@ -582,38 +598,44 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
               >
                 <Pressable
                   style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
-                  onPress={signInWithFacebook}
+                  onPress={() => {
+                    setEmailError('');
+                    setIsEmailModalVisible(true);
+                  }}
                 >
-                  <Image
-                    source={require('@/assets/images/facebook-icon.png')}
-                    style={styles.fbIcon}
-                    resizeMode="contain"
+                  <Ionicons
+                    name="mail-outline"
+                    size={20}
+                    color="#ffffff"
+                    style={styles.mailIcon}
                   />
-                  <Text style={styles.secondaryBtnLabel}>Continue with Facebook</Text>
+                  <Text style={styles.secondaryBtnLabel}>Continue with Email</Text>
                 </Pressable>
               </Animated.View>
             )}
 
-            {/* Email Text Button — text-only (no box) */}
-            <Animated.View
-              style={{
-                alignItems: 'center',
-                marginTop: 2,
-                opacity: emailAnim,
-                transform: [{ translateY: emailSlide }],
-              }}
-            >
-              <Pressable
-                style={({ pressed }) => [styles.emailTextBtn, pressed && styles.btnPressed]}
-                onPress={() => {
-                  setEmailError('');
-                  setIsEmailModalVisible(true);
+            {/* Email Text Button — text-only (iOS only, Android has Email as prominent secondary button) */}
+            {Platform.OS === 'ios' && (
+              <Animated.View
+                style={{
+                  alignItems: 'center',
+                  marginTop: 2,
+                  opacity: emailAnim,
+                  transform: [{ translateY: emailSlide }],
                 }}
-                hitSlop={{ top: 10, bottom: 10, left: 16, right: 16 }}
               >
-                <Text style={styles.emailTextBtnLabel}>Continue with Email</Text>
-              </Pressable>
-            </Animated.View>
+                <Pressable
+                  style={({ pressed }) => [styles.emailTextBtn, pressed && styles.btnPressed]}
+                  onPress={() => {
+                    setEmailError('');
+                    setIsEmailModalVisible(true);
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 16, right: 16 }}
+                >
+                  <Text style={styles.emailTextBtnLabel}>Continue with Email</Text>
+                </Pressable>
+              </Animated.View>
+            )}
 
             {/* Disclaimer line — smooth slow fade-in */}
             <Animated.View
@@ -753,32 +775,24 @@ const styles = StyleSheet.create({
 
   /* ── Background ── */
   bgImage: {
-    position: 'absolute',
-    width: SCREEN.width,
-    height: SCREEN.height,
-    top: 0,
-    left: 0,
+    ...StyleSheet.absoluteFillObject,
   },
   topGradient: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: SCREEN.height * 0.35,
   },
-
   bottomGradient: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: SCREEN.height * 0.65,
   },
 
   /* ── Top Bar ── */
   topBar: {
     position: 'absolute',
-    top: 60,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -793,7 +807,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 24,
     right: 24,
-    bottom: SCREEN.height * 0.30,
     alignItems: 'center',
   },
   headline: {
@@ -804,6 +817,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     textAlign: 'center',
     lineHeight: 46,
+    includeFontPadding: false,
   },
   subBrand: {
     fontFamily: FONT_FUTURA,
@@ -813,6 +827,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
     textTransform: 'uppercase',
+    includeFontPadding: false,
   },
   tagline: {
     fontFamily: FONT_FUTURA,
@@ -821,12 +836,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     textAlign: 'center',
     lineHeight: 25,
+    includeFontPadding: false,
   },
 
   /* ── Bottom Buttons ── */
   bottomSection: {
     position: 'absolute',
-    bottom: 48,
     left: 24,
     right: 24,
     alignItems: 'center',
@@ -852,6 +867,7 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 15,
     letterSpacing: 0.3,
+    includeFontPadding: false,
   },
 
   /* Secondary: glass outline */
@@ -872,11 +888,17 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     letterSpacing: 0.3,
+    includeFontPadding: false,
   },
 
   btnIcon: {
     width: 20,
     height: 20,
+  },
+  mailIcon: {
+    width: 20,
+    height: 20,
+    textAlign: 'center',
   },
   fbIcon: {
     width: 20,
@@ -897,6 +919,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     letterSpacing: 0.5,
     textDecorationLine: 'underline',
+    includeFontPadding: false,
   },
   btnPressed: {
     opacity: 0.75,
@@ -910,6 +933,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     letterSpacing: 0.2,
+    includeFontPadding: false,
   },
   disclaimerLink: {
     color: 'rgba(255,255,255,0.70)',

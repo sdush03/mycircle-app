@@ -468,6 +468,8 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
             fullscreenOptions={{ enable: false }}
             showsTimecodes={false}
             allowsVideoFrameAnalysis={false}
+            allowsPictureInPicture={false}
+            startsPictureInPictureAutomatically={false}
           />
 
           {/* ±10s Double Tap Ripple Feedback */}

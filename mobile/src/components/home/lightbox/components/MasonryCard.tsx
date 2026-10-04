@@ -47,7 +47,11 @@ export const MasonryCard = React.memo(function MasonryCard({
   const handlePress = useCallback(() => {
     if (cardRef.current) {
       cardRef.current.measureInWindow((x, y, width, height) => {
-        onSelect({ x, y, width, height });
+        if (width > 0 && height > 0) {
+          onSelect({ x, y, width, height });
+        } else {
+          onSelect(null);
+        }
       });
     } else {
       onSelect(null);
@@ -84,7 +88,12 @@ export const MasonryCard = React.memo(function MasonryCard({
     if (isVideo) {
       const vUrl = img?.videoUrl || img?.fullUri || img?.r2Url || fallbackUri || (typeof primaryUri === 'string' && (primaryUri.endsWith('.mp4') || primaryUri.endsWith('.mov') || primaryUri.includes('/videos/')) ? primaryUri : null);
       const tUrl = img?.thumbnailUrl || img?.thumbUri || (activeUri && !activeUri.endsWith('.mp4') ? activeUri : null);
-      if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
+      if (Platform.OS === 'android') {
+        // On Android, pre-warm only the poster thumbnail to avoid allocating scarce MediaCodec decoders during grid scrolling
+        if (tUrl && typeof tUrl === 'string' && tUrl.startsWith('http')) {
+          Image.prefetch(tUrl, 'memory-disk');
+        }
+      } else if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
         videoPreloadManager.preload(vUrl, tUrl);
       }
     }
@@ -215,14 +224,14 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
     position: 'relative',
   },
   masonryImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   heartOverlay: {
     position: 'absolute',

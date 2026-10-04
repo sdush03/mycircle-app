@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Dimensions, Pressable } from 'react-native';
+import { StyleSheet, View, Dimensions, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 // @ts-ignore
 import { Ionicons } from '@expo/vector-icons';
@@ -151,7 +151,7 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
               contentFit="contain"
               cachePolicy="memory-disk"
               priority="high"
-              transition={150}
+              transition={Platform.OS === 'android' ? 0 : 150}
               onLoadStart={() => {
                 loadStartRef.current = Date.now();
               }}

@@ -5,13 +5,21 @@ import api from '../services/api';
 
 const HAS_CHECKED_DEFERRED_INVITE_KEY = 'has_checked_server_deferred_invite';
 
-export function parseDeepLink(incomingUrl: string): { slug: string; passcode: string | null } | null {
+export interface DeepLinkResult {
+  slug: string;
+  passcode: string | null;
+  tab?: string | null;
+}
+
+export function parseDeepLink(incomingUrl: string): DeepLinkResult | null {
   if (!incomingUrl) return null;
 
   try {
     const parsed = Linking.parse(incomingUrl);
     const rawCode = parsed.queryParams?.code || parsed.queryParams?.passcode || null;
     const passcode = Array.isArray(rawCode) ? rawCode[0] : (rawCode as string | null);
+    const rawTab = parsed.queryParams?.tab || null;
+    const tab = Array.isArray(rawTab) ? rawTab[0] : (rawTab as string | null);
 
     let slug: string | null = null;
 
@@ -20,11 +28,16 @@ export function parseDeepLink(incomingUrl: string): { slug: string; passcode: st
       slug = Array.isArray(qSlug) ? qSlug[0] : qSlug;
     } else if (parsed.path) {
       const parts = parsed.path.split('/').filter(Boolean);
-      if (parts[0] === 'gallery' && parts[1]) {
+      const galleryIdx = parts.indexOf('gallery');
+      const prefixIdx = parts.findIndex(p => p === 'celebration' || p === 'event' || p === 'join' || p === 'mycircle');
+
+      if (galleryIdx > 0) {
+        slug = parts[galleryIdx - 1];
+      } else if (galleryIdx === 0 && parts[1]) {
         slug = parts[1];
-      } else if (parts[0] === 'join' && parts[1]) {
-        slug = parts[1];
-      } else if (parts[0] && parts[0] !== 'join' && parts[0] !== 'gallery') {
+      } else if (prefixIdx !== -1 && parts[prefixIdx + 1]) {
+        slug = parts[prefixIdx + 1];
+      } else if (parts[0] && parts[0] !== 'join' && parts[0] !== 'gallery' && parts[0] !== 'celebration' && parts[0] !== 'event') {
         slug = parts[0];
       }
     } else if (parsed.hostname && parsed.hostname !== 'mycircle.mistyvisuals.com' && parsed.hostname !== 'join') {
@@ -41,10 +54,12 @@ export function parseDeepLink(incomingUrl: string): { slug: string; passcode: st
         lower === 'exp' ||
         lower === 'gallery' ||
         lower === 'join' ||
+        lower === 'terms' ||
+        lower === 'privacy' ||
         /^(?:\d{1,3}\.){3}\d{1,3}$/.test(lower);
 
       if (!isDevOrSystem) {
-        return { slug, passcode: passcode || null };
+        return { slug, passcode: passcode || null, tab: tab || null };
       }
     }
   } catch (err) {
@@ -58,15 +73,15 @@ export function handleIncomingUrl(url: string) {
   const result = parseDeepLink(url);
   if (!result) return;
 
-  const { slug, passcode } = result;
+  const { slug, passcode, tab } = result;
   const token = useAuthStore.getState().token;
 
-  console.log('[DeepLink] Processing event invite:', { slug, passcode, isAuthenticated: !!token });
+  console.log('[DeepLink] Processing event invite:', { slug, passcode, tab, isAuthenticated: !!token });
 
   if (token) {
-    useAuthStore.getState().setEventDetails(slug, passcode, null, null, 'mycircle');
+    useAuthStore.getState().setEventDetails(slug, passcode, null, null, 'mycircle', tab || null);
   } else {
-    useAuthStore.getState().setPendingInvite({ slug, passcode });
+    useAuthStore.getState().setPendingInvite({ slug, passcode, tab: tab || null });
   }
 }
 
@@ -96,3 +111,45 @@ export async function checkServerDeferredDeepLink() {
     console.warn('[DeepLink] Server deferred invite check error:', e);
   }
 }
+
+export interface ShareUrlOptions {
+  customSlug?: string | null;
+  tab?: 'Cinema' | 'Gallery' | string | null;
+  storySlug?: string | null;
+}
+
+/**
+ * Returns a universal web/app link for sharing instead of exposing direct media file URLs.
+ * - Event gallery: https://mycircle.mistyvisuals.com/<slug>/gallery
+ * - Event cinema: https://mycircle.mistyvisuals.com/<slug>/gallery?tab=Cinema
+ * - Website story: https://www.mistyvisuals.com/stories/<storySlug>
+ * - Fallback: https://mycircle.mistyvisuals.com
+ */
+export function getAppShareUrl(options?: ShareUrlOptions | string | null): string {
+  const customSlug = typeof options === 'string' ? options : options?.customSlug;
+  const tab = typeof options === 'object' && options ? options.tab : null;
+  const storySlug = typeof options === 'object' && options ? options.storySlug : null;
+
+  // 1. Website featured story
+  if (storySlug) {
+    return `https://www.mistyvisuals.com/stories/${storySlug}`;
+  }
+
+  const { eventSlug } = useAuthStore.getState();
+  const slug = customSlug || eventSlug;
+
+  // 2. Event celebration gallery
+  if (slug) {
+    const params: string[] = [];
+    if (tab && tab.toLowerCase() !== 'all') {
+      params.push(`tab=${encodeURIComponent(tab)}`);
+    }
+    const query = params.length > 0 ? `?${params.join('&')}` : '';
+    return `https://mycircle.mistyvisuals.com/${slug}/gallery${query}`;
+  }
+
+  // 3. Fallback
+  return 'https://mycircle.mistyvisuals.com';
+}
+
+

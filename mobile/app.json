@@ -137,7 +137,7 @@
           }
         }
       ],
-      ["expo-video", { "supportsBackgroundPlayback": true }]
+      ["expo-video", { "supportsBackgroundPlayback": true, "supportsPictureInPicture": false }]
     ],
     "experiments": {
       "typedRoutes": true,

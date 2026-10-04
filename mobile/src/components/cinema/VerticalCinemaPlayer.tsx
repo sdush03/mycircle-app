@@ -534,6 +534,8 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
                   fullscreenOptions={{ enable: false }}
                   showsTimecodes={false}
                   allowsVideoFrameAnalysis={false}
+                  allowsPictureInPicture={false}
+                  startsPictureInPictureAutomatically={false}
                 />
               </Animated.View>
 

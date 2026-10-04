@@ -18,7 +18,7 @@
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, View, Text, Dimensions } from 'react-native';
+import { StyleSheet, View, Text, Dimensions, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
@@ -44,7 +44,9 @@ export const DEFAULT_HORIZONTAL_MARGIN = 6;
 export const DEFAULT_CARD_GAP = 5;
 export const HORIZONTAL_MARGIN = 6;
 export const CARD_GAP = 5;
-const OVERSCAN = 1200;
+// Right-sized overscan: On Android, 700dp covers ~0.9 screens above and below,
+// preventing excess bitmap memory and decoding pressure while eliminating blank slots.
+const OVERSCAN = Platform.OS === 'android' ? 700 : 1000;
 
 export const getCardGapForCols = (cols: number): number => {
   switch (cols) {
@@ -61,12 +63,24 @@ export const getHorizontalMarginForCols = (_cols?: number): number => {
 };
 
 export const getPoolSizeForCols = (cols: number): number => {
+  // On Android, keeping 100-230 views in memory causes severe ART GC thrashing,
+  // Yoga layout recalculation lag, and frame drops.
+  // We right-size the pool to cover ~3.5-4 viewports (plenty for high-speed scrolling).
+  if (Platform.OS === 'android') {
+    switch (cols) {
+      case 1: return 18;
+      case 2: return 22; // 2 cols * 22 = 44 total views (vs 100 before!)
+      case 3: return 20; // 3 cols * 20 = 60 total views (vs 144 before!)
+      case 4: return 18; // 4 cols * 18 = 72 total views (vs 184 before!)
+      case 5: default: return 16;
+    }
+  }
   switch (cols) {
-    case 1: return 40;
-    case 2: return 50;
-    case 3: return 48;
-    case 4: return 46;
-    case 5: default: return 46;
+    case 1: return 30;
+    case 2: return 36;
+    case 3: return 34;
+    case 4: return 32;
+    case 5: default: return 28;
   }
 };
 
@@ -154,6 +168,7 @@ export interface MasonryFlashListProps<T = any> {
   renderHeroCover?: () => React.ReactElement | null;
   renderStickyHeader?: () => React.ReactElement | null;
   ListFooterComponent?: React.ReactNode | (() => React.ReactElement | null);
+  ListEmptyComponent?: React.ReactNode | (() => React.ReactElement | null);
   onScroll?: any;
   scrollEventThrottle?: number;
   scrollSharedValue?: SharedValue<number>;
@@ -161,6 +176,7 @@ export interface MasonryFlashListProps<T = any> {
   onEndReachedThreshold?: number;
   mainScrollRef?: any;
   contentContainerStyle?: any;
+  minContentHeight?: number;
   refreshControl?: any;
   isPinchingShared?: SharedValue<boolean>;
   onMomentumScrollEnd?: (event: any) => void;
@@ -254,7 +270,8 @@ function assignSlots<T>(
 
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
-    if (topY + height >= minY && topY <= maxY) {
+    if (topY > maxY) break; // Items are ordered vertically, stop scanning once past maxY
+    if (topY + height >= minY) {
       candidates.push(i);
       if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
         onScreenSet.add(i);
@@ -262,21 +279,21 @@ function assignSlots<T>(
     }
   }
 
-  // 2. Prioritize candidates:
-  //    - Items directly on screen ALWAYS come first (highest priority)
-  //    - Then items sorted by distance to the viewport center (closest first)
-  candidates.sort((a, b) => {
-    const aOnScreen = onScreenSet.has(a);
-    const bOnScreen = onScreenSet.has(b);
-    if (aOnScreen && !bOnScreen) return -1;
-    if (!aOnScreen && bOnScreen) return 1;
+  // 2. Prioritize candidates only when there are more candidates than poolSize:
+  if (candidates.length > poolSize) {
+    candidates.sort((a, b) => {
+      const aOnScreen = onScreenSet.has(a);
+      const bOnScreen = onScreenSet.has(b);
+      if (aOnScreen && !bOnScreen) return -1;
+      if (!aOnScreen && bOnScreen) return 1;
 
-    const itemA = items[a];
-    const itemB = items[b];
-    const centerA = itemA.topY + itemA.height / 2;
-    const centerB = itemB.topY + itemB.height / 2;
-    return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
-  });
+      const itemA = items[a];
+      const itemB = items[b];
+      const centerA = itemA.topY + itemA.height / 2;
+      const centerB = itemB.topY + itemB.height / 2;
+      return Math.abs(centerA - viewportCenter) - Math.abs(centerB - viewportCenter);
+    });
+  }
 
   // Top `poolSize` candidates are the ones that MUST be assigned slots.
   // Because onScreen items are sorted first, all on-screen items are GUARANTEED to be in targetIndices!
@@ -740,7 +757,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       ],
       opacity,
       overflow: 'hidden',
-      backgroundColor: '#f2eee8',
+      backgroundColor: '#ffffff',
     };
   });
 
@@ -749,7 +766,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       {card.uri ? (
         <Image
           source={{ uri: card.uri }}
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#f2eee8' }]}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#ffffff' }]}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={0}
@@ -832,12 +849,15 @@ export function MasonryFlashList<T = any>({
   renderHeroCover,
   renderStickyHeader,
   ListFooterComponent,
+  ListEmptyComponent,
   onScroll,
   scrollEventThrottle = 16,
   scrollSharedValue,
   onEndReached,
   onEndReachedThreshold = 0.8,
   mainScrollRef,
+  minContentHeight,
+  contentContainerStyle,
   refreshControl,
   isPinchingShared,
   onMomentumScrollEnd,
@@ -901,9 +921,7 @@ export function MasonryFlashList<T = any>({
   }, []);
 
   const setPendingAutoCommit = useCallback((cols: number) => {
-    console.log(`[PINCH-DEBUG 🔍] setPendingAutoCommit called for ${cols} cols. Existing cards in ref:`, transitionCardsRef.current?.length);
     if (transitionCardsRef.current && transitionCardsRef.current.length > 0) {
-      console.log(`[PINCH-DEBUG 🔍] 🚀 setPendingAutoCommit: cards already mounted! Triggering flight immediately.`);
       pendingAutoCommitRef.current = null;
       isFlightAnimatingShared.value = true;
       hasTransitionCardsShared.value = true;
@@ -916,7 +934,6 @@ export function MasonryFlashList<T = any>({
         easing: Easing.bezier(0.25, 0.1, 0.25, 1),
       }, (finished) => {
         'worklet';
-        console.log(`[PINCH-DEBUG 🔍] 🛬 pendingAutoCommit (immediate) finished=${finished}, calling commitTransitionOnJS(${cols})`);
         runOnJS(commitTransitionOnJS)(cols);
       });
     } else {
@@ -951,14 +968,12 @@ export function MasonryFlashList<T = any>({
   useEffect(() => {
     transitionCardsRef.current = transitionCards;
     if (transitionCards && transitionCards.length > 0) {
-      console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards mounted with ${transitionCards.length} cards. pendingAutoCommit=${pendingAutoCommitRef.current}`);
       hasTransitionCardsShared.value = true;
       isBaseGridRevealedShared.value = false;
       overlayOpacity.value = 1; // Overlay covers grid instantly
 
       if (pendingAutoCommitRef.current !== null) {
         const toCols = pendingAutoCommitRef.current;
-        console.log(`[PINCH-DEBUG 🔍] 🚀 Executing pendingAutoCommit to ${toCols} cols over animated flight...`);
         pendingAutoCommitRef.current = null;
         isFlightAnimatingShared.value = true;
         const startP = transitionProgress.value;
@@ -968,12 +983,10 @@ export function MasonryFlashList<T = any>({
           easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         }, (finished) => {
           'worklet';
-          console.log(`[PINCH-DEBUG 🔍] 🛬 pendingAutoCommit withTiming finished=${finished}, calling commitTransitionOnJS(${toCols})`);
           runOnJS(commitTransitionOnJS)(toCols);
         });
       }
     } else {
-      console.log(`[PINCH-DEBUG 🔍] 📦 useEffect: transitionCards is null/empty. Resetting hasTransitionCardsShared=false.`);
       hasTransitionCardsShared.value = false;
       isBaseGridRevealedShared.value = false;
       pendingAutoCommitRef.current = null;
@@ -1047,6 +1060,7 @@ export function MasonryFlashList<T = any>({
   }, [data]);
 
   const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRenderedYRef = useRef<number>(0);
 
   useEffect(() => {
     return () => {
@@ -1064,13 +1078,23 @@ export function MasonryFlashList<T = any>({
 
     scrollYRef.current = y;
     const now = Date.now();
-    if (!force && now - lastUpdateRef.current < 16) {
+    const timeDelta = now - lastUpdateRef.current;
+    const distDelta = Math.abs(y - lastRenderedYRef.current);
+
+    // Dynamic threshold:
+    // On Android, don't re-render React on every 16ms if the scroll has only moved a few pixels!
+    // A card is ~200-250px tall, so moving 40px doesn't change visible cards in the pool.
+    // Throttling by time delta AND distance delta frees up the JS thread for 60/120fps scrolling!
+    const minTimeDelta = Platform.OS === 'android' ? 32 : 16;
+    const minDistDelta = Platform.OS === 'android' ? 45 : 30;
+
+    if (!force && (timeDelta < minTimeDelta || distDelta < minDistDelta)) {
       if (trailingUpdateTimerRef.current) {
         clearTimeout(trailingUpdateTimerRef.current);
       }
       trailingUpdateTimerRef.current = setTimeout(() => {
         updateSlotsFromY(scrollYRef.current, true);
-      }, 32);
+      }, minTimeDelta + 16);
       return;
     }
     if (trailingUpdateTimerRef.current) {
@@ -1078,6 +1102,7 @@ export function MasonryFlashList<T = any>({
       trailingUpdateTimerRef.current = null;
     }
     lastUpdateRef.current = now;
+    lastRenderedYRef.current = y;
 
     const currentLayout = layoutRef.current;
     if (!currentLayout || !currentLayout.columns) return;
@@ -1106,7 +1131,8 @@ export function MasonryFlashList<T = any>({
         if (!items) continue;
         for (let i = 0; i < items.length; i++) {
           const it = items[i];
-          if (it.topY + it.height >= viewTop && it.topY <= viewBottom) {
+          if (it.topY > viewBottom) break; // Items are ordered vertically, stop once past bottom
+          if (it.topY + it.height >= viewTop) {
             const rawItem: any = it.item;
             if (rawItem && !rawItem.isSkeleton) {
               const mediaId = rawItem.id || rawItem.uri || rawItem.r2Url;
@@ -1192,7 +1218,6 @@ export function MasonryFlashList<T = any>({
   // ─── Apple Photos Interactive Flight Transition ───────────────────────────
   // Internal cleanup — called AFTER the dissolve animation finishes
   const cleanupAfterTransition = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] 🧹 cleanupAfterTransition: clearing transitionCards & resetting progress');
     setTransitionCards(null);
     transitionCardsRef.current = null;
     hasTransitionCardsShared.value = false;
@@ -1209,7 +1234,6 @@ export function MasonryFlashList<T = any>({
   }, [hasTransitionCardsShared, transitionProgress, isFlightAnimatingShared, overlayOpacity, isBaseGridRevealedShared, isTransitioningShared, isPinching, isPinchingShared]);
 
   const finalizeCommit = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit called. Revealing base grid (100% opacity) & dissolving overlay (140ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1235,7 +1259,6 @@ export function MasonryFlashList<T = any>({
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
-      console.log('[PINCH-DEBUG 🔍] 🏁 finalizeCommit overlay withTiming finished=', finished);
       if (finished) {
         runOnJS(cleanupAfterTransition)();
       }
@@ -1243,7 +1266,6 @@ export function MasonryFlashList<T = any>({
   }, [isTransitioningShared, isFlightAnimatingShared, isPinching, isPinchingShared, pinchDirection, overlayOpacity, cleanupAfterTransition, isBaseGridRevealedShared]);
 
   const commitTransition = useCallback((targetCols: number) => {
-    console.log(`[PINCH-DEBUG 🔍] 💾 commitTransition: committing targetCols=${targetCols}`);
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1286,7 +1308,6 @@ export function MasonryFlashList<T = any>({
   commitTransitionRef.current = commitTransition;
 
   const cancelTransition = useCallback(() => {
-    console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition called. Restoring grid state and dissolving overlay out (140ms)');
     if (transitionWatchdogTimerRef.current) {
       clearTimeout(transitionWatchdogTimerRef.current);
       transitionWatchdogTimerRef.current = null;
@@ -1315,7 +1336,6 @@ export function MasonryFlashList<T = any>({
       easing: Easing.out(Easing.quad),
     }, (finished) => {
       'worklet';
-      console.log('[PINCH-DEBUG 🔍] ↩️ cancelTransition overlay withTiming finished=', finished);
       if (finished) {
         runOnJS(cleanupAfterTransition)();
       }
@@ -1328,14 +1348,11 @@ export function MasonryFlashList<T = any>({
     focalX: number,
     focalY: number,
   ) => {
-    console.log(`[PINCH-DEBUG 🔍] 🚀 startInteractiveTransition: targetCols=${targetCols}, currentCols=${currentCols}, focal=(${Math.round(focalX)}, ${Math.round(focalY)})`);
     // Guard: reject if invalid cols, same cols, or already mid-transition on JS thread
     if (targetCols < minColumns || targetCols > maxColumns || targetCols === currentCols) {
-      console.log(`[PINCH-DEBUG 🔍] ⛔ startInteractiveTransition REJECTED: targetCols=${targetCols}, currentCols=${currentCols}`);
       return;
     }
     if (isTransitioningRef.current) {
-      console.log(`[PINCH-DEBUG 🔍] ⛔ startInteractiveTransition REJECTED: already mid-transition`);
       return;
     }
 
@@ -1348,7 +1365,6 @@ export function MasonryFlashList<T = any>({
     transitionWatchdogTimerRef.current = setTimeout(() => {
       // Only force-finalize if the pinch gesture is done but transition is still stuck
       if (isTransitioningRef.current && !isPinching.value) {
-        console.log('[PINCH-DEBUG 🔍] ⚠️ WATCHDOG FIRED! Forcing finalizeCommit');
         finalizeCommit();
       }
     }, 1500); // 6000ms for slow-mo testing
@@ -1403,7 +1419,6 @@ export function MasonryFlashList<T = any>({
     pendingTargetSlotsRef.current = targetSlots;
     pendingTargetLayoutRef.current = targetLayout;
 
-    console.log(`[PINCH-DEBUG 🔍] ✅ startInteractiveTransition: built ${cards.length} cards, setting state`);
     setTransitionCards(cards);
     transitionCardsRef.current = cards;
     overlayOpacity.value = 1;
@@ -1432,12 +1447,10 @@ export function MasonryFlashList<T = any>({
       .onStart((e) => {
         'worklet';
         if (isFlightAnimatingShared.value || isTransitioningShared.value) {
-          console.log('[PINCH-DEBUG 🔍] ⛔ onStart REJECTED: already transitioning or animating');
           isGestureAcceptedShared.value = false;
           return;
         }
 
-        console.log(`[PINCH-DEBUG 🔍] 👉 onStart: scale=${e.scale.toFixed(3)}, focal=(${Math.round(e.focalX)}, ${Math.round(e.focalY)}), currentCols=${currentColsShared.value}`);
         gestureStartTimeShared.value = Date.now();
         isGestureAcceptedShared.value = true;
         isPinching.value = true;
@@ -1466,13 +1479,11 @@ export function MasonryFlashList<T = any>({
         // Detect pinch direction as fingers move:
         if (pinchDirection.value === 0) {
           if (e.scale < 0.985 && currentColsShared.value < maxColumns) {
-            console.log(`[PINCH-DEBUG 🔍] ⚡ Detected PINCH-IN: scale=${e.scale.toFixed(3)} -> targetCols=${currentColsShared.value + 1}`);
             pinchDirection.value = 1; // Pinch in -> Add column (e.g. 2 -> 3)
             targetColsShared.value = currentColsShared.value + 1;
             isTransitioningShared.value = true;
             runOnJS(startTransitionOnJS)(currentColsShared.value + 1, e.focalX, e.focalY);
           } else if (e.scale > 1.015 && currentColsShared.value > minColumns) {
-            console.log(`[PINCH-DEBUG 🔍] ⚡ Detected PINCH-OUT: scale=${e.scale.toFixed(3)} -> targetCols=${currentColsShared.value - 1}`);
             pinchDirection.value = -1; // Pinch out -> Remove column (e.g. 3 -> 2, 2 -> 1)
             targetColsShared.value = currentColsShared.value - 1;
             isTransitioningShared.value = true;
@@ -1502,17 +1513,14 @@ export function MasonryFlashList<T = any>({
       .onEnd((e) => {
         'worklet';
         if (!isGestureAcceptedShared.value) {
-          console.log('[PINCH-DEBUG 🔍] 🛡️ onEnd IGNORED: gesture was not accepted onStart');
           return;
         }
         isGestureAcceptedShared.value = false;
 
         if (isFlightAnimatingShared.value) {
-          console.log('[PINCH-DEBUG 🔍] 🛡️ onEnd IGNORED: flight animation is already active');
           return;
         }
 
-        console.log(`[PINCH-DEBUG 🔍] 🏁 onEnd: dir=${pinchDirection.value}, scale=${e.scale.toFixed(3)}, vel=${e.velocity.toFixed(2)}, progress=${transitionProgress.value.toFixed(2)}, hasCards=${hasTransitionCardsShared.value}, targetCols=${targetColsShared.value}`);
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
 
@@ -1522,12 +1530,9 @@ export function MasonryFlashList<T = any>({
           const isPinchIn = pinchDirection.value === 1;
           const scaleDelta = isPinchIn ? (1 - e.scale) : (e.scale - 1);
           const hasVelocity = isPinchIn ? (e.velocity < -0.15) : (e.velocity > 0.15);
-          const gestureDuration = Date.now() - gestureStartTimeShared.value;
-          const isFastGesture = gestureDuration < 280 || Math.abs(e.velocity) > 0.4;
 
           // Intentional pinch if user moved >= 0.05 progress, scale delta >= 0.015, or flicked with velocity:
           const isIntentional = currentP >= 0.05 || scaleDelta >= 0.015 || hasVelocity;
-          console.log(`[PINCH-DEBUG 🔍] onEnd decision: currentP=${currentP.toFixed(2)}, scaleDelta=${scaleDelta.toFixed(3)}, vel=${e.velocity.toFixed(2)}, duration=${gestureDuration}ms, isFast=${isFastGesture}, intentional=${isIntentional}`);
 
           if (isIntentional) {
             if (hasTransitionCardsShared.value) {
@@ -1536,21 +1541,17 @@ export function MasonryFlashList<T = any>({
               const flightDuration = Math.round(Math.max(240, remaining * 300));
 
               isFlightAnimatingShared.value = true;
-              console.log(`[PINCH-DEBUG 🔍] ✈️ onEnd: hasCards=true! withTiming from P=${currentP.toFixed(2)} to 1 (duration=${flightDuration}ms)`);
               transitionProgress.value = withTiming(1, {
                 duration: flightDuration,
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 'worklet';
-                console.log(`[PINCH-DEBUG 🔍] 🛬 onEnd withTiming finished=${finished}, calling commitTransitionOnJS(${targetCols})`);
                 runOnJS(commitTransitionOnJS)(targetCols);
               });
             } else {
-              console.log(`[PINCH-DEBUG 🔍] ⏳ onEnd: hasCards=FALSE! Calling setPendingAutoCommit(${targetCols})`);
               runOnJS(setPendingAutoCommit)(targetCols);
             }
           } else {
-            console.log('[PINCH-DEBUG 🔍] ❌ onEnd: NOT INTENTIONAL -> Canceling transition back to 0');
             runOnJS(clearPendingAutoCommit)();
             if (currentP > 0.01) {
               const cancelDuration = Math.max(150, Math.round(currentP * 250));
@@ -1559,7 +1560,6 @@ export function MasonryFlashList<T = any>({
                 easing: Easing.bezier(0.25, 0.1, 0.25, 1),
               }, (finished) => {
                 'worklet';
-                console.log(`[PINCH-DEBUG 🔍] ↩️ cancel withTiming finished=${finished}`);
                 runOnJS(cancelTransitionOnJS)();
               });
             } else {
@@ -1567,14 +1567,12 @@ export function MasonryFlashList<T = any>({
             }
           }
         } else {
-          console.log('[PINCH-DEBUG 🔍] onEnd: pinchDirection was 0 (threshold never crossed)');
           runOnJS(setIsPinchingState)(false);
           isTransitioningShared.value = false;
         }
       })
       .onFinalize(() => {
         'worklet';
-        console.log('[PINCH-DEBUG 🔍] onFinalize: gesture ended');
         isGestureAcceptedShared.value = false;
         isPinching.value = false;
         if (isPinchingShared) isPinchingShared.value = false;
@@ -1658,10 +1656,12 @@ export function MasonryFlashList<T = any>({
             showsVerticalScrollIndicator={false}
             scrollEnabled={!isPinchingState && !isTransitioning}
             stickyHeaderIndices={renderStickyHeader ? [1] : undefined}
+            removeClippedSubviews={Platform.OS === 'android'}
             style={styles.scrollView}
             contentContainerStyle={[
               styles.contentContainer,
-              { minHeight: Math.max(layout.maxHeight + headerHeight, containerMinHeight) },
+              { minHeight: Math.max(layout.maxHeight + headerHeight, containerMinHeight, minContentHeight || 0) },
+              contentContainerStyle,
             ]}
             onContentSizeChange={(_w, _h) => {
               // Fallback: if RAF-based restoration already cleared pendingScrollRestorationRef,
@@ -1712,59 +1712,67 @@ export function MasonryFlashList<T = any>({
               </View>
             ) : null}
 
-            {/* Child 2: Base Recycled Masonry Grid */}
-            <Animated.View
-              style={[
-                styles.gridRow,
-                {
-                  alignSelf: 'center',
-                  width: layout.columns.length * layout.colWidth + Math.max(0, layout.columns.length - 1) * (layout.colGap ?? getCardGapForCols(currentCols)),
-                },
-                gridVisibilityStyle,
-              ]}
-            >
-              {layout.columns.map((col, colIdx) => {
-                const isLastCol = colIdx === layout.columns.length - 1;
-                const slots = columnSlots[colIdx] || [];
-                const gap = layout.colGap ?? getCardGapForCols(currentCols);
+            {/* Child 2: Base Recycled Masonry Grid or Empty State */}
+            {data.length === 0 ? (
+              ListEmptyComponent ? (
+                <View style={styles.emptyContainer}>
+                  {typeof ListEmptyComponent === 'function' ? (ListEmptyComponent as any)() : ListEmptyComponent}
+                </View>
+              ) : null
+            ) : (
+              <Animated.View
+                style={[
+                  styles.gridRow,
+                  {
+                    alignSelf: 'center',
+                    width: layout.columns.length * layout.colWidth + Math.max(0, layout.columns.length - 1) * (layout.colGap ?? getCardGapForCols(currentCols)),
+                  },
+                  gridVisibilityStyle,
+                ]}
+              >
+                {layout.columns.map((col, colIdx) => {
+                  const isLastCol = colIdx === layout.columns.length - 1;
+                  const slots = columnSlots[colIdx] || [];
+                  const gap = layout.colGap ?? getCardGapForCols(currentCols);
 
-                return (
-                  <View
-                    key={`col-${colIdx}`}
-                    style={[
-                      styles.column,
-                      {
-                        width: layout.colWidth,
-                        height: col.height,
-                        marginRight: isLastCol ? 0 : gap,
-                        overflow: 'hidden',
-                      },
-                    ]}
-                  >
-                    {slots.map((slot, sIdx) => {
-                      const colItem =
-                        slot.colItemIdx >= 0 && col.items && slot.colItemIdx < col.items.length
-                          ? col.items[slot.colItemIdx]
-                          : null;
-                      return (
-                        <SlotView
-                          key={`slot-${colIdx}-${sIdx}`}
-                          slot={slot}
-                          item={colItem?.item}
-                          originalIndex={colItem?.originalIndex ?? 0}
-                          isColumn0={colIdx === 0}
-                          columnIndex={colIdx}
-                          numColumns={currentCols}
-                          renderItem={renderItem}
-                        />
-                      );
-                    })}
-                  </View>
-                );
-              })}
-            </Animated.View>
+                  return (
+                    <View
+                      key={`col-${colIdx}`}
+                      style={[
+                        styles.column,
+                        {
+                          width: layout.colWidth,
+                          height: col.height,
+                          marginRight: isLastCol ? 0 : gap,
+                          overflow: 'hidden',
+                        },
+                      ]}
+                    >
+                      {slots.map((slot, sIdx) => {
+                        const colItem =
+                          slot.colItemIdx >= 0 && col.items && slot.colItemIdx < col.items.length
+                            ? col.items[slot.colItemIdx]
+                            : null;
+                        return (
+                          <SlotView
+                            key={`slot-${colIdx}-${sIdx}`}
+                            slot={slot}
+                            item={colItem?.item}
+                            originalIndex={colItem?.originalIndex ?? 0}
+                            isColumn0={colIdx === 0}
+                            columnIndex={colIdx}
+                            numColumns={currentCols}
+                            renderItem={renderItem}
+                          />
+                        );
+                      })}
+                    </View>
+                  );
+                })}
+              </Animated.View>
+            )}
 
-            {renderedFooter}
+            {data.length > 0 ? renderedFooter : null}
           </Animated.ScrollView>
         </View>
       </GestureDetector>
@@ -1798,33 +1806,33 @@ export function MasonryFlashList<T = any>({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   viewport: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   contentContainer: {
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
     paddingBottom: 40,
   },
   gridRow: {
     flexDirection: 'row',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   column: {
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   slot: {
     position: 'absolute',
     left: 0,
     right: 0,
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
   },
   stickyHeaderOverlay: {
@@ -1846,5 +1854,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  emptyContainer: {
+    width: '100%',
+    paddingVertical: 50,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
   },
 });

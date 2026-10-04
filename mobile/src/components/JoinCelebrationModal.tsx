@@ -206,6 +206,8 @@ export default function JoinCelebrationModal({
 
           if (galleryIdx > 0) {
             extractedSlug = pathParts[galleryIdx - 1];
+          } else if (galleryIdx === 0 && pathParts[1]) {
+            extractedSlug = pathParts[1];
           } else if (celIndex !== -1 && pathParts[celIndex + 1]) {
             extractedSlug = pathParts[celIndex + 1];
           } else {

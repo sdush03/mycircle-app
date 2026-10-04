@@ -235,7 +235,7 @@ export function hasActualVideoFile(video?: any): boolean {
   const isVideoStr = (val?: any) => {
     if (!val || typeof val !== 'string') return false;
     const clean = val.split('?')[0].toLowerCase().trim();
-    return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.includes('/videos/');
+    return clean.endsWith('.mp4') || clean.endsWith('.mov') || clean.endsWith('.m4v') || clean.endsWith('.webm') || clean.includes('/videos/');
   };
 
   return Boolean(

@@ -163,8 +163,9 @@ class VideoWatchProgressManager {
   /**
    * Save playback progress. Called during video playback.
    * Throttles disk persistence & listener notifications to once every 3 seconds to avoid JS thread overload.
+   * Pass force=true on unmount/close to guarantee the final position is persisted immediately.
    */
-  public saveProgress(item: any, currentTime: number, duration: number): void {
+  public saveProgress(item: any, currentTime: number, duration: number, force = false): void {
     const keys = this.getKeys(item);
     if (keys.length === 0 || duration <= 0) return;
 
@@ -184,7 +185,7 @@ class VideoWatchProgressManager {
 
     const primaryKey = keys[0];
     const lastSave = this.lastSaveTimestampMap.get(primaryKey) || 0;
-    if (now - lastSave >= 3000 || isCompleted) {
+    if (force || now - lastSave >= 3000 || isCompleted) {
       this.lastSaveTimestampMap.set(primaryKey, now);
       this.persistToStorage();
       this.notifyListeners();

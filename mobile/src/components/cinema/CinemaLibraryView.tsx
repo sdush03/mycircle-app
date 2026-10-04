@@ -49,6 +49,7 @@ import {
 import { CinemaVideoDetailModal } from './CinemaVideoDetailModal';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
+import { videoDownloadManager } from '../../services/videoDownloadManager';
 import { playbackFocusManager } from '../../services/playbackFocusManager';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -529,6 +530,41 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     }, 1500);
     return () => clearTimeout(timer);
   }, [videos, primaryVideo, shelves]);
+
+  // Silent Background Auto-Download:
+  // Queues ALL cinema videos for permanent offline storage so playback is instant
+  // and works without network. Priority order: Director's Cut → Candid Diaries →
+  // Stage & Spotlight (Dance) → Extended Cuts (Full Films) → everything else.
+  // The download manager itself handles throttling: 3s between items when foregrounded,
+  // full speed when the app is minimised. Never runs while a video is actively playing.
+  useEffect(() => {
+    if (!videos || videos.length === 0) return;
+
+    const toDownload: Array<{ url: string; priority: number }> = [];
+
+    for (const video of videos) {
+      if (isVideoComingSoon(video)) continue;
+      const url = video.videoUrl || video.r2Url || (video as any).fullUri || video.uri;
+      if (!url || typeof url !== 'string' || !url.startsWith('http')) continue;
+
+      // Derive priority from category — uses .includes() to avoid Unicode apostrophe mismatches
+      const cat = classifyCinemaCategory(video).toUpperCase();
+      let priority = 40;
+      if (cat.includes('DIRECTOR')) priority = 100;
+      else if (cat.includes('CANDID') || cat.includes('DIAR')) priority = 85;
+      else if (cat.includes('STAGE') || cat.includes('SPOTLIGHT') || cat.includes('DANCE')) priority = 70;
+      else if (cat.includes('EXTENDED') || cat.includes('CUTS') || cat.includes('CHAPTER')) priority = 55;
+
+      toDownload.push({ url, priority });
+    }
+
+    // Stagger after the preload timer (which fires at 1.5s) so they don't compete
+    const timer = setTimeout(() => {
+      videoDownloadManager.scheduleAutoDownload(toDownload);
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [videos]);
 
   const handleCardPress = useCallback((film: CinemaVideoItem, _resumeTime?: number, bounds?: LightboxBounds | null) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

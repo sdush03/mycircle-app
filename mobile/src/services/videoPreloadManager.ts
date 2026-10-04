@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { createVideoPlayer, VideoPlayer, setVideoCacheSizeAsync } from 'expo-video';
 import { Image as ExpoImage } from 'expo-image';
 import { videoDownloadManager } from './videoDownloadManager';
@@ -6,28 +7,25 @@ import { playbackFocusManager } from './playbackFocusManager';
 /**
  * VideoPreloadManager
  *
- * Permanent Instagram-grade video pre-buffering & disk cache engine.
- * Specifically optimized for galleries with 2-5 cinema films/reels:
+ * Lightweight video pre-buffering & disk cache engine.
+ * Specifically optimized for galleries with cinema films/reels:
  *
- * 1. Permanent Player Pool: Never destroys or deletes pre-warmed players.
- *    When a video is closed, it rewinds to 0 and stays warm in memory.
- * 2. Local File Priority: If VideoDownloadManager has the video on disk,
- *    creates the AVPlayer with a file:// URL — zero network, instant decode.
- * 3. Native Disk Caching: Utilizes expo-video's 1GB persistent cache
- *    (setVideoCacheSizeAsync) for streamed videos.
- * 4. Playback Focus: Skips network probes while a video is actively playing
- *    to give 100% bandwidth to the playing video.
- * 5. Pre-warms poster thumbnails into ExpoImage memory-disk cache.
+ * 1. Safe Player Pool: On iOS, pre-buffers at most 1 player. On Android,
+ *    skips background ExoPlayer creation to avoid MediaCodec hardware decoder
+ *    starvation and OutOfMemory crashes.
+ * 2. Pre-warms poster thumbnails into ExpoImage memory-disk cache for 0ms visual continuity.
+ * 3. Native Disk Caching: Utilizes expo-video's 256MB persistent cache.
+ * 4. Playback Focus: Skips background tasks while a video is actively playing.
  */
 
-// Initialize 1GB persistent video streaming cache (for non-downloaded videos)
+// Initialize 256MB persistent video streaming cache (safe footprint for mobile heap)
 try {
-  setVideoCacheSizeAsync(1024 * 1024 * 1024).catch(() => {});
+  setVideoCacheSizeAsync(256 * 1024 * 1024).catch(() => {});
 } catch {}
 
 class VideoPreloadManager {
   private cache: Map<string, VideoPlayer> = new Map();
-  private maxCached: number = 2; // 2 players max in RAM prevents iOS memory pressure & buffer purge for 4K video
+  private maxCached: number = Platform.OS === 'android' ? 0 : 1; // 0 on Android avoids ExoPlayer / MediaCodec exhaustion; 1 on iOS
   private probedUrls: Set<string> = new Set();
   private activeUrl: string | null = null;
 
@@ -39,12 +37,11 @@ class VideoPreloadManager {
           if (this.activeUrl && url === this.activeUrl) {
             return;
           }
-          try {
-            player.pause();
-          } catch {}
+          try { player.pause(); } catch {}
+          try { (player as any).release?.(); } catch {}
         });
         this.cache.clear();
-        console.log('[VIDEO PRELOAD 🧹] Background preloaded players cleared — 100% decoder focus given to active Cinema film.');
+        console.log('[VIDEO PRELOAD 🧹] Background preloaded players released — 100% decoder focus given to active Cinema film.');
       }
     });
   }
@@ -54,9 +51,7 @@ class VideoPreloadManager {
   }
 
   /**
-   * Predictively pre-buffers a video URL into permanent memory.
-   * If the video is already downloaded locally, uses the local file:// path
-   * so the player reads from disk at full speed with zero network usage.
+   * Predictively pre-buffers a video URL into memory.
    */
   public preload(
     url: string | null | undefined,
@@ -73,11 +68,6 @@ class VideoPreloadManager {
       return;
     }
 
-    // If video player already exists in cache, keep it warm and return immediately!
-    if (this.cache.has(url)) {
-      return;
-    }
-
     // 1. Pre-warm poster thumbnail in memory-disk cache for 0ms visual continuity
     //    Skip while video is playing — don't steal bandwidth
     if (!playbackFocusManager.isPlaying && thumbnailUrl && typeof thumbnailUrl === 'string' && thumbnailUrl.startsWith('http')) {
@@ -89,22 +79,17 @@ class VideoPreloadManager {
       }
     }
 
-    // 2. Network Diagnostic Probe: Run AT MOST ONCE per URL, NEVER during playback
-    if (!playbackFocusManager.isPlaying && !this.probedUrls.has(url)) {
-      this.probedUrls.add(url);
-      const probeStart = Date.now();
-      fetch(url, { headers: { Range: 'bytes=0-262143' } }) // 256KB probe
-        .then((res) => {
-          const ttfb = Date.now() - probeStart;
-          const cl = res.headers.get('content-length');
-          const cr = res.headers.get('content-range');
-          const ar = res.headers.get('accept-ranges');
-          const ct = res.headers.get('content-type');
-          console.log(`[NETWORK PROBE 🌐] HTTP ${res.status} | TTFB: ${ttfb}ms | Content-Type: ${ct} | Accept-Ranges: ${ar} | Content-Range: ${cr} | Size: ${cl} bytes | URL: ${url.slice(0, 60)}...`);
-        })
-        .catch((err) => {
-          console.warn(`[NETWORK PROBE ❌] Failed for ${url.slice(0, 60)}...:`, err.message);
-        });
+    // On Android, creating background ExoPlayer instances hogs native MediaCodec hardware decoders,
+    // allocates heap in OkHttp, and spawns MediaSession services, causing OutOfMemory crashes.
+    // We pre-warm the poster thumbnail into ExpoImage memory-disk cache for 0ms visual continuity,
+    // and let CinemaVideoModal create the single active player instance on demand with full resources.
+    if (Platform.OS === 'android' || this.maxCached === 0) {
+      return;
+    }
+
+    // If video player already exists in cache, keep it warm and return immediately!
+    if (this.cache.has(url)) {
+      return;
     }
 
     try {
@@ -114,8 +99,9 @@ class VideoPreloadManager {
         if (oldestKey) {
           const oldPlayer = this.cache.get(oldestKey);
           try { oldPlayer?.pause(); } catch {}
+          try { (oldPlayer as any)?.release?.(); } catch {}
           this.cache.delete(oldestKey);
-          console.log(`[PERMANENT PRELOAD ♻️] Evicted oldest player: ${oldestKey.slice(0, 50)}...`);
+          console.log(`[PERMANENT PRELOAD ♻️] Evicted and released oldest player: ${oldestKey.slice(0, 50)}...`);
         }
       }
 
@@ -163,8 +149,16 @@ class VideoPreloadManager {
       return null;
     }
     const player = this.cache.get(url)!;
-    if (player.status === 'error') {
-      console.warn('[PRELOAD CACHE ⚠️] Cached player had error status, evicting');
+    try {
+      // Accessing .status on a player whose native object was released (by OS memory pressure
+      // or explicit .release()) throws NativeSharedObjectNotFoundException. Evict gracefully.
+      if (player.status === 'error') {
+        console.warn('[PRELOAD CACHE ⚠️] Cached player had error status, evicting');
+        this.cache.delete(url);
+        return null;
+      }
+    } catch (e) {
+      console.warn('[PRELOAD CACHE ⚠️] Cached player native object is dead, evicting:', e);
       this.cache.delete(url);
       return null;
     }
@@ -189,14 +183,21 @@ class VideoPreloadManager {
   }
 
   /**
-   * Called when modal closes: pauses player, rewinds to 0s, and keeps it warm.
+   * Called when modal closes: pauses player, rewinds to 0s, and keeps it warm in the pool.
+   * Accepts an optional player parameter for players that were taken out of the cache
+   * via takePlayer() — without this, taken players would leak native decoder resources
+   * because cache.has(url) returns false after takePlayer() deletes the entry.
    */
-  public returnPlayer(url: string | null | undefined): void {
+  public returnPlayer(url: string | null | undefined, takenPlayer?: VideoPlayer | null): void {
     if (url && this.activeUrl === url) {
       this.activeUrl = null;
     }
-    if (!url || !this.cache.has(url)) return;
-    const player = this.cache.get(url)!;
+    if (!url) return;
+
+    // Resolve the player: either from cache (if still there) or the explicitly passed reference
+    const player = this.cache.get(url) || takenPlayer;
+    if (!player) return;
+
     try {
       player.allowsExternalPlayback = false; // Disconnect AirPlay route immediately
       player.showNowPlayingNotification = false;
@@ -204,12 +205,25 @@ class VideoPreloadManager {
       player.currentTime = 0;
       player.muted = true;
     } catch {}
-    console.log(`[PRELOAD CACHE 🔁] Rewound to 0s and kept warm in permanent cache!`);
+
+    // Re-add to cache if pool has room (so next open is instant),
+    // otherwise release the native player to free decoder resources.
+    if (this.cache.size < this.maxCached && !this.cache.has(url)) {
+      this.cache.set(url, player);
+      console.log(`[PRELOAD CACHE 🔁] Rewound to 0s and kept warm in permanent cache!`);
+    } else if (!this.cache.has(url)) {
+      // Pool is full or Android (maxCached=0): release native resources to prevent OOM
+      try {
+        (player as any).release?.();
+      } catch {}
+      console.log(`[PRELOAD CACHE 🧹] Pool full — released native player to free decoder resources.`);
+    }
   }
 
   public clear(): void {
     this.cache.forEach((player) => {
       try { player.pause(); } catch {}
+      try { (player as any).release?.(); } catch {}
     });
     this.cache.clear();
   }

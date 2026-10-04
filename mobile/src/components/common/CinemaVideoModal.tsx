@@ -369,6 +369,9 @@ function VideoPlayerView({
     }, 400);
 
     return () => {
+      // Immediately block heartbeat auto-resume before clearing the interval
+      userPausedRef.current = true;
+      isEndedRef.current = true;
       clearInterval(heartbeat);
       if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
       appStateSub?.remove?.();
@@ -386,7 +389,7 @@ function VideoPlayerView({
             if (cur / dur >= 0.9) {
               videoWatchProgressManager.markCompleted(videoItem);
             } else {
-              videoWatchProgressManager.saveProgress(videoItem, cur, dur);
+              videoWatchProgressManager.saveProgress(videoItem, cur, dur, true);
             }
           }
         }
@@ -396,7 +399,7 @@ function VideoPlayerView({
         player.showNowPlayingNotification = false;
         player.pause();
         if (videoUrl) {
-          videoPreloadManager.returnPlayer(videoUrl);
+          videoPreloadManager.returnPlayer(videoUrl, player);
         }
       } catch {}
       videoPreloadManager.setActiveUrl(null);
@@ -406,6 +409,12 @@ function VideoPlayerView({
   }, [player, videoUrl]);
 
   const handleClose = useCallback(() => {
+    // CRITICAL: Set userPausedRef FIRST to prevent the 400ms heartbeat watchdog
+    // from auto-resuming playback in the window between pause() and useEffect cleanup.
+    // Without this, the heartbeat sees !userPaused && !playing and calls player.play(),
+    // causing audio to continue in the background after the modal closes.
+    userPausedRef.current = true;
+    isEndedRef.current = true;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       // Always disconnect AirPlay and stop playback on the player directly,
@@ -414,7 +423,7 @@ function VideoPlayerView({
       player.showNowPlayingNotification = false;
       player.pause();
       if (videoUrl) {
-        videoPreloadManager.returnPlayer(videoUrl);
+        videoPreloadManager.returnPlayer(videoUrl, player);
       }
     } catch {}
     onClose();

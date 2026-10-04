@@ -45,11 +45,13 @@ import {
   getValidImageThumbnail,
   isVideoComingSoon,
   isVideoNewVersion,
+  isVerticalVideo,
 } from './CinemaVideoCard';
 import { videoWatchProgressManager, WatchProgress } from '../../services/videoWatchProgressManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import { ScreenCastButton } from './ScreenCastButton';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
+import { getAppShareUrl } from '../../utils/deepLink';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -176,6 +178,9 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
 
+  // Ground-truth runtime track size from expo-video
+  const [trackSize, setTrackSize] = useState<{ width: number; height: number } | null>(null);
+
   const player = useVideoPlayer(
     {
       uri: effectiveUrl,
@@ -196,6 +201,29 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
       p.play();
     } catch {}
   });
+
+  useEffect(() => {
+    const initialSize = (player as any)?.videoTrack?.size;
+    if (initialSize && initialSize.width > 0 && initialSize.height > 0) {
+      setTrackSize({ width: initialSize.width, height: initialSize.height });
+    }
+    const trackSub = (player as any).addListener?.('videoTrackChange', (payload: any) => {
+      const size = payload?.videoTrack?.size || (player as any)?.videoTrack?.size;
+      if (size && size.width > 0 && size.height > 0) {
+        setTrackSize({ width: size.width, height: size.height });
+      }
+    });
+    return () => {
+      trackSub?.remove?.();
+    };
+  }, [player]);
+
+  const isPortrait = useMemo(() => {
+    if (trackSize && trackSize.width > 0 && trackSize.height > 0) {
+      return trackSize.height > trackSize.width;
+    }
+    return isVerticalVideo(videoItem);
+  }, [trackSize, videoItem]);
 
   useEffect(() => {
     try {
@@ -311,12 +339,23 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
 
   return (
     <View style={[styles.previewContainer, { height: '100%' }]}>
+      {/* Ambient Blurred Backdrop for Portrait Letterboxing */}
+      {isPortrait && thumbnailUrl ? (
+        <Image
+          source={{ uri: thumbnailUrl }}
+          style={[StyleSheet.absoluteFillObject, { opacity: 0.35 }]}
+          contentFit="cover"
+          blurRadius={30}
+          cachePolicy="memory-disk"
+        />
+      ) : null}
+
       {/* 1. Underlying Poster Thumbnail (instant first frame) */}
       {thumbnailUrl ? (
         <Image
           source={{ uri: thumbnailUrl }}
           style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
-          contentFit="cover"
+          contentFit={isPortrait ? 'contain' : 'cover'}
           priority="high"
           cachePolicy="memory-disk"
         />
@@ -326,12 +365,14 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
       <VideoView
         player={player}
         style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
-        contentFit="cover"
+        contentFit={isPortrait ? 'contain' : 'cover'}
         nativeControls={false}
         surfaceType="surfaceView"
         fullscreenOptions={{ enable: false }}
         showsTimecodes={false}
         allowsVideoFrameAnalysis={false}
+        allowsPictureInPicture={false}
+        startsPictureInPictureAutomatically={false}
       />
 
       {/* 3. Controls & HUD (fades out immediately when closing starts) */}
@@ -424,10 +465,17 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const topOffset = Math.max(insets.top + 6, 44);
-  const videoHeight = Math.round((SCREEN_WIDTH * 9) / 16);
 
   // Active video currently focused in the modal (swappable via "More Like This")
   const [activeVideo, setActiveVideo] = useState<CinemaVideoItem | null>(initialVideo);
+  const isPortrait = useMemo(() => isVerticalVideo(activeVideo), [activeVideo]);
+
+  const videoHeight = useMemo(() => {
+    if (isPortrait) {
+      return Math.round(Math.min(SCREEN_HEIGHT * 0.46, SCREEN_WIDTH * 1.2));
+    }
+    return Math.round((SCREEN_WIDTH * 9) / 16);
+  }, [isPortrait]);
   const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<CinemaVideoItem | null>(null);
   const [activeTab, setActiveTab] = useState<'more' | 'trailers'>('more');
   const [isLiked, setIsLiked] = useState<boolean>(false);
@@ -480,20 +528,42 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
         thumbH.value = 180;
       }
 
-      // 60-120fps smooth opening: Wait for native Modal mount & layout pass to complete before animating expansion
-      animTimer = setTimeout(() => {
-        requestAnimationFrame(() => {
+      const startOpenAnimation = () => {
+        if (Platform.OS === 'android') {
+          expandProgress.value = withTiming(1, {
+            duration: 280,
+            easing: Easing.bezier(0.16, 1, 0.3, 1),
+          });
+        } else {
           expandProgress.value = withSpring(1, {
             damping: 25,
             stiffness: 250,
             mass: 0.8,
           });
+        }
+      };
+
+      if (Platform.OS === 'android') {
+        animTimer = requestAnimationFrame(() => {
+          startOpenAnimation();
         });
-      }, Platform.OS === 'android' ? 45 : 30);
+      } else {
+        animTimer = setTimeout(() => {
+          requestAnimationFrame(() => {
+            startOpenAnimation();
+          });
+        }, 30);
+      }
     }
 
     return () => {
-      clearTimeout(animTimer);
+      if (animTimer) {
+        if (Platform.OS === 'android') {
+          cancelAnimationFrame(animTimer);
+        } else {
+          clearTimeout(animTimer);
+        }
+      }
     };
   }, [
     visible,
@@ -830,19 +900,24 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     const topRadius = (1 - p) * 6 + p * 16;
     const bottomRadius = (1 - p) * 6;
 
+    const hasValidBounds = thumbW.value > 0 && thumbH.value > 0 && thumbW.value < SCREEN_WIDTH * 0.99;
+    const opacity = hasValidBounds ? 1 : Math.min(1, p * 3);
+
     return {
       transform: [
         { translateX },
         { translateY },
         { scale: finalScale },
       ],
-      borderTopLeftRadius: topRadius,
-      borderTopRightRadius: topRadius,
-      borderBottomLeftRadius: bottomRadius,
-      borderBottomRightRadius: bottomRadius,
+      ...(Platform.OS === 'ios' ? {
+        borderTopLeftRadius: topRadius,
+        borderTopRightRadius: topRadius,
+        borderBottomLeftRadius: bottomRadius,
+        borderBottomRightRadius: bottomRadius,
+        overflow: 'hidden' as const,
+      } : {}),
       backgroundColor: '#000000',
-      overflow: 'hidden',
-      opacity: p > 0.001 ? 1 : 0,
+      opacity,
     };
   });
 
@@ -962,9 +1037,12 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     if (!activeVideo) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
+      const shareUrl = getAppShareUrl({ tab: 'Cinema' });
+      const message = `Watch "${title}" from ${eventTitle || 'the wedding celebration'} on MyCircle Cinema!\n${shareUrl}`;
       await Share.share({
-        message: `Watch "${title}" from ${eventTitle || 'the wedding celebration'} on MyCircle Cinema!`,
-        url: videoUrl || undefined,
+        message,
+        url: shareUrl,
+        title: `Watch "${title}" on MyCircle Cinema`,
       });
     } catch {}
   };
@@ -1030,11 +1108,22 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 />
               ) : (
                 <View style={[styles.previewContainer, { height: '100%' }]}>
+                  {/* Ambient Blurred Backdrop for Portrait Letterboxing */}
+                  {isPortrait && thumbUrl ? (
+                    <Image
+                      source={{ uri: thumbUrl }}
+                      style={[StyleSheet.absoluteFillObject, { opacity: 0.35 }]}
+                      contentFit="cover"
+                      blurRadius={30}
+                      cachePolicy="memory-disk"
+                    />
+                  ) : null}
+
                   {thumbUrl ? (
                     <Image
                       source={{ uri: thumbUrl }}
                       style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
-                      contentFit="cover"
+                      contentFit={isPortrait ? 'contain' : 'cover'}
                       priority="high"
                       cachePolicy="memory-disk"
                     />
@@ -1146,7 +1235,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
               >
                 <Text style={styles.primaryPlayIcon}>▶</Text>
                 <Text style={styles.primaryPlayBtnText}>
-                  {hasProgress ? `RESUME FILM (${formatDuration(resumeTimeSec)})` : 'WATCH FILM'}
+                  {hasProgress
+                    ? `RESUME ${isPortrait ? 'REEL' : 'FILM'} (${formatDuration(resumeTimeSec)})`
+                    : `WATCH ${isPortrait ? 'REEL' : 'FILM'}`}
                 </Text>
               </Pressable>
             )}
@@ -1487,7 +1578,7 @@ const styles = StyleSheet.create({
   // ─── 16:9 Video Canvas ───────────────────────────────────────────────────
   previewContainer: {
     width: SCREEN_WIDTH,
-    backgroundColor: '#121214',
+    backgroundColor: '#000000',
     position: 'relative',
     overflow: 'hidden',
   },

@@ -39,6 +39,7 @@ import { savesService } from '../../../services/savesService';
 import { analyticsService } from '../../../services/analyticsService';
 import { tabEvents, EVENT_SAVES_UPDATED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
+import { getAppShareUrl } from '../../../utils/deepLink';
 import {
   FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
@@ -89,6 +90,7 @@ export interface EditorialLightboxProps {
   enableLock?: boolean;
   onToggleLockPhoto?: (item: any) => Promise<boolean | void>;
   storyId?: string;
+  storySlug?: string;
   onPlayVideo?: (item: any) => void;
 }
 
@@ -111,6 +113,7 @@ export function EditorialLightbox({
   enableLock = false,
   onToggleLockPhoto,
   storyId,
+  storySlug,
   onPlayVideo,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
@@ -216,6 +219,7 @@ export function EditorialLightbox({
 
   useEffect(() => {
     let animTimer: any = null;
+    let animRaf: number | null = null;
     if (visible) {
       setActiveIdx(initialIndex);
       setShowControls(true);
@@ -234,16 +238,35 @@ export function EditorialLightbox({
         thumbH.value = 120;
       }
 
-      // 60-120fps smooth opening: Wait for native Modal mount & layout pass to complete before animating expansion
-      animTimer = setTimeout(() => {
-        requestAnimationFrame(() => {
+      const startOpenAnimation = () => {
+        if (Platform.OS === 'android') {
+          // Android: Butter-smooth 280ms cubic deceleration curve (Material 3 Emphasized Decelerate)
+          // Eliminates underdamped spring oscillation and frame hitching on RenderThread
+          expandProgress.value = withTiming(1, {
+            duration: 280,
+            easing: Easing.bezier(0.16, 1, 0.3, 1),
+          });
+        } else {
           expandProgress.value = withSpring(1, {
             damping: 25,
             stiffness: 250,
             mass: 0.8,
           });
+        }
+      };
+
+      if (Platform.OS === 'android') {
+        // Start on the very next render frame without artificial 45ms dead wait
+        animRaf = requestAnimationFrame(() => {
+          startOpenAnimation();
         });
-      }, Platform.OS === 'android' ? 45 : 30);
+      } else {
+        animTimer = setTimeout(() => {
+          animRaf = requestAnimationFrame(() => {
+            startOpenAnimation();
+          });
+        }, 30);
+      }
 
       resetAutoHideTimer();
 
@@ -257,7 +280,8 @@ export function EditorialLightbox({
     }
 
     return () => {
-      clearTimeout(animTimer);
+      if (animTimer) clearTimeout(animTimer);
+      if (animRaf) cancelAnimationFrame(animRaf);
       pauseAutoHideTimer();
     };
   }, [visible, initialIndex, initialBounds, resetAutoHideTimer, pauseAutoHideTimer]);
@@ -537,15 +561,18 @@ export function EditorialLightbox({
   };
 
   const handleShare = async () => {
-    if (!currentUrl) return;
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
     try {
+      const shareUrl = getAppShareUrl({
+        storySlug: storySlug || (storyId && isNaN(Number(storyId)) ? storyId : null),
+      });
+      const displayTitle = title || 'the celebration';
       await Share.share({
-        message: `Check out this photo from ${title}:\n${currentUrl}`,
-        url: currentUrl,
-        title: title,
+        message: `Check out this photo from ${displayTitle} on MyCircle:\n${shareUrl}`,
+        url: shareUrl,
+        title: `Photo from ${displayTitle}`,
       });
     } catch (e) {
       console.warn('Share failed:', e);
@@ -740,11 +767,15 @@ export function EditorialLightbox({
     const translateX = (cx_grid - cx_screen) * (1 - p);
     const translateY = (cy_grid - cy_screen) * (1 - p);
 
+    // If initial bounds exist, card is already positioned over grid thumbnail, so opacity is 1 from frame 0.
+    // If no bounds were provided (fallback center box), fade it in smoothly.
+    const hasValidBounds = thumbW.value > 0 && thumbH.value > 0 && thumbW.value < width * 0.99;
+    const opacity = hasValidBounds ? 1 : Math.min(1, p * 3);
+
     return {
       transform: [{ translateX }, { translateY }, { scale }],
-      borderRadius: (1 - p) * 16,
-      overflow: 'hidden',
-      opacity: p > 0.001 ? 1 : 0,
+      ...(Platform.OS === 'ios' ? { borderRadius: (1 - p) * 16, overflow: 'hidden' as const } : {}),
+      opacity,
     };
   });
 
@@ -882,6 +913,12 @@ export function EditorialLightbox({
                   offset: (width + 18) * index,
                   index,
                 })}
+                onScrollToIndexFailed={(info) => {
+                  flatListRef.current?.scrollToOffset({
+                    offset: info.highestMeasuredFrameIndex * (width + 18),
+                    animated: false,
+                  });
+                }}
                 scrollEventThrottle={16}
                 onScrollBeginDrag={() => {
                   setShowControls(true);

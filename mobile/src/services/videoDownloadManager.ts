@@ -11,25 +11,31 @@
  *     ≥ 256 GB device  → 4.0 GB cap
  * - Atomic writes: downloads to .tmp first, renames on success (no partial corrupt files)
  * - Persists url→localPath map in AsyncStorage so downloads survive app restarts
+ * - Auto-download: throttled when app is foregrounded (3s gap between items),
+ *   full speed when app is backgrounded/minimised. Never competes with active playback.
  */
 
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, AppStateStatus } from 'react-native';
 import { playbackFocusManager } from './playbackFocusManager';
 
 const DOWNLOAD_DIR = FileSystem.documentDirectory + 'mycircle-videos/';
 const ASYNC_KEY = 'videoDownloadManager:v1:map';
 
 // Storage caps by device tier (bytes)
-const CAP_64GB = 1.5 * 1024 ** 3;   // 1.5 GB  → devices < 128 GB
-const CAP_128GB = 2.5 * 1024 ** 3;  // 2.5 GB  → devices 128–255 GB
-const CAP_256GB = 4.0 * 1024 ** 3;  // 4.0 GB  → devices ≥ 256 GB
+const CAP_64GB = 1.5 * 1024 ** 3;    // 1.5 GB  → devices < 128 GB
+const CAP_128GB = 2.5 * 1024 ** 3;   // 2.5 GB  → devices 128–255 GB
+const CAP_256GB = 4.0 * 1024 ** 3;   // 4.0 GB  → devices ≥ 256 GB
+
+// Inter-item delay when app is foregrounded — prevents network jank during browsing
+const FOREGROUND_ITEM_DELAY_MS = 3000;
 
 interface DownloadEntry {
-  localPath: string;   // absolute path inside documentDirectory
-  lastAccessedAt: number; // unix ms — used for LRU eviction
+  localPath: string;       // absolute path inside documentDirectory
+  lastAccessedAt: number;  // unix ms — used for LRU eviction
   sizeBytes: number;
-  priority?: number;   // 100 = Director's Cut, 80 = Candid Diaries, 20 = Standard
+  priority?: number;       // 100 = Director's Cut, 85 = Candid Diaries, 70 = Stage & Spotlight, 55 = Extended Cuts
 }
 
 interface QueueItem {
@@ -43,8 +49,10 @@ class VideoDownloadManager {
   private _queue: QueueItem[] = [];
   private isDownloading = false;
   private isPaused = false;
+  private isAppBackground = false;
   private currentDownloadResumable: FileSystem.DownloadResumable | null = null;
   private storageCap = CAP_128GB; // default; refined after getTotalDiskCapacityAsync
+  private lastItemCompletedAt = 0; // timestamp of last completed item, for foreground throttle
 
   constructor() {
     this.init();
@@ -95,6 +103,25 @@ class VideoDownloadManager {
           this.processQueue();
         }
       });
+
+      // 5. AppState listener — run at full speed in background, throttle in foreground
+      AppState.addEventListener('change', (nextState: AppStateStatus) => {
+        const wasBackground = this.isAppBackground;
+        this.isAppBackground = nextState === 'background' || nextState === 'inactive';
+
+        if (this.isAppBackground && !wasBackground) {
+          // App just moved to background — kick off pending downloads at full speed
+          console.log('[VIDEO DOWNLOAD 📲→🌙] App backgrounded — downloads at full speed.');
+          this.processQueue();
+        } else if (!this.isAppBackground && wasBackground) {
+          console.log('[VIDEO DOWNLOAD 🌙→📲] App foregrounded — downloads will throttle between items.');
+        }
+      });
+
+      // Seed initial AppState value
+      this.isAppBackground =
+        AppState.currentState === 'background' || AppState.currentState === 'inactive';
+
     } catch (err) {
       console.warn('[VIDEO DOWNLOAD ⚠️ INIT] Initialization error:', err);
     }
@@ -115,14 +142,59 @@ class VideoDownloadManager {
   // ─── Public API ────────────────────────────────────────────────────────────
 
   /**
-   * Add a remote video URL to the download queue with an optional priority level.
-   * Higher priority (e.g. 100 for Director's Cut, 80 for Candid Diaries) moves
-   * the video to the front of the queue and protects it from storage eviction.
+   * Automatically queue an entire cinema library for silent background download.
+   * Called from CinemaLibraryView on mount. Already-downloaded videos are skipped.
+   *
+   * Priority scale used by CinemaLibraryView:
+   *   100 — Director's Cut       (highest — always download first)
+   *    85 — Candid Diaries
+   *    70 — Stage & Spotlight    (Dance)
+   *    55 — Extended Cuts        (Full Films)
+   *    40 — Anything uncategorised
+   *
+   * Downloads are delayed 5s after mount to let the UI fully settle first,
+   * then run at 3s intervals while foregrounded, full speed when minimised.
+   */
+  public scheduleAutoDownload(videos: Array<{ url: string; priority: number }>): void {
+    if (!videos || videos.length === 0) return;
+    let queued = 0;
+    for (const { url, priority } of videos) {
+      if (!url || typeof url !== 'string' || !url.startsWith('http')) continue;
+      const cleanUrl = url.split('?')[0].toLowerCase();
+      if (
+        !cleanUrl.endsWith('.mp4') && !cleanUrl.endsWith('.mov') &&
+        !cleanUrl.endsWith('.m4v') && !cleanUrl.endsWith('.webm')
+      ) continue;
+      if (this.map.has(url)) continue; // already fully on disk
+      const inQueue = this._queue.findIndex((item) => item.url === url);
+      if (inQueue >= 0) {
+        if (priority > this._queue[inQueue].priority) {
+          this._queue[inQueue].priority = priority;
+        }
+        continue;
+      }
+      this._queue.push({ url, priority });
+      queued++;
+    }
+    if (queued > 0) {
+      this._queue.sort((a, b) => b.priority - a.priority);
+      console.log(`[VIDEO DOWNLOAD 🗂️ AUTO] Scheduled ${queued} cinema videos for silent background download.`);
+      // 5s initial delay — lets the UI settle, images load, and React navigation complete
+      setTimeout(() => this.processQueue(), 5000);
+    }
+  }
+
+  /**
+   * Manually add a remote video URL to the download queue (e.g. user taps Download button).
+   * Higher priority moves the video to the front of the queue.
    */
   public queue(url: string | null | undefined, priority: number = 50): void {
     if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
     const cleanUrl = url.split('?')[0].toLowerCase();
-    if (!cleanUrl.endsWith('.mp4') && !cleanUrl.endsWith('.mov') && !cleanUrl.endsWith('.m4v')) return;
+    if (
+      !cleanUrl.endsWith('.mp4') && !cleanUrl.endsWith('.mov') &&
+      !cleanUrl.endsWith('.m4v') && !cleanUrl.endsWith('.webm')
+    ) return;
 
     // If already downloaded, upgrade stored priority if higher
     if (this.map.has(url)) {
@@ -158,7 +230,6 @@ class VideoDownloadManager {
     if (!url) return null;
     const entry = this.map.get(url);
     if (!entry) return null;
-    // Update LRU access time (fire-and-forget)
     entry.lastAccessedAt = Date.now();
     this.persistMap();
     return entry.localPath;
@@ -191,12 +262,23 @@ class VideoDownloadManager {
 
   private async processQueue(): Promise<void> {
     if (this.isDownloading || this.isPaused || this._queue.length === 0) return;
-    this.isDownloading = true;
 
+    // Foreground throttle: if app is visible, wait 3s between items so downloads
+    // don't steal bandwidth from image loading, API calls, or scrolling.
+    if (!this.isAppBackground && this.lastItemCompletedAt > 0) {
+      const elapsed = Date.now() - this.lastItemCompletedAt;
+      if (elapsed < FOREGROUND_ITEM_DELAY_MS) {
+        const waitMs = FOREGROUND_ITEM_DELAY_MS - elapsed;
+        setTimeout(() => this.processQueue(), waitMs);
+        return;
+      }
+    }
+
+    this.isDownloading = true;
     const item = this._queue.shift()!;
     const url = item.url;
 
-    // Double-check: another processQueue call might have already downloaded this
+    // Double-check in case another call already downloaded it
     if (this.map.has(url)) {
       const existing = this.map.get(url)!;
       if (item.priority > (existing.priority ?? 0)) {
@@ -215,23 +297,21 @@ class VideoDownloadManager {
     }
 
     this.isDownloading = false;
+    this.lastItemCompletedAt = Date.now();
 
-    // Continue with next item if not paused
     if (!this.isPaused) {
       this.processQueue();
     }
   }
 
   private async downloadOne(url: string, priority: number = 50): Promise<void> {
-    // Enforce storage cap before starting (priority-aware LRU evict if needed)
     await this.enforceStorageCap();
 
-    // Derive a stable filename from the URL
     const filename = this.urlToFilename(url);
     const finalPath = DOWNLOAD_DIR + filename;
     const tmpPath = DOWNLOAD_DIR + filename + '.tmp';
 
-    // Check if final file already exists (race condition guard)
+    // Race-condition guard: check if final file already exists on disk
     const existing = await FileSystem.getInfoAsync(finalPath);
     if (existing.exists) {
       const size = (existing as any).size ?? 0;
@@ -244,11 +324,12 @@ class VideoDownloadManager {
     }
 
     if (this.isPaused) {
-      console.log(`[VIDEO DOWNLOAD ⏸️] Skipping download start because Cinema player is active.`);
+      console.log(`[VIDEO DOWNLOAD ⏸️] Skipping — Cinema player is active.`);
       return;
     }
 
-    console.log(`[VIDEO DOWNLOAD 📡 START] Downloading (p=${priority}): ${url.slice(0, 70)}...`);
+    const mode = this.isAppBackground ? '🌙 BG' : '📲 FG';
+    console.log(`[VIDEO DOWNLOAD 📡 START ${mode}] p=${priority} | ${url.slice(0, 70)}...`);
     const startMs = Date.now();
 
     const resumable = FileSystem.createDownloadResumable(url, tmpPath);
@@ -277,10 +358,9 @@ class VideoDownloadManager {
       throw new Error(`HTTP ${result?.status}`);
     }
 
-    // Rename .tmp → final path (atomic on most filesystems)
+    // Atomic rename: .tmp → final
     await FileSystem.moveAsync({ from: tmpPath, to: finalPath });
 
-    // Get file size
     const fileInfo = await FileSystem.getInfoAsync(finalPath);
     const sizeBytes = (fileInfo as any).size ?? 0;
     const sizeMB = (sizeBytes / 1024 ** 2).toFixed(1);
@@ -298,8 +378,7 @@ class VideoDownloadManager {
     const totalSize = await this.getTotalSize();
     if (totalSize <= this.storageCap) return;
 
-    // Sort by priority ascending first (lower priority = evict first),
-    // then by lastAccessedAt ascending (oldest LRU first)
+    // Evict lowest priority first, then LRU within same priority
     const sorted = Array.from(this.map.entries()).sort(([, a], [, b]) => {
       const pA = a.priority ?? 50;
       const pB = b.priority ?? 50;
@@ -316,7 +395,7 @@ class VideoDownloadManager {
         await FileSystem.deleteAsync(entry.localPath, { idempotent: true });
         this.map.delete(url);
         freedBytes += entry.sizeBytes;
-        console.log(`[VIDEO DOWNLOAD ♻️ EVICT] LRU evicted (p=${entry.priority ?? 50}): ${entry.localPath.split('/').pop()} (${(entry.sizeBytes / 1024 ** 2).toFixed(1)} MB)`);
+        console.log(`[VIDEO DOWNLOAD ♻️ EVICT] p=${entry.priority ?? 50}: ${entry.localPath.split('/').pop()} (${(entry.sizeBytes / 1024 ** 2).toFixed(1)} MB)`);
       } catch (err) {
         console.warn('[VIDEO DOWNLOAD ⚠️ EVICT] Could not evict:', err);
       }
@@ -328,15 +407,12 @@ class VideoDownloadManager {
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
   private urlToFilename(url: string): string {
-    // Extract last path segment and strip query string
     const clean = url.split('?')[0];
     const segment = clean.split('/').pop() || 'video';
-    // Sanitize to safe filename characters
     return segment.replace(/[^a-zA-Z0-9._-]/g, '_');
   }
 
   private persistMap(): void {
-    // Fire-and-forget; don't await to keep download flow unblocked
     const obj: Record<string, DownloadEntry> = {};
     this.map.forEach((entry, url) => { obj[url] = entry; });
     AsyncStorage.setItem(ASYNC_KEY, JSON.stringify(obj)).catch(() => {});

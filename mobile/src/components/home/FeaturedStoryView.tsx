@@ -538,19 +538,26 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
               </View>
             )}
 
-            {/* Skeleton while loading */}
+            {/* Gallery Grid or Empty State */}
             {galleryImages.length === 0 ? (
-              <View style={styles.masonryGridContainer}>
-                <View style={styles.masonryColumn}>
-                  {[0.75, 0.67, 0.8].map((aspect, i) => (
-                    <View key={`sk0-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                  ))}
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="images-outline" size={28} color="#8c867e" />
                 </View>
-                <View style={styles.masonryColumn}>
-                  {[0.67, 0.8, 0.75].map((aspect, i) => (
-                    <View key={`sk1-${i}`} style={[styles.masonryCard, styles.skeletonCard, { aspectRatio: aspect }]} />
-                  ))}
+                <Text style={styles.emptyTitle}>NO PHOTOS YET</Text>
+                <Text style={styles.emptyText}>
+                  Photos for this story will appear here once uploaded.
+                </Text>
+              </View>
+            ) : filteredGalleryImages.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="images-outline" size={28} color="#8c867e" />
                 </View>
+                <Text style={styles.emptyTitle}>NO PHOTOS IN {activeTab.toUpperCase()}</Text>
+                <Text style={styles.emptyText}>
+                  There are currently no photos in this category.
+                </Text>
               </View>
             ) : (
               <View style={styles.masonryGridContainer}>
@@ -601,6 +608,7 @@ export default function FeaturedStoryView({ isOpen, onClose, story }: FeaturedSt
         }}
         title={story?.title || 'MISTY VISUALS'}
         storyId={story?.id || (story as any)?.slug}
+        storySlug={(story as any)?.slug || (story?.id && isNaN(Number(story?.id)) ? story.id : undefined)}
       />
     )}
   </GestureHandlerRootView>
@@ -693,7 +701,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 36,
     alignItems: 'center',
-    backgroundColor: '#fbfaf8',
+    backgroundColor: '#ffffff',
   },
   subtitleText: {
     fontFamily: FONT_JOST_REGULAR,
@@ -716,7 +724,7 @@ const styles = StyleSheet.create({
   },
   tabsWrapper: {
     borderBottomWidth: 1,
-    borderBottomColor: '#f0ede8',
+    borderBottomColor: '#f3f3f3',
     marginBottom: 16,
   },
   tabsScrollContent: {
@@ -758,12 +766,47 @@ const styles = StyleSheet.create({
   },
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
   },
   skeletonCard: {
-    backgroundColor: '#eae6e1',
+    backgroundColor: '#f5f5f5',
     opacity: 0.7,
+  },
+  emptyContainer: {
+    paddingVertical: 56,
+    paddingHorizontal: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#f8f8f8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+  emptyTitle: {
+    fontFamily: FONT_MONTSERRAT_REGULAR,
+    fontSize: 13,
+    letterSpacing: 2,
+    fontWeight: '600',
+    color: '#1c1a18',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyText: {
+    fontFamily: FONT_JOST_REGULAR,
+    fontSize: 14,
+    lineHeight: 22,
+    color: '#8c867e',
+    textAlign: 'center',
+    maxWidth: 320,
   },
   masonryImage: {
     width: '100%',
