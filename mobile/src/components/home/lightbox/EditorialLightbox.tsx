@@ -695,17 +695,19 @@ export function EditorialLightbox({
           return;
         }
 
-        console.log('[DOWNLOAD DEBUG 📱 STEP 3] Checking MediaLibrary permissions...');
+        console.log('[DOWNLOAD DEBUG 📱 STEP 3] Checking MediaLibrary write permissions...');
         let hasPermission = false;
         try {
-          const perm = await MediaLibrary.requestPermissionsAsync();
+          const perm = await MediaLibrary.requestPermissionsAsync(true);
           console.log('[DOWNLOAD DEBUG 📱 STEP 3] Permission result:', JSON.stringify(perm));
-          hasPermission = perm.status === 'granted';
+          hasPermission = perm.status === 'granted' || perm.granted === true || (perm as any).accessPrivileges === 'limited' || (perm as any).accessPrivileges === 'all';
         } catch (pErr: any) {
           console.error('[DOWNLOAD DEBUG ❌ STEP 3 PERMISSION CRASH]:', pErr);
         }
 
-        if (hasPermission) {
+        const canAttemptSave = hasPermission || Platform.OS === 'android';
+
+        if (canAttemptSave) {
           console.log('[DOWNLOAD DEBUG 📱 STEP 4] Saving photo asset to device Photos Library...');
           try {
             if (typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {

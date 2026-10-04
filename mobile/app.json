@@ -79,10 +79,7 @@
       },
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -94,8 +91,15 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow Misty Visuals to upload and save photos to your library.",
-          "savePhotosPermission": "Allow Misty Visuals to save photos to your library."
+          "photosPermission": "Allow Misty Visuals to save photos to your library.",
+          "savePhotosPermission": "Allow Misty Visuals to save photos to your library.",
+          "granularPermissions": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Misty Visuals to select photos for your inspiration moodboard."
         }
       ],
       [

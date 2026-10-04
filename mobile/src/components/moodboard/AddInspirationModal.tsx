@@ -8,16 +8,14 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  Dimensions,
   KeyboardAvoidingView,
   Platform,
-  FlatList,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import * as MediaLibrary from 'expo-media-library';
+import * as ImagePicker from 'expo-image-picker';
 import { savesService, SavedPhotoItem } from '../../services/savesService';
 import {
   FONT_FUTURA_BOLD,
@@ -27,9 +25,6 @@ import {
   FONT_JOST_MEDIUM,
   FONT_JOST_SEMIBOLD,
 } from '../../constants/fonts';
-
-const { width } = Dimensions.get('window');
-const GRID_ITEM_SIZE = (width - 40 - 12) / 3;
 
 const PREDEFINED_TAGS = [
   '#Haldi',
@@ -61,82 +56,61 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [selectedUri, setSelectedUri] = useState<string | null>(null);
-  const [cameraRollPhotos, setCameraRollPhotos] = useState<MediaLibrary.Asset[]>([]);
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [isLoadingPhotos, setIsLoadingPhotos] = useState<boolean>(false);
-  const [endCursor, setEndCursor] = useState<string | undefined>(undefined);
-  const [hasNextPage, setHasNextPage] = useState<boolean>(true);
-  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Fetch camera roll assets when modal becomes visible
+  // Reset state when modal is closed
   useEffect(() => {
-    if (visible) {
-      loadCameraRoll();
-    } else {
+    if (!visible) {
       setSelectedUri(null);
       setSelectedTags([]);
       setCustomTagInput('');
       setErrorMessage(null);
-      setEndCursor(undefined);
-      setHasNextPage(true);
     }
   }, [visible]);
 
-  const loadCameraRoll = async () => {
-    setIsLoadingPhotos(true);
-    try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      const granted = status === 'granted';
-      setHasPermission(granted);
-
-      if (granted) {
-        const result = await MediaLibrary.getAssetsAsync({
-          first: 60,
-          mediaType: ['photo'],
-          sortBy: [MediaLibrary.SortBy.creationTime],
-        });
-        setCameraRollPhotos(result.assets || []);
-        setEndCursor(result.endCursor);
-        setHasNextPage(result.hasNextPage);
-      }
-    } catch (err) {
-      console.warn('[AddInspirationModal] Failed to load media library:', err);
-    } finally {
-      setIsLoadingPhotos(false);
-    }
-  };
-
-  const loadMorePhotos = async () => {
-    if (!hasNextPage || isLoadingMore || isLoadingPhotos || !hasPermission) return;
-    setIsLoadingMore(true);
-    try {
-      const result = await MediaLibrary.getAssetsAsync({
-        first: 60,
-        after: endCursor,
-        mediaType: ['photo'],
-        sortBy: [MediaLibrary.SortBy.creationTime],
-      });
-      setCameraRollPhotos((prev) => [...prev, ...(result.assets || [])]);
-      setEndCursor(result.endCursor);
-      setHasNextPage(result.hasNextPage);
-    } catch (err) {
-      console.warn('[AddInspirationModal] Failed to load more photos:', err);
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
-
-  const handleSelectAsset = async (asset: MediaLibrary.Asset) => {
+  const pickFromLibrary = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
-      const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-      setSelectedUri(info.localUri || asset.uri);
-    } catch {
-      setSelectedUri(asset.uri);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setSelectedUri(result.assets[0].uri);
+        setErrorMessage(null);
+      }
+    } catch (err: any) {
+      console.warn('[AddInspirationModal] Error opening photo library:', err);
+      setErrorMessage('Could not open photo library. Please try again.');
+    }
+  };
+
+  const takePhotoWithCamera = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMessage('Camera access is needed to capture photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setSelectedUri(result.assets[0].uri);
+        setErrorMessage(null);
+      }
+    } catch (err: any) {
+      console.warn('[AddInspirationModal] Error launching camera:', err);
+      setErrorMessage('Could not open camera.');
     }
   };
 
@@ -231,7 +205,7 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
             <View>
               <Text style={styles.headerSubtitle}>NEW INSPIRATION</Text>
               <Text style={styles.headerTitle}>
-                {selectedUri ? 'TAG & SAVE' : 'SELECT FROM CAMERA ROLL'}
+                {selectedUri ? 'TAG & SAVE' : 'CHOOSE PHOTO'}
               </Text>
             </View>
             <Pressable
@@ -256,7 +230,7 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
                 />
                 <Pressable
                   style={styles.changePhotoBtn}
-                  onPress={() => setSelectedUri(null)}
+                  onPress={pickFromLibrary}
                   disabled={isUploading}
                 >
                   <Ionicons name="images" size={14} color="#ffffff" />
@@ -352,58 +326,48 @@ export const AddInspirationModal: React.FC<AddInspirationModalProps> = ({
               </View>
             </ScrollView>
           ) : (
-            /* Camera Roll Grid Selector */
-            <View style={styles.galleryContainer}>
-              {isLoadingPhotos ? (
-                <View style={styles.centerLoading}>
-                  <ActivityIndicator size="small" color="#111111" />
-                  <Text style={styles.loadingText}>Loading your camera roll...</Text>
+            /* System Picker Selection Options */
+            <View style={styles.pickerOptionsContainer}>
+              <Text style={styles.pickerInstructions}>
+                Select an inspiration image from your photos or capture a live moment to tag and pin to your moodboard.
+              </Text>
+
+              <Pressable
+                style={styles.pickerCard}
+                onPress={pickFromLibrary}
+                android_ripple={{ color: '#f3f4f6' }}
+              >
+                <View style={styles.pickerCardIconBg}>
+                  <Ionicons name="images" size={24} color="#111111" />
                 </View>
-              ) : hasPermission === false ? (
-                <View style={styles.permissionContainer}>
-                  <Ionicons name="images-outline" size={40} color="#888888" />
-                  <Text style={styles.permissionTitle}>PHOTO ACCESS NEEDED</Text>
-                  <Text style={styles.permissionDesc}>
-                    Please allow photo library access in your device settings to select inspirations.
-                  </Text>
-                  <Pressable style={styles.permissionBtn} onPress={loadCameraRoll}>
-                    <Text style={styles.permissionBtnText}>GRANT PERMISSION</Text>
-                  </Pressable>
+                <View style={styles.pickerCardText}>
+                  <Text style={styles.pickerCardTitle}>CHOOSE FROM PHOTOS</Text>
+                  <Text style={styles.pickerCardSubtitle}>Browse albums & select from your device</Text>
                 </View>
-              ) : cameraRollPhotos.length === 0 ? (
-                <View style={styles.emptyGallery}>
-                  <Text style={styles.emptyGalleryText}>No photos found in Camera Roll</Text>
+                <Ionicons name="chevron-forward" size={18} color="#999999" />
+              </Pressable>
+
+              <Pressable
+                style={styles.pickerCard}
+                onPress={takePhotoWithCamera}
+                android_ripple={{ color: '#f3f4f6' }}
+              >
+                <View style={styles.pickerCardIconBg}>
+                  <Ionicons name="camera" size={24} color="#111111" />
                 </View>
-              ) : (
-                <FlatList
-                  data={cameraRollPhotos}
-                  numColumns={3}
-                  keyExtractor={(item, idx) => `${item.id}-${idx}`}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.cameraRollGrid}
-                  onEndReached={loadMorePhotos}
-                  onEndReachedThreshold={0.5}
-                  ListFooterComponent={
-                    isLoadingMore ? (
-                      <View style={{ paddingVertical: 18, alignItems: 'center', width: '100%' }}>
-                        <ActivityIndicator size="small" color="#111111" />
-                      </View>
-                    ) : null
-                  }
-                  renderItem={({ item }) => (
-                    <Pressable
-                      style={styles.gridThumbWrapper}
-                      onPress={() => handleSelectAsset(item)}
-                    >
-                      <Image
-                        source={{ uri: item.uri }}
-                        style={styles.gridThumb}
-                        contentFit="cover"
-                      />
-                    </Pressable>
-                  )}
-                />
-              )}
+                <View style={styles.pickerCardText}>
+                  <Text style={styles.pickerCardTitle}>TAKE A PHOTO</Text>
+                  <Text style={styles.pickerCardSubtitle}>Capture a live inspiration moment</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#999999" />
+              </Pressable>
+
+              {errorMessage ? (
+                <View style={styles.errorBanner}>
+                  <Ionicons name="alert-circle-outline" size={16} color="#e11d48" />
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+              ) : null}
             </View>
           )}
         </View>
@@ -426,7 +390,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     maxHeight: '90%',
-    minHeight: '65%',
+    minHeight: '40%',
     paddingTop: 20,
     paddingHorizontal: 20,
   },
@@ -458,6 +422,50 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pickerOptionsContainer: {
+    paddingVertical: 20,
+    gap: 14,
+  },
+  pickerInstructions: {
+    fontSize: 13,
+    fontFamily: FONT_JOST_REGULAR,
+    color: '#666666',
+    lineHeight: 19,
+    marginBottom: 6,
+  },
+  pickerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#eaeaea',
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+  },
+  pickerCardIconBg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerCardText: {
+    flex: 1,
+  },
+  pickerCardTitle: {
+    fontSize: 12,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    color: '#111111',
+    letterSpacing: 0.8,
+    marginBottom: 3,
+  },
+  pickerCardSubtitle: {
+    fontSize: 12,
+    fontFamily: FONT_JOST_REGULAR,
+    color: '#777777',
   },
   scrollContent: {
     paddingVertical: 16,
@@ -618,81 +626,5 @@ const styles = StyleSheet.create({
     fontFamily: FONT_MONTSERRAT_SEMIBOLD,
     letterSpacing: 1.5,
     color: '#ffffff',
-  },
-  // Gallery Picker
-  galleryContainer: {
-    flex: 1,
-    paddingTop: 12,
-  },
-  centerLoading: {
-    height: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  loadingText: {
-    fontSize: 12,
-    fontFamily: FONT_JOST_REGULAR,
-    color: '#888888',
-  },
-  permissionContainer: {
-    height: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    gap: 10,
-  },
-  permissionTitle: {
-    fontSize: 13,
-    fontFamily: FONT_FUTURA_BOLD,
-    color: '#222222',
-    letterSpacing: 1,
-  },
-  permissionDesc: {
-    fontSize: 12,
-    fontFamily: FONT_JOST_REGULAR,
-    color: '#666666',
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 8,
-  },
-  permissionBtn: {
-    backgroundColor: '#111111',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-  },
-  permissionBtnText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
-    letterSpacing: 1,
-  },
-  emptyGallery: {
-    height: 200,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyGalleryText: {
-    fontSize: 13,
-    fontFamily: FONT_JOST_REGULAR,
-    color: '#888888',
-  },
-  cameraRollGrid: {
-    paddingBottom: 24,
-    gap: 6,
-  },
-  gridThumbWrapper: {
-    width: GRID_ITEM_SIZE,
-    height: GRID_ITEM_SIZE,
-    marginRight: 6,
-    marginBottom: 6,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
-  },
-  gridThumb: {
-    width: '100%',
-    height: '100%',
   },
 });

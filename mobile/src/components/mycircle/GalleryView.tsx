@@ -2454,13 +2454,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       let hasPermission = false;
       try {
-        const perm = await MediaLibrary.requestPermissionsAsync();
-        hasPermission = perm.status === 'granted' || perm.granted === true;
+        const perm = await MediaLibrary.requestPermissionsAsync(true);
+        hasPermission = perm.status === 'granted' || perm.granted === true || (perm as any).accessPrivileges === 'limited' || (perm as any).accessPrivileges === 'all';
       } catch (pErr) {
         console.error('[BATCH DOWNLOAD ❌] Permission error:', pErr);
       }
 
-      if (!hasPermission) {
+      if (!hasPermission && Platform.OS === 'ios') {
         Alert.alert('Permission Required', 'Please allow access to save photos to your photo gallery.');
         return;
       }
