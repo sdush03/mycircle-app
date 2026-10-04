@@ -48,6 +48,13 @@ import {
 } from '../../services/videoWatchProgressManager';
 import { CinemaVideoDetailModal } from './CinemaVideoDetailModal';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
+import {
+  cinemaMetadataService,
+  NormalizedCinemaVideo,
+  classifyCinemaCategory,
+  formatCinemaCategoryTitleCase,
+} from '../../services/cinemaMetadataService';
+export { classifyCinemaCategory, formatCinemaCategoryTitleCase } from '../../services/cinemaMetadataService';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import { playbackFocusManager } from '../../services/playbackFocusManager';
@@ -118,44 +125,6 @@ function formatDisplayTitle(video?: CinemaVideoItem | null): string {
     return video.category.toUpperCase();
   }
   return 'The Wedding Film';
-}
-
-export function classifyCinemaCategory(video: CinemaVideoItem): string {
-  const explicit = (video.cinemaCategory || video.exif?.cinemaCategory || video.category || video.meta?.category || '').trim().toUpperCase().replace(/['']/g, '’');
-  if (explicit.includes('DIRECTOR')) return 'THE DIRECTORS’ CUT';
-  if (explicit.includes('CANDID') || explicit.includes('REEL') || explicit.includes('DIAR')) return 'CANDID DIARIES';
-  if (explicit.includes('STAGE') || explicit.includes('SPOTLIGHT') || explicit.includes('PERFORMANCE') || explicit.includes('DANCE')) return 'STAGE & SPOTLIGHT';
-  if (explicit.includes('EXTENDED') || explicit.includes('CUTS') || explicit.includes('CHAPTER') || explicit.includes('CEREMONY')) return 'THE EXTENDED CUTS';
-
-  // Fallback auto-detection from orientation & keywords:
-  if (isVerticalVideo(video)) {
-    return 'CANDID DIARIES';
-  }
-
-  const clean = ((video.title || video.name || video.filename || '') + ' ' + (video.caption || '')).toLowerCase();
-  if (clean.includes('dance') || clean.includes('performance') || clean.includes('solo') || clean.includes('squad') || clean.includes('choreography') || clean.includes('stage')) {
-    return 'STAGE & SPOTLIGHT';
-  }
-  if (clean.includes('haldi') || clean.includes('mehendi') || clean.includes('mehndi') || clean.includes('sangeet') || clean.includes('wedding') || clean.includes('phera') || clean.includes('vow') || clean.includes('mandap') || clean.includes('reception') || clean.includes('engagement') || clean.includes('roka') || clean.includes('chapter')) {
-    return 'THE EXTENDED CUTS';
-  }
-
-  return 'THE DIRECTORS’ CUT';
-}
-
-export function formatCinemaCategoryTitleCase(raw?: string): string {
-  if (!raw) return "Director's Cut";
-  const upper = raw.toUpperCase().replace(/['']/g, '’');
-  if (upper.includes('DIRECTOR')) return "Director's Cut";
-  if (upper.includes('CANDID') || upper.includes('REEL') || upper.includes('DIAR')) return 'Candid Diaries';
-  if (upper.includes('STAGE') || upper.includes('SPOTLIGHT') || upper.includes('PERFORMANCE') || upper.includes('DANCE')) return 'Stage & Spotlight';
-  if (upper.includes('EXTENDED') || upper.includes('CUTS') || upper.includes('CHAPTER') || upper.includes('CEREMONY')) return 'Extended Cuts';
-
-  return raw
-    .toLowerCase()
-    .replace(/(?:^|\s)\w/g, (m) => m.toUpperCase())
-    .replace(/^The\s+/i, '')
-    .trim() || "Director's Cut";
 }
 
 export function toTitleCase(str: string): string {
@@ -235,7 +204,7 @@ export function formatCinemaDisplayTitle(
   return cTitle || vTitle || 'The Wedding Film';
 }
 
-function sortCinemaVideos(list: CinemaVideoItem[]): CinemaVideoItem[] {
+function sortCinemaVideos<T extends CinemaVideoItem>(list: T[]): T[] {
   return [...list].sort((a, b) => {
     const orderA = a.sortOrder !== undefined ? a.sortOrder : (a.exif?.sortOrder !== undefined ? a.exif.sortOrder : 9999);
     const orderB = b.sortOrder !== undefined ? b.sortOrder : (b.exif?.sortOrder !== undefined ? b.exif.sortOrder : 9999);
@@ -346,8 +315,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   });
 
   const [progressTick, setProgressTick] = useState(0);
-  const [detailModalVideo, setDetailModalVideo] = useState<CinemaVideoItem | null>(null);
-  const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<CinemaVideoItem | null>(null);
+  const [detailModalVideo, setDetailModalVideo] = useState<NormalizedCinemaVideo | null>(null);
+  const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<NormalizedCinemaVideo | null>(null);
   const [detailBounds, setDetailBounds] = useState<LightboxBounds | null>(null);
   const [isDetailFromContinueWatching, setIsDetailFromContinueWatching] = useState<boolean>(false);
   const heroCoverRef = useRef<View>(null);
@@ -360,6 +329,13 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   }, []);
 
   // ───────────────────────────────────────────────────────────────────────────
+  // High-Level Centralized Normalization: Normalize all cinema videos ONCE
+  // ───────────────────────────────────────────────────────────────────────────
+  const normalizedVideos = useMemo(() => {
+    return cinemaMetadataService.normalizeList(videos, eventTitle);
+  }, [videos, eventTitle, progressTick]);
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Content Partitioning & Editorial Hierarchy (4 Finalized Shelves: 1, 4, 3, 2)
   // ───────────────────────────────────────────────────────────────────────────
   const {
@@ -367,7 +343,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     shelves,
     totalVideos,
   } = useMemo(() => {
-    if (!videos || videos.length === 0) {
+    if (!normalizedVideos || normalizedVideos.length === 0) {
       return {
         primaryVideo: null,
         shelves: [],
@@ -375,13 +351,13 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
       };
     }
 
-    const directorsCut: CinemaVideoItem[] = [];
-    const candidDiaries: CinemaVideoItem[] = [];
-    const stageSpotlight: CinemaVideoItem[] = [];
-    const extendedCuts: CinemaVideoItem[] = [];
+    const directorsCut: NormalizedCinemaVideo[] = [];
+    const candidDiaries: NormalizedCinemaVideo[] = [];
+    const stageSpotlight: NormalizedCinemaVideo[] = [];
+    const extendedCuts: NormalizedCinemaVideo[] = [];
 
-    videos.forEach((v) => {
-      const cat = classifyCinemaCategory(v);
+    normalizedVideos.forEach((v) => {
+      const cat = v.cinemaCategory;
       if (cat === 'THE DIRECTORS’ CUT') directorsCut.push(v);
       else if (cat === 'CANDID DIARIES') candidDiaries.push(v);
       else if (cat === 'STAGE & SPOTLIGHT') stageSpotlight.push(v);
@@ -395,8 +371,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     const sortedExtendedCuts = sortCinemaVideos(extendedCuts);
 
     // 1. Determine Featured Video for Hero Spotlight
-    const explicitPrimary = videos.find(isExplicitlyPrimary);
-    let primary: CinemaVideoItem | null = explicitPrimary || null;
+    const explicitPrimary = normalizedVideos.find(isExplicitlyPrimary);
+    let primary: NormalizedCinemaVideo | null = explicitPrimary || null;
 
     if (!primary) {
       if (sortedDirectorsCut.length > 0) {
@@ -538,24 +514,21 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   // The download manager itself handles throttling: 3s between items when foregrounded,
   // full speed when the app is minimised. Never runs while a video is actively playing.
   useEffect(() => {
-    if (!videos || videos.length === 0) return;
+    if (!normalizedVideos || normalizedVideos.length === 0) return;
 
     const toDownload: Array<{ url: string; priority: number }> = [];
 
-    for (const video of videos) {
-      if (isVideoComingSoon(video)) continue;
-      const url = video.videoUrl || video.r2Url || (video as any).fullUri || video.uri;
-      if (!url || typeof url !== 'string' || !url.startsWith('http')) continue;
+    for (const video of normalizedVideos) {
+      if (video.isComingSoon || !video.cleanVideoUrl) continue;
 
-      // Derive priority from category — uses .includes() to avoid Unicode apostrophe mismatches
-      const cat = classifyCinemaCategory(video).toUpperCase();
+      const cat = video.cinemaCategory.toUpperCase();
       let priority = 40;
       if (cat.includes('DIRECTOR')) priority = 100;
       else if (cat.includes('CANDID') || cat.includes('DIAR')) priority = 85;
       else if (cat.includes('STAGE') || cat.includes('SPOTLIGHT') || cat.includes('DANCE')) priority = 70;
       else if (cat.includes('EXTENDED') || cat.includes('CUTS') || cat.includes('CHAPTER')) priority = 55;
 
-      toDownload.push({ url, priority });
+      toDownload.push({ url: video.cleanVideoUrl, priority });
     }
 
     // Stagger after the preload timer (which fires at 1.5s) so they don't compete
@@ -564,40 +537,38 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
     }, 8000);
 
     return () => clearTimeout(timer);
-  }, [videos]);
+  }, [normalizedVideos]);
 
   const handleCardPress = useCallback((film: CinemaVideoItem, _resumeTime?: number, bounds?: LightboxBounds | null) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const enrichedFilm = {
-      ...film,
-      cinemaCategory: film.cinemaCategory || classifyCinemaCategory(film),
-    };
-    if (isVideoComingSoon(enrichedFilm)) {
-      setComingSoonDrawerVideo(enrichedFilm);
+    const normalized = (film as NormalizedCinemaVideo).cleanVideoUrl !== undefined
+      ? (film as NormalizedCinemaVideo)
+      : cinemaMetadataService.normalize(film, eventTitle);
+
+    if (normalized.isComingSoon) {
+      setComingSoonDrawerVideo(normalized);
       return;
     }
-    // Preload immediately — user will spend 1-3s on the detail sheet before tapping play.
-    // This gives the native player a head start buffering before the modal even opens.
-    const vUrl = enrichedFilm.videoUrl || enrichedFilm.r2Url || enrichedFilm.uri;
-    if (vUrl && typeof vUrl === 'string' && vUrl.startsWith('http')) {
-      videoPreloadManager.preload(vUrl, getValidImageThumbnail(enrichedFilm) ?? undefined, {
-        title: enrichedFilm.title,
-        artist: enrichedFilm.cinemaCategory,
+    // Preload immediately using pre-resolved URLs
+    if (normalized.cleanVideoUrl) {
+      videoPreloadManager.preload(normalized.cleanVideoUrl, normalized.cleanThumbnailUrl ?? undefined, {
+        title: normalized.displayTitle,
+        artist: normalized.categoryTitleCase,
       });
     }
     setIsDetailFromContinueWatching(false);
     setDetailBounds(bounds || null);
-    setDetailModalVideo(enrichedFilm);
-  }, []);
+    setDetailModalVideo(normalized);
+  }, [eventTitle]);
 
   const handleContinueWatchingPress = useCallback((film: CinemaVideoItem, resumeTime?: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const enrichedFilm = {
-      ...film,
-      cinemaCategory: film.cinemaCategory || classifyCinemaCategory(film),
-    };
-    if (isVideoComingSoon(enrichedFilm)) {
-      setComingSoonDrawerVideo(enrichedFilm);
+    const normalized = (film as NormalizedCinemaVideo).cleanVideoUrl !== undefined
+      ? (film as NormalizedCinemaVideo)
+      : cinemaMetadataService.normalize(film, eventTitle);
+
+    if (normalized.isComingSoon) {
+      setComingSoonDrawerVideo(normalized);
       return;
     }
     const progress = getProgress(film);
@@ -606,8 +577,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
       (progress && !progress.isCompleted && progress.currentTime > 0
         ? progress.currentTime
         : undefined);
-    onSelectVideo(enrichedFilm, effectiveResumeTime);
-  }, [getProgress, onSelectVideo]);
+    onSelectVideo(normalized, effectiveResumeTime);
+  }, [getProgress, onSelectVideo, eventTitle]);
 
   const isPrimaryComingSoon = isVideoComingSoon(primaryVideo);
 

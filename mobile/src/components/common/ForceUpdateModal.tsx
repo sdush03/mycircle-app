@@ -31,7 +31,12 @@ const DEFAULT_ANDROID_STORE_URL =
 const DEFAULT_IOS_STORE_URL =
   'https://apps.apple.com/app/id6796633077';
 
+// Force update kill-switch: disabled right now so users are not blocked
+const FORCE_UPDATE_ENABLED = false;
+
 export default function ForceUpdateModal() {
+  if (!FORCE_UPDATE_ENABLED) return null;
+
   const [mustUpdate, setMustUpdate] = useState(false);
   const [config, setConfig] = useState<VersionConfig | null>(null);
 
@@ -48,8 +53,8 @@ export default function ForceUpdateModal() {
 
   const checkAppVersion = async () => {
     try {
-      // Get currently installed app version from native build / Constants (defaults to 1.2.0)
-      const installedVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.0';
+      // Get currently installed app version from native build / Constants (defaults to 1.2.1)
+      const installedVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.1';
 
       // Call backend version endpoint (fails silently if backend endpoint is not yet live)
       const response = await api.get('/api/app-config/version', { timeout: 5000 });
@@ -127,7 +132,7 @@ export default function ForceUpdateModal() {
 
         <View style={styles.footer}>
           <Text style={styles.versionText}>
-            Current Version: {Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.0'}
+            Current Version: {Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.1'}
           </Text>
         </View>
       </SafeAreaView>

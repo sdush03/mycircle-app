@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedReaction,
   withSpring,
   withTiming,
   interpolate,
@@ -49,6 +50,7 @@ import {
 } from './CinemaVideoCard';
 import { videoWatchProgressManager, WatchProgress } from '../../services/videoWatchProgressManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
+import { cinemaMetadataService, NormalizedCinemaVideo } from '../../services/cinemaMetadataService';
 import { ScreenCastButton } from './ScreenCastButton';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
 import { getAppShareUrl } from '../../utils/deepLink';
@@ -81,13 +83,16 @@ interface CinemaVideoDetailModalProps {
 }
 
 function formatDuration(sec?: number): string {
-  if (!sec || isNaN(sec) || sec <= 0) return '3m 45s';
+  if (!sec || isNaN(sec) || sec <= 0) return '';
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   if (m >= 60) {
     const h = Math.floor(m / 60);
     const remM = m % 60;
-    return `${h}h ${remM > 0 ? `${remM}m` : ''}`;
+    return `${h}h ${remM > 0 ? `${remM}m` : ''}`.trim();
+  }
+  if (m === 0) {
+    return `${s}s`;
   }
   return `${m}m ${s < 10 ? '0' : ''}${s}s`;
 }
@@ -107,7 +112,10 @@ function formatDisplayTitle(video?: CinemaVideoItem | null): string {
 function formatCoupleNames(rawTitle?: string | null): string {
   if (!rawTitle) return 'The Couple & Family';
   const cleaned = rawTitle
-    .replace(/'s\s+Wedding/gi, '')
+    .replace(/['']s\s+Wedding/gi, '')
+    .replace(/['']s\s+Celebration/gi, '')
+    .replace(/\s+Wedding/gi, '')
+    .replace(/\s+Celebration/gi, '')
     .replace(/[·•]/g, ' & ')
     .replace(/[_.-]+/g, ' ')
     .toLowerCase()
@@ -158,6 +166,8 @@ interface DetailHeroPlayerProps {
   isDismissing: SharedValue<boolean>;
   dismissProgress: SharedValue<number>;
   videoItem?: any;
+  onDurationDetected?: (durationSec: number) => void;
+  onTrackSizeDetected?: (size: { width: number; height: number }) => void;
 }
 
 const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
@@ -170,13 +180,16 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
   isDismissing,
   dismissProgress,
   videoItem,
+  onDurationDetected,
+  onTrackSizeDetected,
 }) => {
   // CRITICAL FOR TV AIRPLAY: Smart TVs reject local file:// paths over AirPlay
   const effectiveUrl = videoUrl;
 
   const [isMuted, setIsMuted] = useState<boolean>(true);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
+  const [userPaused, setUserPaused] = useState<boolean>(false);
 
   // Ground-truth runtime track size from expo-video
   const [trackSize, setTrackSize] = useState<{ width: number; height: number } | null>(null);
@@ -206,17 +219,19 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
     const initialSize = (player as any)?.videoTrack?.size;
     if (initialSize && initialSize.width > 0 && initialSize.height > 0) {
       setTrackSize({ width: initialSize.width, height: initialSize.height });
+      onTrackSizeDetected?.({ width: initialSize.width, height: initialSize.height });
     }
     const trackSub = (player as any).addListener?.('videoTrackChange', (payload: any) => {
       const size = payload?.videoTrack?.size || (player as any)?.videoTrack?.size;
       if (size && size.width > 0 && size.height > 0) {
         setTrackSize({ width: size.width, height: size.height });
+        onTrackSizeDetected?.({ width: size.width, height: size.height });
       }
     });
     return () => {
       trackSub?.remove?.();
     };
-  }, [player]);
+  }, [player, onTrackSizeDetected]);
 
   const isPortrait = useMemo(() => {
     if (trackSize && trackSize.width > 0 && trackSize.height > 0) {
@@ -259,15 +274,33 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
     });
 
     const playSub = (player as any).addListener?.('playingChange', (payload: any) => {
-      setIsPlaying(payload?.isPlaying ?? player.playing);
+      const playing = payload?.isPlaying ?? player.playing;
+      setIsPlaying(playing);
+      if (playing) {
+        setIsBuffering(false);
+        setUserPaused(false);
+      }
     });
     const statusSub = (player as any).addListener?.('statusChange', (payload: any) => {
       const status = payload?.status ?? player.status;
       setIsBuffering(status === 'loading');
+      const dur = player.duration ?? 0;
+      if (dur > 0 && onDurationDetected) {
+        onDurationDetected(dur);
+      }
+    });
+    const sourceSub = (player as any).addListener?.('sourceLoad', () => {
+      const dur = player.duration ?? 0;
+      if (dur > 0 && onDurationDetected) {
+        onDurationDetected(dur);
+      }
     });
     const timeSub = (player as any).addListener?.('timeUpdate', (payload: any) => {
       const cur = payload?.currentTime ?? player.currentTime ?? 0;
       const dur = player.duration ?? 0;
+      if (dur > 0 && onDurationDetected) {
+        onDurationDetected(dur);
+      }
       const target = videoItem || videoUrl;
       if (target && dur > 0 && cur >= 3) {
         if (cur / dur >= 0.9) {
@@ -288,6 +321,7 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
       appStateSub?.remove?.();
       playSub?.remove?.();
       statusSub?.remove?.();
+      sourceSub?.remove?.();
       timeSub?.remove?.();
       endSub?.remove?.();
       try {
@@ -313,8 +347,10 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
   const handleTogglePlay = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (player.playing) {
+      setUserPaused(true);
       player.pause();
     } else {
+      setUserPaused(false);
       player.play();
     }
   }, [player]);
@@ -324,18 +360,69 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
     setIsMuted((prev) => !prev);
   }, []);
 
+  const pauseVideo = useCallback(() => {
+    try {
+      if (player.playing) {
+        setUserPaused(true);
+        player.pause();
+      }
+    } catch {}
+  }, [player]);
+
+  const resumeVideo = useCallback(() => {
+    try {
+      if (!player.playing) {
+        setUserPaused(false);
+        player.play();
+      }
+    } catch {}
+  }, [player]);
+
+  // Pause playback as soon as user starts dismissing or dragging down, resume if drag is cancelled
+  useAnimatedReaction(
+    () => isDismissing.value || translateY.value > 15,
+    (shouldPause, previous) => {
+      if (shouldPause && !previous) {
+        runOnJS(pauseVideo)();
+      } else if (!shouldPause && previous) {
+        runOnJS(resumeVideo)();
+      }
+    },
+    [pauseVideo, resumeVideo]
+  );
+
+  const videoFadeAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    if (isDismissing.value) {
+      return {
+        opacity: 0,
+      };
+    }
+    if (translateY.value > 10) {
+      const p = Math.min((translateY.value - 10) / 50, 1);
+      return {
+        opacity: Math.max(0, 1 - p),
+      };
+    }
+    return {
+      opacity: 1,
+    };
+  });
+
   const controlsFadeAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
     if (isDismissing.value) {
       return {
-        opacity: Math.max(0, 1 - dismissProgress.value * 4),
+        opacity: Math.max(0, 1 - dismissProgress.value * 5),
       };
     }
-    const dragProgress = Math.min(translateY.value / 80, 1);
+    const dragProgress = Math.min(translateY.value / 60, 1);
     return {
       opacity: Math.max(0, 1 - dragProgress),
     };
   });
+
+  const isVideoBuffering = isBuffering || player.status === 'loading' || (!isPlaying && !userPaused);
 
   return (
     <View style={[styles.previewContainer, { height: '100%' }]}>
@@ -350,7 +437,7 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
         />
       ) : null}
 
-      {/* 1. Underlying Poster Thumbnail (instant first frame) */}
+      {/* 1. Underlying Poster Thumbnail (instant first frame & closing poster) */}
       {thumbnailUrl ? (
         <Image
           source={{ uri: thumbnailUrl }}
@@ -361,19 +448,21 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
         />
       ) : null}
 
-      {/* 2. Native VideoView */}
-      <VideoView
-        player={player}
-        style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
-        contentFit={isPortrait ? 'contain' : 'cover'}
-        nativeControls={false}
-        surfaceType="surfaceView"
-        fullscreenOptions={{ enable: false }}
-        showsTimecodes={false}
-        allowsVideoFrameAnalysis={false}
-        allowsPictureInPicture={false}
-        startsPictureInPictureAutomatically={false}
-      />
+      {/* 2. Native VideoView (fades out immediately to reveal poster on dismiss/drag) */}
+      <Animated.View style={[StyleSheet.absoluteFillObject, videoFadeAnimatedStyle]}>
+        <VideoView
+          player={player}
+          style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
+          contentFit={isPortrait ? 'contain' : 'cover'}
+          nativeControls={false}
+          surfaceType={Platform.OS === 'android' ? 'textureView' : 'surfaceView'}
+          fullscreenOptions={{ enable: false }}
+          showsTimecodes={false}
+          allowsVideoFrameAnalysis={false}
+          allowsPictureInPicture={false}
+          startsPictureInPictureAutomatically={false}
+        />
+      </Animated.View>
 
       {/* 3. Controls & HUD (fades out immediately when closing starts) */}
       <Animated.View style={[StyleSheet.absoluteFillObject, controlsFadeAnimatedStyle]}>
@@ -387,13 +476,13 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
 
         {/* Touch Area: tap toggles play/pause */}
         <Pressable style={StyleSheet.absoluteFillObject} onPress={handleTogglePlay}>
-          {isBuffering && (
+          {isVideoBuffering && (
             <View style={styles.previewBufferingOverlay} pointerEvents="none">
               <ActivityIndicator size="small" color="#FFFFFF" />
             </View>
           )}
 
-          {!isPlaying && !isBuffering && (
+          {!isPlaying && !isVideoBuffering && userPaused && (
             <View style={styles.previewPausedOverlay} pointerEvents="none">
               <View style={styles.previewPlayGlyphBg}>
                 <Ionicons name="play" size={28} color="#FFFFFF" style={{ marginLeft: 3 }} />
@@ -466,8 +555,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   const scrollRef = useRef<ScrollView>(null);
   const topOffset = Math.max(insets.top + 6, 44);
 
-  // Active video currently focused in the modal (swappable via "More Like This")
-  const [activeVideo, setActiveVideo] = useState<CinemaVideoItem | null>(initialVideo);
+  // Active video currently focused in the modal (normalized once, O(1) access)
+  const [activeVideo, setActiveVideo] = useState<NormalizedCinemaVideo | null>(() =>
+    initialVideo ? cinemaMetadataService.normalize(initialVideo, eventTitle) : null
+  );
   const isPortrait = useMemo(() => isVerticalVideo(activeVideo), [activeVideo]);
 
   const videoHeight = useMemo(() => {
@@ -583,34 +674,54 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     dismissStartScale,
   ]);
 
-  // Keep active video in sync when initialVideo prop changes
+  // Keep active video in sync when initialVideo prop changes (normalized once at entry)
   useEffect(() => {
     if (initialVideo) {
-      setActiveVideo(initialVideo);
+      setActiveVideo(cinemaMetadataService.normalize(initialVideo, eventTitle));
       scrollRef.current?.scrollTo({ y: 0, animated: true });
+    } else {
+      setActiveVideo(null);
     }
-  }, [initialVideo]);
+  }, [initialVideo, eventTitle]);
 
-  // Sync like & download state when activeVideo changes
+  // Sync like & download state when activeVideo changes, and subscribe to real download completion
   useEffect(() => {
     if (!activeVideo) return;
     setIsLiked(Boolean(activeVideo.isLiked));
 
-    const vUrl = extractCleanVideoUrl(activeVideo);
-    if (vUrl && videoDownloadManager.isDownloaded(vUrl)) {
-      setDownloadStatus('downloaded');
-    } else {
+    const vUrl = activeVideo.cleanVideoUrl;
+    if (!vUrl) {
       setDownloadStatus('idle');
+      return;
     }
+
+    if (videoDownloadManager.isDownloaded(vUrl)) {
+      setDownloadStatus('downloaded');
+      return;
+    }
+
+    if (videoDownloadManager.isQueued(vUrl)) {
+      setDownloadStatus('downloading');
+      const unsub = videoDownloadManager.subscribeToUrl(vUrl, () => {
+        setDownloadStatus('downloaded');
+      });
+      return unsub;
+    }
+
+    setDownloadStatus('idle');
   }, [activeVideo]);
 
-  const videoUrl = useMemo(() => extractCleanVideoUrl(activeVideo), [activeVideo]);
-  const thumbUrl = useMemo(() => {
-    return (activeVideo ? getValidImageThumbnail(activeVideo) : undefined) || coverUrl;
-  }, [activeVideo, coverUrl]);
-  const isComingSoon = isVideoComingSoon(activeVideo);
-  const title = formatDisplayTitle(activeVideo);
-  const duration = formatDuration(activeVideo?.duration);
+  // Clean O(1) properties resolved by cinemaMetadataService (zero runtime parsing)
+  const videoUrl = activeVideo?.cleanVideoUrl ?? null;
+  const thumbUrl = activeVideo?.cleanThumbnailUrl || (activeVideo ? getValidImageThumbnail(activeVideo) : undefined) || coverUrl;
+  const isComingSoon = activeVideo?.isComingSoon ?? false;
+  const title = activeVideo?.displayTitle ?? 'The Wedding Film';
+  const duration = activeVideo?.durationFormatted ?? '';
+  const releaseYear = activeVideo?.releaseYear ?? null;
+  const resolutionTag = activeVideo?.resolutionTag ?? 'FHD';
+  const is4K = activeVideo?.is4K ?? false;
+  const synopsis = activeVideo?.synopsis ?? '';
+  const starringCouple = activeVideo?.starringCouple ?? 'The Couple & Family';
 
   // Watch Progress
   const watchProgress: WatchProgress | null = useMemo(() => {
@@ -618,7 +729,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   }, [activeVideo]);
 
   // Watch Progress — ONLY allow resuming if explicitly opened from Continue Watching!
-  // Otherwise, videos played from the detail modal restart from 0:00!
   const hasProgress = Boolean(
     isFromContinueWatching &&
     watchProgress &&
@@ -626,34 +736,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     watchProgress.currentTime > 0
   );
   const resumeTimeSec = hasProgress ? watchProgress?.currentTime : undefined;
-
-  // Resolution Detection: 4K vs FHD
-  const is4K = useMemo(() => {
-    if (!activeVideo) return false;
-    const w = Number(activeVideo.width || activeVideo.exif?.width || activeVideo.meta?.width || 0);
-    const h = Number(activeVideo.height || activeVideo.exif?.height || activeVideo.meta?.height || 0);
-    if (w >= 3840 || h >= 3840 || (w >= 2160 && h >= 2160) || Math.min(w, h) >= 2160) {
-      return true;
-    }
-    const resStr = String(
-      activeVideo.resolution ||
-      activeVideo.quality ||
-      activeVideo.meta?.resolution ||
-      activeVideo.meta?.quality ||
-      activeVideo.videoQuality ||
-      ''
-    ).toLowerCase();
-    if (resStr.includes('4k') || resStr.includes('2160') || resStr.includes('uhd')) {
-      return true;
-    }
-    const url = String(activeVideo.videoUrl || activeVideo.r2Url || activeVideo.uri || '').toLowerCase();
-    if (url.includes('4k') || url.includes('2160') || url.includes('uhd')) {
-      return true;
-    }
-    return Boolean(activeVideo.is4k || activeVideo.is4K);
-  }, [activeVideo]);
-
-  const resolutionTag = is4K ? '4K' : 'FHD';
 
   // Trailers & More list (strictly from this gallery / allVideos, excluding active video)
   const trailersAndMoreVideos = useMemo(() => {
@@ -688,28 +770,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     return list.slice(0, 10);
   }, [allVideos, activeVideo]);
 
-  // Year & Metadata Tags
-  const releaseYear = useMemo(() => {
-    const rawYear = activeVideo?.year || activeVideo?.exif?.year || activeVideo?.createdAt || activeVideo?.uploadDate;
-    if (rawYear) {
-      const parsed = new Date(rawYear);
-      if (!isNaN(parsed.getFullYear())) return String(parsed.getFullYear());
-    }
-    return '2026';
-  }, [activeVideo]);
-
-  // Synopsis Story Text
-  const synopsis = useMemo(() => {
-    if (activeVideo?.description) return activeVideo.description;
-    if (activeVideo?.exif?.description) return activeVideo.exif.description;
-    return 'The celebration comes alive through every glance, laughter, and timeless vow. A cinematic heirloom crafted with pure emotion.';
-  }, [activeVideo]);
-
-  // Starring Couple in Title Case (e.g. "Soumi & Abhinav")
-  const starringCouple = useMemo(() => {
-    return formatCoupleNames(eventTitle);
-  }, [eventTitle]);
-
   // More Like This list (exclude active video)
   const moreLikeThisVideos = useMemo(() => {
     if (!allVideos || allVideos.length === 0) return [];
@@ -734,7 +794,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     isDismissing.value = true;
     dismissProgress.value = 0;
 
-    const closingDuration = 380;
+    const closingDuration = 360;
     dismissProgress.value = withTiming(
       1,
       {
@@ -799,7 +859,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
         isDismissing.value = true;
         dismissProgress.value = 0;
 
-        const closingDuration = 380;
+        const closingDuration = 360;
         dismissProgress.value = withTiming(
           1,
           {
@@ -878,7 +938,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
         borderBottomRightRadius: bottomRadius,
         backgroundColor: `rgba(0, 0, 0, ${Math.max(0, 1 - dp * 3)})`,
         overflow: 'hidden',
-        opacity: dp >= 0.98 ? 1 - (dp - 0.98) / 0.02 : 1,
+        opacity: dp >= 0.99 ? Math.max(0, 1 - (dp - 0.99) / 0.01) : 1,
       };
     }
 
@@ -923,7 +983,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
   // Full-Page Poster Cover Animated Style:
   // Converts the ENTIRE unified sheet (video + text) into the clean poster thumbnail.
-  // The cross-fade from live page to poster occurs ONLY once the user is done with the slide-down gesture!
+  // The transition starts on poster (open) and ends on poster (close).
   const fullPagePosterAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
     const aspect = thumbH.value / Math.max(thumbW.value, 1);
@@ -931,12 +991,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
     if (isDismissing.value) {
       const dp = dismissProgress.value;
-      // Cross-fade happens now that the user is done with the slide down gesture:
-      // Page smoothly cross-fades into poster over the first 30% of dismissal (dp: 0 -> 0.3)
-      const posterOpacity = Math.min(dp * 3.3, 1);
+      // Closing phase: strictly 100% visible poster throughout dismissal back into shelf card
       return {
         height: posterH,
-        opacity: posterOpacity,
+        opacity: 1,
         borderTopLeftRadius: (1 - dp) * 16 + dp * 6,
         borderTopRightRadius: (1 - dp) * 16 + dp * 6,
         borderBottomLeftRadius: dp * 6,
@@ -946,7 +1004,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
     const p = expandProgress.value;
     if (p < 0.99) {
-      // Opening phase: smoothly dissolve poster into live video and details
+      // Opening phase: starts at 1 (pure poster), smoothly dissolves into live video and details
       const openPosterOpacity = 1 - interpolate(p, [0, 0.45], [0, 1]);
       return {
         height: posterH,
@@ -958,8 +1016,20 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
       };
     }
 
-    // While user is sliding down: KEEP LIVE PAGE 100% VISIBLE!
-    // No premature cross-fade during the swipe gesture.
+    // Interactive swipe-down drag phase: smoothly cross-fade to poster so downward motion transitions to poster
+    if (dragTranslateY.value > 5) {
+      const dragFade = Math.min((dragTranslateY.value - 5) / 50, 1);
+      return {
+        height: posterH,
+        opacity: dragFade,
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+      };
+    }
+
+    // Fully open & stationary: poster is hidden, live video and details visible
     return {
       height: posterH,
       opacity: 0,
@@ -974,13 +1044,18 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     'worklet';
     if (isDismissing.value) {
       const dp = dismissProgress.value;
-      // Mirror cross-fade: page fades out as poster fades in
+      // Mirror cross-fade: page fades out quickly as dismissal starts
       return {
-        opacity: Math.max(0, 1 - dp * 3.3),
+        opacity: Math.max(0, 1 - dp * 4),
       };
     }
     const p = expandProgress.value;
-    // Keep page 100% visible while user is sliding down!
+    if (dragTranslateY.value > 5) {
+      const dragFade = Math.max(0, 1 - (dragTranslateY.value - 5) / 70);
+      return {
+        opacity: dragFade,
+      };
+    }
     const opacity = interpolate(p, [0.35, 0.95], [0, 1]);
     return {
       opacity,
@@ -992,12 +1067,12 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     if (isDismissing.value) {
       const dp = dismissProgress.value;
       return {
-        opacity: Math.max(0, 1 - dp * 4),
+        opacity: Math.max(0, 1 - dp * 5),
       };
     }
-    const dragProgress = Math.min(dragTranslateY.value / 120, 1);
+    const dragProgress = Math.min(dragTranslateY.value / 60, 1);
     const p = expandProgress.value;
-    const opacity = interpolate(p, [0.85, 1], [0, 1]) * (1 - dragProgress * 0.4);
+    const opacity = interpolate(p, [0.85, 1], [0, 1]) * (1 - dragProgress);
     return {
       opacity,
     };
@@ -1013,15 +1088,14 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
 
   const handleDownload = async () => {
     if (!videoUrl) return;
+    if (downloadStatus === 'downloaded' || downloadStatus === 'downloading') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    if (downloadStatus === 'downloaded') {
-      return;
-    }
     setDownloadStatus('downloading');
     videoDownloadManager.queue(videoUrl, 100);
-    setTimeout(() => {
+    // Subscribe to actual completion — flips to 'downloaded' the instant the file is written
+    videoDownloadManager.subscribeToUrl(videoUrl, () => {
       setDownloadStatus('downloaded');
-    }, 1800);
+    });
   };
 
   const handleToggleRate = () => {
@@ -1055,10 +1129,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   const handleSelectMoreVideo = (item: CinemaVideoItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (isVideoComingSoon(item)) {
-      setComingSoonDrawerVideo(item);
+      setComingSoonDrawerVideo(cinemaMetadataService.normalize(item, eventTitle));
       return;
     }
-    setActiveVideo(item);
+    setActiveVideo(cinemaMetadataService.normalize(item, eventTitle));
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   };
 
@@ -1110,6 +1184,28 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                   translateY={dragTranslateY}
                   isDismissing={isDismissing}
                   dismissProgress={dismissProgress}
+                  onDurationDetected={(dur) => {
+                    if (dur > 0 && activeVideo && activeVideo.durationSec <= 0) {
+                      cinemaMetadataService.recordRuntimeMetadata(activeVideo.id, { durationSec: dur });
+                      if (activeVideo.cleanVideoUrl) {
+                        cinemaMetadataService.recordRuntimeMetadata(activeVideo.cleanVideoUrl, { durationSec: dur });
+                      }
+                      setActiveVideo((prev) =>
+                        prev ? cinemaMetadataService.normalize({ ...prev, duration: dur }, eventTitle) : null
+                      );
+                    }
+                  }}
+                  onTrackSizeDetected={(size) => {
+                    if (size && activeVideo && !activeVideo.width) {
+                      cinemaMetadataService.recordRuntimeMetadata(activeVideo.id, size);
+                      if (activeVideo.cleanVideoUrl) {
+                        cinemaMetadataService.recordRuntimeMetadata(activeVideo.cleanVideoUrl, size);
+                      }
+                      setActiveVideo((prev) =>
+                        prev ? cinemaMetadataService.normalize({ ...prev, ...size }, eventTitle) : null
+                      );
+                    }
+                  }}
                 />
               ) : (
                 <View style={[styles.previewContainer, { height: '100%' }]}>
@@ -1195,23 +1291,29 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 {/* Main Title */}
                 <Text style={styles.filmTitle}>{title}</Text>
 
-            {/* Metadata Row: 2026 • 2h 21m • 4K or FHD */}
+            {/* Metadata Row: Release Year • Duration • 4K or FHD */}
             <View style={styles.metadataRow}>
-              <Text style={styles.metaYearText}>{releaseYear}</Text>
-
-              {duration ? (
-                <>
-                  <Text style={styles.metaDotSeparator}>•</Text>
-                  <Text style={styles.metaDurationText}>{duration}</Text>
-                </>
+              {releaseYear ? (
+                <Text style={styles.metaYearText}>{releaseYear}</Text>
               ) : null}
 
-              <Text style={styles.metaDotSeparator}>•</Text>
+              {releaseYear && duration ? (
+                <Text style={styles.metaDotSeparator}>•</Text>
+              ) : null}
 
-              {/* Resolution Chip: 4K or FHD */}
-              <View style={styles.metaChip}>
-                <Text style={styles.metaChipText}>{resolutionTag}</Text>
-              </View>
+              {duration ? (
+                <Text style={styles.metaDurationText}>{duration}</Text>
+              ) : null}
+
+              {(releaseYear || duration) && resolutionTag ? (
+                <Text style={styles.metaDotSeparator}>•</Text>
+              ) : null}
+
+              {resolutionTag ? (
+                <View style={styles.metaChip}>
+                  <Text style={styles.metaChipText}>{resolutionTag}</Text>
+                </View>
+              ) : null}
             </View>
 
             {/* Primary CTA: [ ▶ Play Film / Resume ] */}
@@ -1273,12 +1375,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
               <Text style={styles.creditLine}>
                 <Text style={styles.creditLabel}>Starring: </Text>
                 <Text style={styles.creditValue}>{starringCouple}</Text>
-              </Text>
-              <Text style={styles.creditLine}>
-                <Text style={styles.creditLabel}>Mastered in: </Text>
-                <Text style={styles.creditValue}>
-                  {is4K ? '4K Ultra HD' : 'Full HD (1080p)'} • Color Graded • Stereo Spatial
-                </Text>
               </Text>
             </View>
 

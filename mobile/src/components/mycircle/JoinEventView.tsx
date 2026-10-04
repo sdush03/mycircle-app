@@ -249,8 +249,6 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      
       {/* Editorial Header */}
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>

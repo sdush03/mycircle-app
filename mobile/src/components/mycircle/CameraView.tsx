@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, Pressable, ActivityIndicator, Alert, Image, Lin
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../../store/authStore';
+import { userSelfieStorage } from '../../services/userSelfieStorage';
 import api, { API_BASE_URL } from '../../services/api';
 import { FONT_JOST_SEMIBOLD } from '../../constants/fonts';
 
@@ -189,11 +190,14 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         throw err;
       }
 
-      const returnedSelfieUrl = data.selfieUrl
+      const remoteSelfieUrl = data.selfieUrl
         ? (data.selfieUrl.startsWith('http') ? data.selfieUrl : `${API_BASE_URL}${data.selfieUrl}`)
-        : photoUri;
+        : null;
 
-      await updateProfile({ hasSelfie: true, selfieUrl: returnedSelfieUrl });
+      // Persist local camera photo directly into permanent local storage
+      const localUri = await userSelfieStorage.saveLocalSelfie(photoUri, remoteSelfieUrl);
+
+      await updateProfile({ hasSelfie: true, selfieUrl: localUri });
       setValidationStatus('accepted');
       setSelfieError('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

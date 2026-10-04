@@ -864,8 +864,6 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      
       <ScrollView
         ref={mainScrollRef}
         contentContainerStyle={styles.scrollContent}

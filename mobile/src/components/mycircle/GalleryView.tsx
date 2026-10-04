@@ -41,6 +41,7 @@ import {
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedReaction,
   useAnimatedRef,
   useDerivedValue,
   scrollTo,
@@ -295,14 +296,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return initialDeepLinkTab.toUpperCase();
     }
     if (!eventSlug) return 'HIGHLIGHTS';
-    if (cachedInitial) {
-      const hlCount = cachedInitial.details?.tabCounts?.['HIGHLIGHTS'] ?? 0;
-      if (hlCount > 0) return 'HIGHLIGHTS';
-      if (cachedInitial.hasFullAccess === false) {
-        return 'MY PHOTOS';
-      }
-      return 'ALL';
-    }
+    
+    // Check initial cached / event details data
+    const initialHlCount = typeof cachedInitial?.details?.tabCounts?.['HIGHLIGHTS'] === 'number'
+      ? cachedInitial.details.tabCounts['HIGHLIGHTS']
+      : (typeof cachedInitial?.details?.tab_counts?.['HIGHLIGHTS'] === 'number'
+          ? cachedInitial.details.tab_counts['HIGHLIGHTS']
+          : (typeof cachedInitial?.details?.highlightsPhotoCount === 'number'
+              ? cachedInitial.details.highlightsPhotoCount
+              : (typeof userEvents.find((e: any) => e.slug === eventSlug)?.highlightsPhotoCount === 'number'
+                  ? userEvents.find((e: any) => e.slug === eventSlug)?.highlightsPhotoCount
+                  : 0)));
+
+    if (initialHlCount > 0) return 'HIGHLIGHTS';
+    if (cachedInitial?.hasFullAccess === false) return 'MY PHOTOS';
+    if (cachedInitial?.hasFullAccess === true) return 'ALL';
     return 'HIGHLIGHTS';
   });
 
@@ -485,10 +493,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
-  const animatedBackTextStyle = useAnimatedStyle(() => ({
-    color: scrollY.value >= exactTouchPoint ? (isCinema ? '#ffffff' : '#3a3632') : '#ffffff',
-  }));
-
   // ─── Gallery → Cinema Theatrical Transition & iOS Swipe-Back Engine ───
   const isCinema = activeTab.trim().toUpperCase() === 'CINEMA';
   const cinemaProgress = useSharedValue(isCinema ? 1 : 0);
@@ -502,6 +506,60 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     },
   });
 
+  const animatedBackTextStyle = useAnimatedStyle(() => ({
+    color: (scrollY?.value ?? 0) >= exactTouchPoint ? (isCinemaShared?.value ? '#ffffff' : '#3a3632') : '#ffffff',
+  }));
+
+  // ─── Dynamic Taskbar / Status Bar Color Engine ───────────────────────────
+  // - White icon/text ('light-content') when hero cover is on top (<- BACK is white)
+  // - Black icon/text ('dark-content') when tab bar is on top (<- BACK turns black)
+  // - Strictly white icon/text ('light-content') in Cinema
+  const [statusBarStyle, setStatusBarStyle] = useState<'light-content' | 'dark-content'>('light-content');
+
+  const updateStatusBarStyle = useCallback((style: 'light-content' | 'dark-content') => {
+    setStatusBarStyle(style);
+    StatusBar.setBarStyle(style, true);
+    if (Platform.OS === 'android') {
+      StatusBar.setTranslucent(true);
+      StatusBar.setBackgroundColor('transparent', true);
+    }
+  }, []);
+
+  useAnimatedReaction(
+    () => {
+      'worklet';
+      if (isCinemaShared?.value) {
+        return 'light-content';
+      }
+      return (scrollY?.value ?? 0) >= exactTouchPoint ? 'dark-content' : 'light-content';
+    },
+    (style, previous) => {
+      if (style !== previous) {
+        runOnJS(updateStatusBarStyle)(style);
+      }
+    },
+    [exactTouchPoint, updateStatusBarStyle]
+  );
+
+  useEffect(() => {
+    // Initial mount: ensure status bar is transparent & light-content immediately
+    if (Platform.OS === 'android') {
+      StatusBar.setTranslucent(true);
+      StatusBar.setBackgroundColor('transparent', true);
+    }
+    const initialStyle = isCinema ? 'light-content' : ((scrollY?.value ?? 0) >= exactTouchPoint ? 'dark-content' : 'light-content');
+    setStatusBarStyle(initialStyle);
+    StatusBar.setBarStyle(initialStyle, true);
+
+    return () => {
+      if (Platform.OS === 'android') {
+        StatusBar.setTranslucent(false);
+        StatusBar.setBackgroundColor('#ffffff', true);
+      }
+      StatusBar.setBarStyle('dark-content', true);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isCinema && activeTab) {
       lastNonCinemaTabRef.current = activeTab;
@@ -510,6 +568,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   useEffect(() => {
     isCinemaShared.value = isCinema;
+    const targetStyle = isCinema ? 'light-content' : ((scrollY?.value ?? 0) >= exactTouchPoint ? 'dark-content' : 'light-content');
+    updateStatusBarStyle(targetStyle);
+
     if (!isCinema) {
       cinemaSwipeX.value = 0;
     }
@@ -517,7 +578,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       duration: 250,
       easing: Easing.out(Easing.quad),
     });
-  }, [isCinema, cinemaProgress, isCinemaShared, cinemaSwipeX]);
+  }, [isCinema, cinemaProgress, isCinemaShared, cinemaSwipeX, exactTouchPoint, updateStatusBarStyle]);
 
   const cinemaAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: cinemaSwipeX.value }],
@@ -584,7 +645,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const prefetchedUrlsRef = useRef<Set<string>>(new Set());
   const activeListRef = useRef<Photo[]>([]);
   const prevTabRef = useRef<string | null>(null);
-  const hasSetLandingTabRef = useRef<boolean>(false);
+  const userHasSwitchedTabRef = useRef<boolean>(false);
 
   // ─── Resume Scroll: Save & Trigger Engine ──────────────────────────────────
   const dismissResumePill = useCallback(() => {
@@ -1676,11 +1737,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const highlightsCount = React.useMemo(() => {
     const rawCount = typeof eventDetails?.tabCounts?.['HIGHLIGHTS'] === 'number'
       ? eventDetails.tabCounts['HIGHLIGHTS']
-      : (typeof eventDetails?.tabCounts?.['highlights'] === 'number' ? eventDetails.tabCounts['highlights'] : 0);
+      : (typeof eventDetails?.tabCounts?.['highlights'] === 'number'
+          ? eventDetails.tabCounts['highlights']
+          : (typeof eventDetails?.tab_counts?.['HIGHLIGHTS'] === 'number'
+              ? eventDetails.tab_counts['HIGHLIGHTS']
+              : (typeof eventDetails?.tab_counts?.['highlights'] === 'number'
+                  ? eventDetails.tab_counts['highlights']
+                  : (typeof eventDetails?.highlightsPhotoCount === 'number'
+                      ? eventDetails.highlightsPhotoCount
+                      : (typeof eventDetails?.highlights_photo_count === 'number'
+                          ? eventDetails.highlights_photo_count
+                          : (typeof eventDetails?.highlightsCount === 'number'
+                              ? eventDetails.highlightsCount
+                              : (typeof eventDetails?.highlights_count === 'number'
+                                  ? eventDetails.highlights_count
+                                  : 0)))))));
     const inTabCache = tabCache['HIGHLIGHTS']?.length || 0;
     const inAllPhotos = allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS').length;
     return Math.max(rawCount, inTabCache, inAllPhotos);
-  }, [allPhotos, tabCache, eventDetails?.tabCounts]);
+  }, [allPhotos, tabCache, eventDetails]);
 
   // Per-tab server loader (matching web 1:1)
   const fetchTabPhotos = useCallback(async (tabName: string) => {
@@ -1857,6 +1932,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [currentCategoryIndex]);
 
   const changeTabWithScrollMemory = useCallback((newTab: string, isFromSwipe = false) => {
+    userHasSwitchedTabRef.current = true;
     const currentNorm = activeTab.toUpperCase();
     const newNorm = newTab.toUpperCase();
     if (newNorm === currentNorm) return;
@@ -2009,6 +2085,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [availableTabs, activeCategorySharedIndex, categoryTranslateX]);
 
   const handleBackAction = useCallback(() => {
+    if (showSelfieModal) {
+      setShowSelfieModal(false);
+      return;
+    }
     if (isMoreDrawerOpen) {
       closeDrawerWithAnimation();
       return;
@@ -2048,7 +2128,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         runOnJS(onChangeEvent)();
       }
     });
-  }, [isMoreDrawerOpen, closeDrawerWithAnimation, activeVideoItem, activeImageIndex, isCinema, cinemaSwipeX, finalizeCinemaExit, isClosingRef, screenSwipeX, onChangeEvent, saveResumeScrollPosition, eventSlug]);
+  }, [showSelfieModal, isMoreDrawerOpen, closeDrawerWithAnimation, activeVideoItem, activeImageIndex, isCinema, cinemaSwipeX, finalizeCinemaExit, isClosingRef, screenSwipeX, onChangeEvent, saveResumeScrollPosition, eventSlug]);
 
   // Native Android Back Button Listener
   useEffect(() => {
@@ -2119,22 +2199,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
   // Exact Landing Tab Rules:
-  // - If highlights > 0 -> land on HIGHLIGHTS (for both Full Access & Partial Access)
-  // - If highlights <= 0:
-  //     - Full Access -> ALL
-  //     - Partial Access -> MY PHOTOS
+  // Priority 1: Direct Deep Link (handled on initial load via initialDeepLinkTab)
+  // Priority 2: HIGHLIGHTS if highlightsCount > 0 (for both Full & Partial Access)
+  // Priority 3: ALL if hasFullAccess (and highlightsCount === 0)
+  // Priority 4: MY PHOTOS if Partial Access (and highlightsCount === 0)
   useEffect(() => {
-    if (!isLoading && !hasSetLandingTabRef.current) {
-      hasSetLandingTabRef.current = true;
-      if (highlightsCount > 0) {
+    if (userHasSwitchedTabRef.current) return;
+    if (initialDeepLinkTab) return;
+
+    if (highlightsCount > 0) {
+      if (activeTab !== 'HIGHLIGHTS') {
         setActiveTab('HIGHLIGHTS');
-      } else if (hasFullAccess) {
+      }
+    } else if (hasFullAccess) {
+      if (activeTab !== 'ALL') {
         setActiveTab('ALL');
-      } else {
+      }
+    } else {
+      if (activeTab !== 'MY PHOTOS') {
         setActiveTab('MY PHOTOS');
       }
     }
-  }, [isLoading, hasFullAccess, highlightsCount]);
+  }, [highlightsCount, hasFullAccess, initialDeepLinkTab, activeTab]);
 
   // Sanitize activeTab: Ensure users never stay on an unavailable tab (e.g. ALL for partial access, or HIGHLIGHTS if highlightsCount is 0)
   useEffect(() => {
@@ -2909,19 +2995,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     );
   }, [openLightbox, handleToggleLike]);
 
+  if (!eventSlug) return null;
+
   return (
-    <Modal
-      visible={!!eventSlug}
-      animationType="none"
-      transparent={true}
-      presentationStyle="overFullScreen"
-      onRequestClose={handleBackAction}
-      statusBarTranslucent={true}
-    >
+    <View style={styles.galleryRootContainer}>
       <GestureHandlerRootView style={styles.container}>
         <GestureDetector gesture={edgeSwipeGesture}>
           <Animated.View style={[{ flex: 1, backgroundColor: '#ffffff' }, screenSwipeAnimatedStyle]}>
-            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+            <StatusBar barStyle={statusBarStyle} translucent backgroundColor="transparent" />
 
             {/* ── Base Layer: Photos Gallery View (Remains mounted underneath Cinema) ── */}
             <View style={StyleSheet.absoluteFillObject} pointerEvents={isCinema ? 'none' : 'auto'}>
@@ -3166,6 +3247,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               onClose={() => {
                 setActiveImageIndex(null);
                 setSelectedBounds(null);
+                updateStatusBarStyle(statusBarStyle);
               }}
               onPlayVideo={(item) => {
                 // Close lightbox first so CinemaVideoModal isn't rendered behind it
@@ -3183,7 +3265,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         <CinemaVideoModal
           visible={activeVideoItem !== null}
           video={activeVideoItem}
-          onClose={() => setActiveVideoItem(null)}
+          onClose={() => {
+            setActiveVideoItem(null);
+            updateStatusBarStyle(statusBarStyle);
+          }}
           eventTitle={cleanTitle}
           allowDownloads={eventDetails?.allowDownloads ?? true}
         />
@@ -3195,23 +3280,33 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             animationType="fade"
             transparent={true}
             statusBarTranslucent={true}
-            onRequestClose={() => setShowSelfieModal(false)}
+            onRequestClose={() => {
+              setShowSelfieModal(false);
+              updateStatusBarStyle(statusBarStyle);
+            }}
           >
             <CameraViewScreen
               onSuccess={() => {
                 setShowSelfieModal(false);
                 handleRefreshGallery();
               }}
-              onCancel={() => setShowSelfieModal(false)}
+              onCancel={() => {
+                setShowSelfieModal(false);
+                updateStatusBarStyle(statusBarStyle);
+              }}
             />
           </Modal>
         )}
     </GestureHandlerRootView>
-  </Modal>
+  </View>
   );
 });
 
 const styles = StyleSheet.create({
+  galleryRootContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 9999,
+  },
   container: {
     flex: 1,
     backgroundColor: 'transparent',

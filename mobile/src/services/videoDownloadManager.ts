@@ -51,8 +51,10 @@ class VideoDownloadManager {
   private isPaused = false;
   private isAppBackground = false;
   private currentDownloadResumable: FileSystem.DownloadResumable | null = null;
-  private storageCap = CAP_128GB; // default; refined after getTotalDiskCapacityAsync
-  private lastItemCompletedAt = 0; // timestamp of last completed item, for foreground throttle
+  private storageCap = CAP_128GB;
+  private lastItemCompletedAt = 0;
+  /** url → set of callbacks fired when that URL finishes downloading */
+  private completionListeners: Map<string, Set<() => void>> = new Map();
 
   constructor() {
     this.init();
@@ -239,6 +241,31 @@ class VideoDownloadManager {
     return !!url && this.map.has(url);
   }
 
+  /** True if the URL is currently being downloaded or waiting in the queue. */
+  public isQueued(url: string | null | undefined): boolean {
+    if (!url) return false;
+    return this._queue.some((item) => item.url === url) ||
+      (this.isDownloading && !this.map.has(url) && this._queue.length >= 0 &&
+        !!this.currentDownloadResumable);
+  }
+
+  /**
+   * Subscribe to be notified when a specific URL finishes downloading.
+   * The callback fires once, then is automatically removed.
+   * Returns an unsubscribe function for cleanup.
+   */
+  public subscribeToUrl(url: string, callback: () => void): () => void {
+    if (!this.completionListeners.has(url)) {
+      this.completionListeners.set(url, new Set());
+    }
+    this.completionListeners.get(url)!.add(callback);
+    return () => this.unsubscribeFromUrl(url, callback);
+  }
+
+  public unsubscribeFromUrl(url: string, callback: () => void): void {
+    this.completionListeners.get(url)?.delete(callback);
+  }
+
   /** Returns total bytes used by all downloaded videos. */
   public async getTotalSize(): Promise<number> {
     return Array.from(this.map.values()).reduce((sum, e) => sum + e.sizeBytes, 0);
@@ -368,6 +395,13 @@ class VideoDownloadManager {
 
     this.map.set(url, { localPath: finalPath, lastAccessedAt: Date.now(), sizeBytes, priority });
     await this.persistMap();
+
+    // Notify any UI listeners waiting on this specific URL
+    const listeners = this.completionListeners.get(url);
+    if (listeners && listeners.size > 0) {
+      listeners.forEach((cb) => { try { cb(); } catch {} });
+      this.completionListeners.delete(url);
+    }
 
     console.log(`[VIDEO DOWNLOAD ✅ DONE] ${filename} | ${sizeMB} MB in ${elapsed}s (p=${priority}) → ${finalPath}`);
   }

@@ -58,6 +58,7 @@ function VideoPlayerView({
   const [durationSec, setDurationSec] = useState<number>(player.duration || 0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isBufferingOverlay, setIsBufferingOverlay] = useState<boolean>(false);
+  const [userPaused, setUserPaused] = useState<boolean>(false);
 
   // 4K Cinema Playback & Scrubbing State Engine:
   // Prevents the 300ms audio blip during scrub, prevents premature starts on empty buffer,
@@ -68,6 +69,7 @@ function VideoPlayerView({
   const seekTargetTimeRef = useRef<number | null>(null);
   const seekCommitTimeRef = useRef<number>(0);
   const seekSettlingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekUnmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEndedRef = useRef<boolean>(false);
   const lastTimeRef = useRef<number>(-1);
   const wasPlayingBeforeBgRef = useRef<boolean>(false);
@@ -77,8 +79,10 @@ function VideoPlayerView({
   const hasResumedRef = useRef<boolean>(false);
   const videoViewRef = useRef<any>(null);
   const trackedMilestonesRef = useRef<Set<string>>(new Set());
+  const isClosedRef = useRef<boolean>(false); // Set in handleClose/cleanup — guards ALL event listeners against released native player
   const videoId = videoItem?.id || videoItem?.uri || videoUrl;
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [seekRipple, setSeekRipple] = useState<{ direction: 'back' | 'forward'; id: number } | null>(null);
   const [resumedToastSec, setResumedToastSec] = useState<number | null>(resumeTimeSec && resumeTimeSec > 0 ? resumeTimeSec : null);
 
@@ -172,6 +176,7 @@ function VideoPlayerView({
 
       if (playing) {
         userPausedRef.current = false;
+        setUserPaused(false);
         isEndedRef.current = false;
         setIsBufferingOverlay(false);
 
@@ -193,6 +198,7 @@ function VideoPlayerView({
         }
       } else if (isEndedRef.current) {
         userPausedRef.current = true;
+        setUserPaused(true);
         setIsBufferingOverlay(false);
       }
     });
@@ -253,6 +259,7 @@ function VideoPlayerView({
       console.log(`[CINEMA EVENT 🏁 PLAY TO END] Playback reached end of video.`);
       isEndedRef.current = true;
       userPausedRef.current = true;
+      setUserPaused(true);
       setIsBufferingOverlay(false);
       setIsCompleted(true);
       if (videoItem) {
@@ -276,42 +283,53 @@ function VideoPlayerView({
     // 2. If AirPlay / Screen Cast IS active: Allow TV playback to continue seamlessly in background.
     // 3. When app returns to foreground: Auto-resume if it was playing before backgrounding.
     const appStateSub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      const isExternal = Boolean((player as any)?.isExternalPlaybackActive);
-      console.log(`[CINEMA APP_STATE 📱] State: ${nextAppState} | isExternal: ${isExternal} | playing: ${player.playing}`);
+      // Guard: if player was closed/released, do NOT touch any native player properties
+      if (isClosedRef.current) return;
+      try {
+        const isExternal = Boolean((player as any)?.isExternalPlaybackActive);
+        console.log(`[CINEMA APP_STATE 📱] State: ${nextAppState} | isExternal: ${isExternal} | playing: ${player.playing}`);
 
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        if (!isExternal) {
-          if (player.playing && !userPausedRef.current) {
-            wasPlayingBeforeBgRef.current = true;
-            try {
-              player.pause();
-            } catch {}
-            console.log('[CINEMA BG ⏸️] App backgrounded without AirPlay/Screen Cast — paused video.');
+        if (nextAppState === 'background' || nextAppState === 'inactive') {
+          if (!isExternal) {
+            if (player.playing && !userPausedRef.current) {
+              wasPlayingBeforeBgRef.current = true;
+              try {
+                player.pause();
+              } catch {}
+              console.log('[CINEMA BG ⏸️] App backgrounded without AirPlay/Screen Cast — paused video.');
+            } else {
+              wasPlayingBeforeBgRef.current = false;
+            }
           } else {
-            wasPlayingBeforeBgRef.current = false;
+            console.log('[CINEMA BG 📺] App backgrounded WITH Screen Cast/AirPlay active — maintaining external stream on TV.');
           }
-        } else {
-          console.log('[CINEMA BG 📺] App backgrounded WITH Screen Cast/AirPlay active — maintaining external stream on TV.');
+        } else if (nextAppState === 'active') {
+          if (!isExternal && wasPlayingBeforeBgRef.current && !userPausedRef.current && !isEndedRef.current) {
+            wasPlayingBeforeBgRef.current = false;
+            try {
+              player.muted = false;
+              player.play();
+              console.log('[CINEMA FG ▶️] App returned to active foreground — resumed playback.');
+            } catch {}
+          }
         }
-      } else if (nextAppState === 'active') {
-        if (!isExternal && wasPlayingBeforeBgRef.current && !userPausedRef.current && !isEndedRef.current) {
-          wasPlayingBeforeBgRef.current = false;
-          try {
-            player.muted = false;
-            player.play();
-            console.log('[CINEMA FG ▶️] App returned to active foreground — resumed playback.');
-          } catch {}
-        }
+      } catch (e) {
+        // Player native object was released — safe to ignore
+        console.warn('[CINEMA APP_STATE ⚠️] Player already released, ignoring:', e);
       }
     });
 
     // 400ms Heartbeat Watchdog:
     // Synchronizes UI state and ensures playback and audio are resilient
     const heartbeat = setInterval(() => {
+      // Guard: if player was closed/released, bail immediately
+      if (isClosedRef.current) return;
       // Do NOT auto-resume in heartbeat if app is in background and AirPlay is not active!
-      if (AppState.currentState !== 'active' && !(player as any)?.isExternalPlaybackActive) {
-        return;
-      }
+      try {
+        if (AppState.currentState !== 'active' && !(player as any)?.isExternalPlaybackActive) {
+          return;
+        }
+      } catch { return; }
 
       heartbeatTickRef.current += 1;
       const s = player.status;
@@ -372,8 +390,12 @@ function VideoPlayerView({
       // Immediately block heartbeat auto-resume before clearing the interval
       userPausedRef.current = true;
       isEndedRef.current = true;
+      isClosedRef.current = true;
       clearInterval(heartbeat);
       if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+      if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
+      if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
+      if (seekUnmuteTimerRef.current) clearTimeout(seekUnmuteTimerRef.current);
       appStateSub?.remove?.();
       statusSub?.remove?.();
       playingSub?.remove?.();
@@ -415,6 +437,10 @@ function VideoPlayerView({
     // causing audio to continue in the background after the modal closes.
     userPausedRef.current = true;
     isEndedRef.current = true;
+    isClosedRef.current = true;
+    if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
+    if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
+    if (seekUnmuteTimerRef.current) clearTimeout(seekUnmuteTimerRef.current);
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       // Always disconnect AirPlay and stop playback on the player directly,
@@ -433,9 +459,11 @@ function VideoPlayerView({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (player.playing) {
       userPausedRef.current = true;
+      setUserPaused(true);
       player.pause();
     } else {
       userPausedRef.current = false;
+      setUserPaused(false);
       isEndedRef.current = false;
       setIsCompleted(false);
       player.play();
@@ -450,6 +478,7 @@ function VideoPlayerView({
       setIsCompleted(false);
       isEndedRef.current = false;
       userPausedRef.current = false;
+      setUserPaused(false);
       player.muted = false;
       player.play();
     } catch {}
@@ -459,8 +488,18 @@ function VideoPlayerView({
   const seekThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onSeekStart = useCallback(() => {
+    if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
+    if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
+    if (seekUnmuteTimerRef.current) clearTimeout(seekUnmuteTimerRef.current);
     isSeekingRef.current = true;
-  }, []);
+    setIsSeeking(true);
+    wasPlayingBeforeSeekRef.current = player.playing;
+    // Immediately stop playback and silence audio at the old position
+    try {
+      player.pause();
+      player.muted = true;
+    } catch {}
+  }, [player]);
 
   const onSeek = useCallback((targetTimeSec: number) => {
     seekTargetTimeRef.current = targetTimeSec;
@@ -471,12 +510,14 @@ function VideoPlayerView({
     if (now - lastSeekThrottleRef.current > 80) {
       lastSeekThrottleRef.current = now;
       try {
+        player.muted = true;
         player.currentTime = targetTimeSec;
       } catch {}
     } else {
       if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
       seekThrottleTimerRef.current = setTimeout(() => {
         try {
+          player.muted = true;
           player.currentTime = targetTimeSec;
         } catch {}
       }, 80);
@@ -486,21 +527,43 @@ function VideoPlayerView({
   const onSeekEnd = useCallback((targetTimeSec: number) => {
     if (seekThrottleTimerRef.current) clearTimeout(seekThrottleTimerRef.current);
     if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
+    if (seekUnmuteTimerRef.current) clearTimeout(seekUnmuteTimerRef.current);
     seekTargetTimeRef.current = targetTimeSec;
     seekCommitTimeRef.current = Date.now();
+    setCurrentTimeSec(targetTimeSec);
+
+    // Commit final seek time immediately while keeping player muted and paused
     try {
+      player.muted = true;
       player.currentTime = targetTimeSec;
-      setCurrentTimeSec(targetTimeSec);
-      player.muted = false;
-      if (!userPausedRef.current && player.status !== 'error') {
-        player.play();
-      }
     } catch {}
-    // Keep isSeekingRef active for 400ms after seek release to block stale async timeUpdate ticks
+
+    const shouldResume = wasPlayingBeforeSeekRef.current && !userPausedRef.current && player.status !== 'error';
+
+    // Wait 120ms for native AVPlayer / ExoPlayer pipeline to flush old frames & cue new keyframe.
+    // While waiting, the player remains PAUSED and MUTED, completely preventing old video & audio!
     seekSettlingTimerRef.current = setTimeout(() => {
-      isSeekingRef.current = false;
-      seekTargetTimeRef.current = null;
-    }, 400);
+      if (shouldResume) {
+        try {
+          player.play();
+        } catch {}
+        // Settle unmute 80ms after play() starts decoding the new timestamp
+        seekUnmuteTimerRef.current = setTimeout(() => {
+          try {
+            if (!userPausedRef.current) {
+              player.muted = false;
+            }
+          } catch {}
+          isSeekingRef.current = false;
+          setIsSeeking(false);
+          seekTargetTimeRef.current = null;
+        }, 80);
+      } else {
+        isSeekingRef.current = false;
+        setIsSeeking(false);
+        seekTargetTimeRef.current = null;
+      }
+    }, 120);
   }, [player]);
 
   const onDoubleTapSeek = useCallback((direction: 'back' | 'forward') => {
@@ -584,6 +647,13 @@ function VideoPlayerView({
     return false;
   }, [trackSize, videoItem, title, subtitle]);
 
+  const isBuffering = useMemo(() => {
+    if (playerStatus === 'error' || isCompleted) return false;
+    if (isBufferingOverlay || playerStatus === 'loading') return true;
+    if (!isPlaying && !userPaused && !isSeeking) return true;
+    return false;
+  }, [playerStatus, isCompleted, isBufferingOverlay, isPlaying, userPaused, isSeeking]);
+
   if (isVertical) {
     return (
       <VerticalCinemaPlayer
@@ -597,7 +667,7 @@ function VideoPlayerView({
         durationSec={durationSec}
         bufferedSec={bufferedSec}
         isPlaying={isPlaying}
-        isBuffering={isBufferingOverlay || playerStatus === 'loading'}
+        isBuffering={isBuffering}
         isCompleted={isCompleted}
         isError={playerStatus === 'error'}
         errorMessage={errorMessage}
@@ -628,7 +698,7 @@ function VideoPlayerView({
       durationSec={durationSec}
       bufferedSec={bufferedSec}
       isPlaying={isPlaying}
-      isBuffering={isBufferingOverlay || playerStatus === 'loading'}
+      isBuffering={isBuffering}
       isCompleted={isCompleted}
       isError={playerStatus === 'error'}
       errorMessage={errorMessage}

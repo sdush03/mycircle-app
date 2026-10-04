@@ -14,6 +14,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, Easing, FadeIn, runOnJS } from 'react-native-reanimated';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { useAuthStore } from '../store/authStore';
+import { userSelfieStorage } from '../services/userSelfieStorage';
 import api, { API_BASE_URL } from '../services/api';
 import LoginView from '../components/mycircle/LoginView';
 import JoinEventView from '../components/mycircle/JoinEventView';
@@ -176,10 +177,9 @@ function RootLayoutContent() {
     const onBackPress = () => {
       if (Platform.OS !== 'android') return false;
 
-      // 1. If Gallery Overlay modal is open, close gallery modal first
+      // 1. If Gallery Overlay is open, let GalleryView's own hardwareBackPress listener handle it
       if (eventSlug) {
-        useAuthStore.getState().setEventDetails(null, null);
-        return true;
+        return false;
       }
 
       // 2. If user is on ANY tab other than Home (index / tab index 0):
@@ -210,13 +210,32 @@ function RootLayoutContent() {
 
     const fetchSelfie = async () => {
       try {
+        const cachedLocalSelfie = await userSelfieStorage.getLocalSelfie();
+        const cachedRemoteUrl = await userSelfieStorage.getCachedRemoteUrl();
+
+        // If local selfie already exists, ensure profile state has it immediately
+        if (cachedLocalSelfie) {
+          const currentProfile = useAuthStore.getState().profile;
+          if (currentProfile && !currentProfile.selfieUrl) {
+            await updateProfile({ selfieUrl: cachedLocalSelfie, hasSelfie: true });
+          }
+        }
+
         const res = await api.get('/api/gallery/family/events');
         const rawSelfieUrl: string | null = res.data?.selfieUrl || null;
         const profileData = res.data?.profile || {};
 
         if (rawSelfieUrl) {
-          const currentToken = useAuthStore.getState().token;
           const fullUrl = rawSelfieUrl.startsWith('http') ? rawSelfieUrl : `${API_BASE_URL}${rawSelfieUrl}`;
+
+          // Cache-first: If we already have a local selfie and the remote URL matches what we cached, skip downloading!
+          if (cachedLocalSelfie && cachedRemoteUrl === fullUrl) {
+            await updateProfile({ ...profileData, selfieUrl: cachedLocalSelfie, hasSelfie: true });
+            return;
+          }
+
+          // Otherwise (first time or selfie updated on server): download and persist locally
+          const currentToken = useAuthStore.getState().token;
           const headers: Record<string, string> = rawSelfieUrl.startsWith('http') ? {} : { Authorization: `Bearer ${currentToken}` };
           const imgRes = await fetch(fullUrl, { headers });
           if (imgRes.ok) {
@@ -226,15 +245,19 @@ function RootLayoutContent() {
             for (let i = 0; i < bytes.byteLength; i++) {
               binary += String.fromCharCode(bytes[i]);
             }
-            const selfieUrl = `data:image/jpeg;base64,${btoa(binary)}`;
-            await updateProfile({ ...profileData, selfieUrl });
+            const base64Data = `data:image/jpeg;base64,${btoa(binary)}`;
+            const localUri = await userSelfieStorage.saveLocalSelfie(base64Data, fullUrl);
+            await updateProfile({ ...profileData, selfieUrl: localUri, hasSelfie: true });
             return;
           }
+        } else if (res.data?.profile?.hasSelfie === false) {
+          // Server explicitly says user has no selfie
+          await userSelfieStorage.clearLocalSelfie();
+          await updateProfile({ ...profileData, selfieUrl: null, hasSelfie: false });
         }
-        await updateProfile({ ...profileData, selfieUrl: null });
       } catch (_err) {
-        // 401 or network failure — just mark selfieUrl as null so avatar shows initials
-        await updateProfile({ selfieUrl: null }).catch(() => {});
+        // Network failure or offline — keep local cached selfie! Do not clear selfie on error!
+        console.warn('Background selfie sync skipped (offline or network error)');
       }
     };
 
@@ -366,7 +389,9 @@ function RootLayoutContent() {
       <Animated.View entering={FadeIn.duration(350)} style={{ flex: 1, backgroundColor: '#ffffff' }}>
         {!isHeaderHidden && (
           <>
-            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
+            {!eventSlug && (
+              <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
+            )}
             {/* Global Header — Centered Logo */}
             <View style={[styles.globalHeader, { height: headerHeight, paddingTop: topInset }]}>
               <ExpoImage
@@ -409,19 +434,6 @@ function RootLayoutContent() {
           </View>
         </GestureDetector>
 
-        {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
-        {eventSlug && (
-          <GalleryView
-            onLogout={async () => {
-              await useAuthStore.getState().logout();
-            }}
-            onChangeEvent={() => {
-              useAuthStore.getState().setEventDetails(null, null);
-            }}
-            onScreenProtectionChange={handleScreenProtectionChange}
-          />
-        )}
-
         {/* Custom Animated Floating Tab Bar (Instagram 3-Tab Style) */}
         <CustomFloatingTabBar
           activeTab={TAB_ORDER[activeTabIndex]}
@@ -444,6 +456,19 @@ function RootLayoutContent() {
             }
           }}
         />
+
+        {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
+        {eventSlug && (
+          <GalleryView
+            onLogout={async () => {
+              await useAuthStore.getState().logout();
+            }}
+            onChangeEvent={() => {
+              useAuthStore.getState().setEventDetails(null, null);
+            }}
+            onScreenProtectionChange={handleScreenProtectionChange}
+          />
+        )}
         <ForceUpdateModal />
       </Animated.View>
     </ThemeProvider>

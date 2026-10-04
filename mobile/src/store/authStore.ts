@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
+import { userSelfieStorage } from '../services/userSelfieStorage';
 
 const TOKEN_KEY = 'user_session_token';
 const PROFILE_KEY = 'user_profile_data';
@@ -123,6 +124,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { selfieUrl, ...persistentProfile } = profile;
       await SecureStore.setItemAsync(TOKEN_KEY, token);
       await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
+
+      if (selfieUrl) {
+        userSelfieStorage.saveLocalSelfie(selfieUrl).then((localUri) => {
+          const current = get().profile;
+          if (current && current.selfieUrl !== localUri) {
+            set({ profile: { ...current, selfieUrl: localUri, hasSelfie: true } });
+          }
+        }).catch(() => {});
+      }
       
       const pending = get().pendingInvite;
       if (pending && pending.slug) {
@@ -165,6 +175,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { selfieUrl, ...persistentProfile } = newProfile;
       await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
       set({ profile: newProfile });
+
+      if (updatedFields.selfieUrl !== undefined) {
+        if (updatedFields.selfieUrl) {
+          userSelfieStorage.saveLocalSelfie(updatedFields.selfieUrl).then((localUri) => {
+            const current = get().profile;
+            if (current && current.selfieUrl !== localUri) {
+              set({ profile: { ...current, selfieUrl: localUri, hasSelfie: true } });
+            }
+          }).catch(() => {});
+        } else {
+          userSelfieStorage.clearLocalSelfie().catch(() => {});
+        }
+      }
     } catch (e) {
       console.error('Error updating profile state', e);
     }
@@ -204,7 +227,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       eventCoverUrl: eventCoverUrl !== undefined ? eventCoverUrl : currentCoverUrl,
       eventTitle: eventTitle !== undefined ? eventTitle : currentTitle,
       openedFrom: openedFrom !== undefined ? openedFrom : (currentOpenedFrom || 'mycircle'),
-      initialTab: initialTab !== undefined ? initialTab : get().initialTab,
+      initialTab: initialTab !== undefined ? initialTab : null,
     });
 
     import('../services/galleryPrefetch').then((m) => {
@@ -266,6 +289,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (profile && profile.phoneNumber === 'skipped') {
         profile.phoneNumber = null;
       }
+
+      // Load persisted selfie from local storage (0ms Frame 1 instant render)
+      if (profile) {
+        try {
+          const cachedSelfie = await userSelfieStorage.getLocalSelfie();
+          if (cachedSelfie) {
+            profile.selfieUrl = cachedSelfie;
+            profile.hasSelfie = true;
+          }
+        } catch (e) {
+          console.warn('Error loading cached selfie:', e);
+        }
+      }
       
       // Load persisted gallery cache into memory so Frame 1 gallery launch is instant (0ms) even after cold start
       let galleryCache: Record<string, GalleryCacheEntry> = {};
@@ -295,6 +331,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
       await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
       await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
+      await userSelfieStorage.clearLocalSelfie().catch(() => {});
 
       // Sign out of Google so the account picker is shown on next sign-in
       try {

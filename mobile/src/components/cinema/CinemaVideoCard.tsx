@@ -435,12 +435,19 @@ export const CinemaVideoCard: React.FC<CinemaVideoCardProps> = ({
     });
   }, []);
 
-  const thumbUri = getValidImageThumbnail(video);
-  const title = formatEditorialTitle(video);
-  const durationText = formatDuration(video.duration);
-  const isReel = isReelVideo(video);
-
+  const thumbUri = video.cleanThumbnailUrl || getValidImageThumbnail(video);
+  const title = video.displayTitle || formatEditorialTitle(video);
   const progress = watchProgress ?? videoWatchProgressManager.getProgress(video);
+  const durationText = video.durationFormatted !== undefined
+    ? video.durationFormatted
+    : formatDuration(
+        video.duration ||
+        (video as any).meta?.duration ||
+        (video as any).metadata?.duration ||
+        (video as any).exif?.duration ||
+        progress?.duration
+      );
+  const isReel = isReelVideo(video);
   const isViewing = Boolean(progress && !progress.isCompleted && progress.progressPercent > 0 && progress.currentTime > 0);
   const isSeen = videoWatchProgressManager.isSeenCompletely(video);
   const hasWatched = Boolean(isSeen || (progress && (progress.currentTime > 0 || progress.isCompleted)));

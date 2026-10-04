@@ -597,62 +597,66 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
           </LinearGradient>
 
           {/* ── Center Controls (Borderless Netflix Style) ── */}
-          <View
-            style={styles.centerControls}
-            pointerEvents={areControlsVisible ? 'box-none' : 'none'}
-          >
-            {/* -10s Rewind */}
-            <TouchableOpacity
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                resetControlsTimer();
-                onDoubleTapSeek('back');
-              }}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              activeOpacity={0.7}
-              style={styles.centerButton}
+          {!isBuffering && !isScrubbing && (
+            <View
+              style={styles.centerControls}
+              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
             >
-              <MaterialIcons name="replay-10" size={52} color="#FFFFFF" />
-            </TouchableOpacity>
+              {/* -10s Rewind */}
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  resetControlsTimer();
+                  onDoubleTapSeek('back');
+                }}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                activeOpacity={0.7}
+                style={styles.centerButton}
+              >
+                <MaterialIcons name="replay-10" size={52} color="#FFFFFF" />
+              </TouchableOpacity>
 
-            {/* Play / Pause / Replay (Large icon, no circle border) */}
-            <TouchableOpacity
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                resetControlsTimer();
-                if (isCompleted) {
-                  onReplay();
-                } else {
-                  onPlayPauseToggle();
-                }
-              }}
-              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-              activeOpacity={0.7}
-              style={styles.centerButton}
-            >
-              {isCompleted ? (
-                <MaterialIcons name="replay" size={62} color="#FFFFFF" />
-              ) : isPlaying ? (
-                <MaterialIcons name="pause" size={68} color="#FFFFFF" />
-              ) : (
-                <MaterialIcons name="play-arrow" size={72} color="#FFFFFF" />
-              )}
-            </TouchableOpacity>
+              {/* Play / Pause / Replay (Large icon, no circle border) */}
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  resetControlsTimer();
+                  if (isCompleted) {
+                    onReplay();
+                  } else {
+                    onPlayPauseToggle();
+                  }
+                }}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                activeOpacity={0.7}
+                style={styles.centerButton}
+              >
+                {isCompleted ? (
+                  <MaterialIcons name="replay" size={62} color="#FFFFFF" />
+                ) : isBuffering ? (
+                  null
+                ) : isPlaying ? (
+                  <MaterialIcons name="pause" size={68} color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons name="play-arrow" size={72} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
 
-            {/* +10s Forward */}
-            <TouchableOpacity
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                resetControlsTimer();
-                onDoubleTapSeek('forward');
-              }}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              activeOpacity={0.7}
-              style={styles.centerButton}
-            >
-              <MaterialIcons name="forward-10" size={52} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+              {/* +10s Forward */}
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  resetControlsTimer();
+                  onDoubleTapSeek('forward');
+                }}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                activeOpacity={0.7}
+                style={styles.centerButton}
+              >
+                <MaterialIcons name="forward-10" size={52} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* ── Bottom Scrubber (Time above seekbar on left + Full-width Seekbar) ── */}
           <LinearGradient

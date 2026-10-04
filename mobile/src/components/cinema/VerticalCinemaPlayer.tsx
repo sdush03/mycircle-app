@@ -667,33 +667,37 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
             </LinearGradient>
 
             {/* ── Center Play / Pause / Replay ── */}
-            <View
-              style={styles.centerControlsOverlay}
-              pointerEvents={areControlsVisible ? 'box-none' : 'none'}
-            >
-              <TouchableOpacity
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  resetControlsTimer();
-                  if (isCompleted) {
-                    onReplay();
-                  } else {
-                    onPlayPauseToggle();
-                  }
-                }}
-                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-                activeOpacity={0.7}
-                style={styles.centerButton}
+            {!isBuffering && !isScrubbing && (
+              <View
+                style={styles.centerControlsOverlay}
+                pointerEvents={areControlsVisible ? 'box-none' : 'none'}
               >
-                {isCompleted ? (
-                  <MaterialIcons name="replay" size={62} color="#FFFFFF" />
-                ) : isPlaying ? (
-                  <MaterialIcons name="pause" size={68} color="#FFFFFF" />
-                ) : (
-                  <MaterialIcons name="play-arrow" size={72} color="#FFFFFF" />
-                )}
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    resetControlsTimer();
+                    if (isCompleted) {
+                      onReplay();
+                    } else {
+                      onPlayPauseToggle();
+                    }
+                  }}
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                  activeOpacity={0.7}
+                  style={styles.centerButton}
+                >
+                  {isCompleted ? (
+                    <MaterialIcons name="replay" size={62} color="#FFFFFF" />
+                  ) : isBuffering ? (
+                    null
+                  ) : isPlaying ? (
+                    <MaterialIcons name="pause" size={68} color="#FFFFFF" />
+                  ) : (
+                    <MaterialIcons name="play-arrow" size={72} color="#FFFFFF" />
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* ── Bottom Section: title + time + seekbar ── */}
             <LinearGradient
