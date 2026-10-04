@@ -31,8 +31,8 @@ const DEFAULT_ANDROID_STORE_URL =
 const DEFAULT_IOS_STORE_URL =
   'https://apps.apple.com/app/id6796633077';
 
-// Force update kill-switch: enabled for testing
-const FORCE_UPDATE_ENABLED = true;
+// Force update kill-switch: disabled until version 1.2.1 is published across stores
+const FORCE_UPDATE_ENABLED = false;
 
 export default function ForceUpdateModal() {
   if (!FORCE_UPDATE_ENABLED) return null;
