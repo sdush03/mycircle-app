@@ -58,7 +58,7 @@ export default function CameraViewScreen({ onSuccess, onCancel }: CameraViewProp
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.title}>REGISTER YOUR FACE</Text>
           <Text style={styles.subtitle}>
-            Camera access is required to take a live selfie for AI face matching. Your selfie is processed on our secure in-house servers and stored in Cloudflare R2 solely to match your event photos.
+            Take a live selfie to automatically find and organize all your photos from the celebration using secure face matching.
           </Text>
           <View style={styles.divider} />
           <Pressable style={styles.button} onPress={requestPermission}>

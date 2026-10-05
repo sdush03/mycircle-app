@@ -8,7 +8,10 @@
 let _mod: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  _mod = require('expo-screen-capture');
+  const rawMod = require('expo-screen-capture');
+  _mod = rawMod?.preventScreenCaptureAsync
+    ? rawMod
+    : (rawMod?.default?.preventScreenCaptureAsync ? rawMod.default : null);
   if (_mod?.preventScreenCaptureAsync) {
     console.log('[MYCIRCLE SCREEN CAPTURE 🛡️] expo-screen-capture loaded successfully');
   } else {

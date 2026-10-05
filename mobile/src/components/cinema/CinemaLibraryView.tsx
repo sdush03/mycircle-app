@@ -73,6 +73,7 @@ interface CinemaLibraryViewProps {
   mainScrollRef?: any;
   isLoading?: boolean;
   scrollY?: SharedValue<number>;
+  allowDownloads?: boolean;
 }
 
 
@@ -296,6 +297,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   mainScrollRef,
   isLoading = false,
   scrollY,
+  allowDownloads = true,
 }) => {
   const insets = useSafeAreaInsets();
   const internalScrollY = useSharedValue(0);
@@ -931,6 +933,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
           setIsDetailFromContinueWatching(false);
           onSelectVideo(video, resumeTimeSec);
         }}
+        allowDownloads={allowDownloads}
       />
 
       {/* 6. In-Production Teaser Bottom Drawer */}

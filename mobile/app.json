@@ -2,7 +2,7 @@
   "expo": {
     "name": "Misty Visuals",
     "slug": "my-circle",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mycircle",
@@ -15,7 +15,7 @@
     "ios": {
       "icon": "./assets/images/ios-icon.png",
       "bundleIdentifier": "com.mistyvisuals.mycircle",
-      "buildNumber": "13",
+      "buildNumber": "14",
       "supportsTablet": true,
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
@@ -46,7 +46,7 @@
     },
     "android": {
       "package": "com.mistyvisuals.mycircle",
-      "versionCode": 14,
+      "versionCode": 15,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -56,9 +56,6 @@
               "scheme": "https",
               "host": "mycircle.mistyvisuals.com",
               "pathPrefix": "/"
-            },
-            {
-              "scheme": "mycircle"
             }
           ],
           "category": [

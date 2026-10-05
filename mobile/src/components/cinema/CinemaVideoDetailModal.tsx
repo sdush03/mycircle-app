@@ -13,6 +13,7 @@ import {
   StatusBar,
   AppState,
   AppStateStatus,
+  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -54,6 +55,7 @@ import { cinemaMetadataService, NormalizedCinemaVideo } from '../../services/cin
 import { ScreenCastButton } from './ScreenCastButton';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
 import { getAppShareUrl } from '../../utils/deepLink';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -80,6 +82,7 @@ interface CinemaVideoDetailModalProps {
   onPlayVideo: (video: CinemaVideoItem, resumeTimeSec?: number) => void;
   onToggleLike?: (video: CinemaVideoItem) => void;
   isFromContinueWatching?: boolean;
+  allowDownloads?: boolean;
 }
 
 function formatDuration(sec?: number): string {
@@ -550,6 +553,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   onPlayVideo,
   onToggleLike,
   isFromContinueWatching = false,
+  allowDownloads = true,
 }) => {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
@@ -571,6 +575,18 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   const [activeTab, setActiveTab] = useState<'more' | 'trailers'>('more');
   const [isLiked, setIsLiked] = useState<boolean>(false);
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'downloaded'>('idle');
+
+  // Screen capture protection: prevent screen recording / screenshots when video downloads are blocked
+  useEffect(() => {
+    if (visible && allowDownloads === false) {
+      preventScreenCaptureAsync('cinema_video_protection');
+    } else {
+      allowScreenCaptureAsync('cinema_video_protection');
+    }
+    return () => {
+      allowScreenCaptureAsync('cinema_video_protection');
+    };
+  }, [visible, allowDownloads]);
 
   // ─── Universal Bounds & Animation Shared Values (Reused from EditorialLightbox) ───
   const expandProgress = useSharedValue(0);
@@ -1087,6 +1103,10 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   };
 
   const handleDownload = async () => {
+    if (allowDownloads === false) {
+      Alert.alert('Downloads Disabled', 'Video downloads are disabled for this celebration.');
+      return;
+    }
     if (!videoUrl) return;
     if (downloadStatus === 'downloaded' || downloadStatus === 'downloading') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -1411,7 +1431,7 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
               </Pressable>
 
               {/* 3. Download */}
-              {!isComingSoon && (
+              {!isComingSoon && allowDownloads !== false && (
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionItem,

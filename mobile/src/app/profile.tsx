@@ -9,7 +9,11 @@ import {
   Dimensions,
   Modal,
   ActivityIndicator,
+  Alert,
+  Platform,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -37,6 +41,7 @@ import {
   FONT_MONTSERRAT_SEMIBOLD,
   FONT_JOST_REGULAR,
 } from '../constants/fonts';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 
 const { width } = Dimensions.get('window');
 
@@ -48,6 +53,8 @@ interface EventMatchedGroup {
   eventDate?: string;
   coverImage?: string;
   photos: any[];
+  allowDownloads: boolean;
+  allowBulkDownloads: boolean;
 }
 
 // Map raw photo object to standard photo format
@@ -210,6 +217,104 @@ export default function ProfileScreen() {
   const [selectedSavedBounds, setSelectedSavedBounds] = useState<LightboxBounds | null>(null);
   const [selectedSavedList, setSelectedSavedList] = useState<any[]>([]);
   const [selectedSavedTitle, setSelectedSavedTitle] = useState<string>('CELEBRATION FAVOURITES');
+  const [selectedSavedAllowDownloads, setSelectedSavedAllowDownloads] = useState<boolean>(true);
+  const [selectedMyPhotoAllowDownloads, setSelectedMyPhotoAllowDownloads] = useState<boolean>(true);
+
+  const [isBatchDownloading, setIsBatchDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number; title: string } | null>(null);
+
+  const handleDownloadPhotos = useCallback(async (photosToDownload: any[], title: string = 'Celebration Photos', isAllowed: boolean = true) => {
+    if (!photosToDownload || photosToDownload.length === 0 || isBatchDownloading) return;
+
+    if (!isAllowed) {
+      Alert.alert('Downloads Disabled', 'The host of this celebration has disabled photo downloads for this event.');
+      return;
+    }
+
+    try {
+      let hasPermission = false;
+      try {
+        const perm = await MediaLibrary.requestPermissionsAsync(true);
+        hasPermission =
+          perm.status === 'granted' ||
+          perm.granted === true ||
+          (perm as any).accessPrivileges === 'limited' ||
+          (perm as any).accessPrivileges === 'all';
+      } catch (pErr) {
+        console.error('[PROFILE DOWNLOAD ❌] Permission error:', pErr);
+      }
+
+      if (!hasPermission && Platform.OS === 'ios') {
+        Alert.alert('Permission Required', 'Please allow access to save photos to your photo library.');
+        return;
+      }
+
+      setIsBatchDownloading(true);
+      setDownloadProgress({ current: 0, total: photosToDownload.length, title });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
+      const cacheDir = (((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') as string).replace(/\/+$/, '');
+
+      let savedCount = 0;
+      for (let i = 0; i < photosToDownload.length; i++) {
+        const photo = photosToDownload[i];
+        setDownloadProgress({ current: i + 1, total: photosToDownload.length, title });
+
+        const rawTargetUri = photo.fullUri || photo.photoUrl || photo.r2Url || photo.uri || photo.url || '';
+        if (!rawTargetUri) continue;
+
+        const safeFilename = `gallery_${photo.id || i}_${Date.now()}_${i}.jpg`;
+        const localPath = `${cacheDir}/${safeFilename}`;
+
+        try {
+          const downloadRes = await FileSystem.downloadAsync(rawTargetUri, localPath);
+
+          if (downloadRes && downloadRes.uri) {
+            let assetSaved = false;
+
+            if (typeof (MediaLibrary as any).saveToLibraryAsync === 'function') {
+              try {
+                await (MediaLibrary as any).saveToLibraryAsync(downloadRes.uri);
+                assetSaved = true;
+              } catch (_) {}
+            }
+
+            if (!assetSaved && typeof MediaLibrary.createAssetAsync === 'function') {
+              try {
+                const asset = await MediaLibrary.createAssetAsync(downloadRes.uri);
+                if (asset) assetSaved = true;
+              } catch (_) {}
+            }
+
+            if (assetSaved) {
+              savedCount++;
+            }
+
+            FileSystem.deleteAsync(downloadRes.uri, { idempotent: true }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error(`[PROFILE DOWNLOAD ❌] Error downloading photo #${i + 1}:`, err);
+        }
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      if (savedCount > 0) {
+        Alert.alert(
+          'Download Complete ✨',
+          `Successfully saved ${savedCount} of ${photosToDownload.length} photos to your Photos library!`
+        );
+      } else {
+        Alert.alert('Download Failed', 'Could not save photos to your gallery. Please check storage permissions.');
+      }
+    } catch (err: any) {
+      console.error('[PROFILE DOWNLOAD ERROR]:', err);
+      Alert.alert('Download Error', 'Could not complete downloading photos. Please try again.');
+    } finally {
+      setIsBatchDownloading(false);
+      setDownloadProgress(null);
+    }
+  }, [isBatchDownloading]);
 
   // Discover and merge all joined events
   const getCombinedEventsList = useCallback(async (): Promise<any[]> => {
@@ -270,6 +375,39 @@ export default function ProfileScreen() {
     return familyToken ? { Authorization: `Bearer ${familyToken}` } : {};
   }, []);
 
+  // Helper to resolve event-level download permissions
+  const getEventDownloadSettings = useCallback(
+    async (ev: any): Promise<{ allowDownloads: boolean; allowBulkDownloads: boolean }> => {
+      // 1. Direct property on event object (e.g. from backend /api/gallery/family/events)
+      if (ev?.allowDownloads !== undefined || ev?.allow_downloads !== undefined) {
+        const allowDownloads = ev.allowDownloads !== false && ev.allow_downloads !== false;
+        const allowBulkDownloads = Boolean(ev.allowBulkDownloads ?? ev.allow_bulk_downloads) && allowDownloads;
+        return { allowDownloads, allowBulkDownloads };
+      }
+      // 2. Check cached event details in authStore
+      const cachedDetails = ev?.slug ? useAuthStore.getState().galleryCache[ev.slug]?.details : null;
+      if (cachedDetails && (cachedDetails.allowDownloads !== undefined || cachedDetails.allow_downloads !== undefined)) {
+        const allowDownloads = cachedDetails.allowDownloads !== false && cachedDetails.allow_downloads !== false;
+        const allowBulkDownloads = Boolean(cachedDetails.allowBulkDownloads ?? cachedDetails.allow_bulk_downloads) && allowDownloads;
+        return { allowDownloads, allowBulkDownloads };
+      }
+      // 3. Fallback: Quick public fetch for event metadata
+      if (ev?.slug) {
+        try {
+          const res = await api.get(`/api/gallery/public/events/${ev.slug}`);
+          if (res.data) {
+            useAuthStore.getState().setGalleryCache(ev.slug, { details: res.data });
+            const allowDownloads = res.data.allowDownloads !== false && res.data.allow_downloads !== false;
+            const allowBulkDownloads = Boolean(res.data.allowBulkDownloads ?? res.data.allow_bulk_downloads) && allowDownloads;
+            return { allowDownloads, allowBulkDownloads };
+          }
+        } catch (_e) {}
+      }
+      return { allowDownloads: true, allowBulkDownloads: false };
+    },
+    []
+  );
+
   const fetchMyCelebrationPhotos = useCallback(async () => {
     setLoadingPhotos(true);
     try {
@@ -312,7 +450,19 @@ export default function ProfileScreen() {
             );
           }
 
-          const mappedPhotos = evPhotos.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+          const downloadSettings = await getEventDownloadSettings(ev);
+          const mappedPhotos = evPhotos
+            .map((p) => {
+              const mapped = mapPhotoItem(p);
+              return {
+                ...mapped,
+                eventSlug: ev.slug,
+                allowDownloads: downloadSettings.allowDownloads,
+                eventAllowDownloads: downloadSettings.allowDownloads,
+              };
+            })
+            .filter((p) => !!p.uri || !!p.fullUri);
+
           if (mappedPhotos.length > 0) {
             grandTotal += mappedPhotos.length;
             const rawCover =
@@ -331,19 +481,33 @@ export default function ProfileScreen() {
               eventDate: ev.date || ev.eventDate,
               coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
               photos: mappedPhotos,
+              allowDownloads: downloadSettings.allowDownloads,
+              allowBulkDownloads: downloadSettings.allowBulkDownloads,
             });
           }
         }
       }
 
       if (groups.length === 0 && allMatched.length > 0) {
-        const mappedPhotos = allMatched.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+        const defaultSettings = eventsList[0] ? await getEventDownloadSettings(eventsList[0]) : { allowDownloads: true, allowBulkDownloads: false };
+        const mappedPhotos = allMatched.map((p) => {
+          const mapped = mapPhotoItem(p);
+          const allowDl = p.allowDownloads !== undefined ? (p.allowDownloads !== false && p.allow_downloads !== false) : defaultSettings.allowDownloads;
+          return {
+            ...mapped,
+            eventSlug: p.eventSlug || p.slug || 'all-photos',
+            allowDownloads: allowDl,
+            eventAllowDownloads: allowDl,
+          };
+        }).filter((p) => !!p.uri || !!p.fullUri);
         if (mappedPhotos.length > 0) {
           grandTotal = mappedPhotos.length;
           groups.push({
             eventSlug: 'all-photos',
             eventTitle: 'My Celebration Photos',
             photos: mappedPhotos,
+            allowDownloads: defaultSettings.allowDownloads,
+            allowBulkDownloads: defaultSettings.allowBulkDownloads,
           });
         }
       }
@@ -356,7 +520,7 @@ export default function ProfileScreen() {
     } finally {
       setLoadingPhotos(false);
     }
-  }, [getCombinedEventsList, getEventHeaders]);
+  }, [getCombinedEventsList, getEventHeaders, getEventDownloadSettings]);
 
   const fetchSavedPhotos = useCallback(async () => {
     setLoadingSaves(true);
@@ -385,7 +549,19 @@ export default function ProfileScreen() {
             }
           } catch (_e) {}
 
-          const mappedPhotos = evFavs.map(mapPhotoItem).filter((p) => !!p.uri || !!p.fullUri);
+          const downloadSettings = await getEventDownloadSettings(ev);
+          const mappedPhotos = evFavs
+            .map((p) => {
+              const mapped = mapPhotoItem(p);
+              return {
+                ...mapped,
+                eventSlug: ev.slug,
+                allowDownloads: downloadSettings.allowDownloads,
+                eventAllowDownloads: downloadSettings.allowDownloads,
+              };
+            })
+            .filter((p) => !!p.uri || !!p.fullUri);
+
           if (mappedPhotos.length > 0) {
             grandTotal += mappedPhotos.length;
             const rawCover =
@@ -404,6 +580,8 @@ export default function ProfileScreen() {
               eventDate: ev.date || ev.eventDate,
               coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
               photos: mappedPhotos,
+              allowDownloads: downloadSettings.allowDownloads,
+              allowBulkDownloads: downloadSettings.allowBulkDownloads,
             });
           }
         }
@@ -417,7 +595,7 @@ export default function ProfileScreen() {
     } finally {
       setLoadingSaves(false);
     }
-  }, [getCombinedEventsList, getEventHeaders]);
+  }, [getCombinedEventsList, getEventHeaders, getEventDownloadSettings]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -454,6 +632,25 @@ export default function ProfileScreen() {
       unsubSettings();
     };
   }, [fetchMyCelebrationPhotos, fetchSavedPhotos]);
+
+  // Screen protection: if any displayed celebration group blocks downloads, protect the screen
+  const hasBlockedPhotosInProfile = useMemo(() => {
+    const activeGroups = activeSubTab === 'my_favourites' ? favouriteEventGroups : eventGroups;
+    return activeGroups.some((g) => g.allowDownloads === false);
+  }, [activeSubTab, favouriteEventGroups, eventGroups]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (hasBlockedPhotosInProfile) {
+        preventScreenCaptureAsync('profile_blocked_photos');
+      } else {
+        allowScreenCaptureAsync('profile_blocked_photos');
+      }
+      return () => {
+        allowScreenCaptureAsync('profile_blocked_photos');
+      };
+    }, [hasBlockedPhotosInProfile])
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -583,7 +780,8 @@ export default function ProfileScreen() {
     bounds: LightboxBounds | null,
     isSavedTab: boolean,
     photosList: any[],
-    title: string
+    title: string,
+    allowDownloads: boolean = true
   ) => {
     const targetIdx = photosList.findIndex((item) => {
       if (!item || !img) return false;
@@ -600,15 +798,22 @@ export default function ProfileScreen() {
       setSelectedSavedTitle(title || 'CELEBRATION FAVOURITES');
       setSelectedSavedBounds(bounds);
       setSelectedSavedIdx(finalIdx);
+      setSelectedSavedAllowDownloads(allowDownloads);
     } else {
       setSelectedMyPhotoList(photosList);
       setSelectedMyPhotoTitle(title || 'MY CELEBRATION PHOTOS');
       setSelectedMyPhotoBounds(bounds);
       setSelectedMyPhotoIdx(finalIdx);
+      setSelectedMyPhotoAllowDownloads(allowDownloads);
     }
   };
 
-  const renderPhotoListMasonry = (photosList: any[], isSavedTab: boolean = false, title: string = '') => {
+  const renderPhotoListMasonry = (
+    photosList: any[],
+    isSavedTab: boolean = false,
+    title: string = '',
+    allowDownloads: boolean = true
+  ) => {
     const { column0, column1 } = balancePhotosIntoColumns(photosList);
 
     return (
@@ -620,7 +825,7 @@ export default function ProfileScreen() {
                 img={img}
                 index={idx}
                 isColumn0={true}
-                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title)}
+                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title, allowDownloads)}
                 onRegisterRef={registerCardRef}
               />
             </View>
@@ -633,7 +838,7 @@ export default function ProfileScreen() {
                 img={img}
                 index={idx}
                 isColumn0={false}
-                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title)}
+                onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title, allowDownloads)}
                 onRegisterRef={registerCardRef}
               />
             </View>
@@ -755,8 +960,20 @@ export default function ProfileScreen() {
                                 </Text>
                               )}
                             </View>
-                            <View style={styles.eventCountPill}>
-                              <Text style={styles.eventCountText}>{group.photos.length} MATCHES</Text>
+                            <View style={styles.eventActionsRow}>
+                              {group.allowDownloads && group.allowBulkDownloads && (
+                                <Pressable
+                                  style={styles.eventDownloadBtn}
+                                  onPress={() => handleDownloadPhotos(group.photos, group.eventTitle, group.allowDownloads && group.allowBulkDownloads)}
+                                  disabled={isBatchDownloading}
+                                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                  <Ionicons name="download-outline" size={16} color="#111111" />
+                                </Pressable>
+                              )}
+                              <View style={styles.eventCountPill}>
+                                <Text style={styles.eventCountText}>{group.photos.length} MATCHES</Text>
+                              </View>
                             </View>
                           </View>
 
@@ -764,7 +981,8 @@ export default function ProfileScreen() {
                           {renderPhotoListMasonry(
                             group.photos,
                             false,
-                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS'
+                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY CELEBRATION PHOTOS',
+                            group.allowDownloads
                           )}
                         </View>
                       );
@@ -813,8 +1031,20 @@ export default function ProfileScreen() {
                                 </Text>
                               )}
                             </View>
-                            <View style={styles.eventCountPill}>
-                              <Text style={styles.eventCountText}>{group.photos.length} FAVOURITES</Text>
+                            <View style={styles.eventActionsRow}>
+                              {group.allowDownloads && group.allowBulkDownloads && (
+                                <Pressable
+                                  style={styles.eventDownloadBtn}
+                                  onPress={() => handleDownloadPhotos(group.photos, group.eventTitle, group.allowDownloads && group.allowBulkDownloads)}
+                                  disabled={isBatchDownloading}
+                                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                  <Ionicons name="download-outline" size={16} color="#111111" />
+                                </Pressable>
+                              )}
+                              <View style={styles.eventCountPill}>
+                                <Text style={styles.eventCountText}>{group.photos.length} FAVOURITES</Text>
+                              </View>
                             </View>
                           </View>
 
@@ -822,7 +1052,8 @@ export default function ProfileScreen() {
                           {renderPhotoListMasonry(
                             group.photos,
                             true,
-                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY FAVOURITES'
+                            group.eventTitle ? group.eventTitle.toUpperCase() : 'MY FAVOURITES',
+                            group.allowDownloads
                           )}
                         </View>
                       );
@@ -876,6 +1107,7 @@ export default function ProfileScreen() {
             setSelectedSavedBounds(null);
           }}
           onUnsave={handleUnsaveFromProfile}
+          enableDownload={selectedSavedAllowDownloads && (selectedSavedList[selectedSavedIdx ?? 0]?.allowDownloads !== false)}
           title={selectedSavedTitle || 'CELEBRATION FAVOURITES'}
         />
       )}
@@ -892,8 +1124,19 @@ export default function ProfileScreen() {
             setSelectedMyPhotoIdx(null);
             setSelectedMyPhotoBounds(null);
           }}
+          enableDownload={selectedMyPhotoAllowDownloads && (selectedMyPhotoList[selectedMyPhotoIdx ?? 0]?.allowDownloads !== false)}
           title={selectedMyPhotoTitle}
         />
+      )}
+
+      {/* ── Batch Download Floating Toast Progress Indicator ── */}
+      {isBatchDownloading && downloadProgress && (
+        <View style={styles.downloadProgressBar}>
+          <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 10 }} />
+          <Text style={styles.downloadProgressText}>
+            Saving {downloadProgress.title} ({downloadProgress.current}/{downloadProgress.total})...
+          </Text>
+        </View>
       )}
     </View>
   );
@@ -1112,5 +1355,43 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'column',
     gap: 8,
+  },
+  eventActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  eventDownloadBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadProgressBar: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(17, 17, 17, 0.95)',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 9999,
+  },
+  downloadProgressText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontFamily: FONT_MONTSERRAT_SEMIBOLD,
+    letterSpacing: 0.5,
   },
 });

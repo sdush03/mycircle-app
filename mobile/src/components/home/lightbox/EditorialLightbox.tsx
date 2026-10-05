@@ -40,6 +40,7 @@ import { analyticsService } from '../../../services/analyticsService';
 import { tabEvents, EVENT_SAVES_UPDATED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
 import { getAppShareUrl } from '../../../utils/deepLink';
+import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../../utils/screenCapture';
 import {
   FONT_FUTURA_BOLD,
   FONT_MONTSERRAT_REGULAR,
@@ -434,6 +435,38 @@ export function EditorialLightbox({
       ? !removedUrls.has(currentUrl)
       : savedUrls.has(currentUrl);
 
+  const isDownloadBlockedByEvent = Boolean(
+    !enableDownload ||
+    currentItem?.allowDownloads === false ||
+    currentItem?.allow_downloads === false ||
+    currentItem?.eventAllowDownloads === false
+  );
+
+  const isNonGalleryItem = Boolean(
+    storyId ||
+    storySlug ||
+    currentItem?.storyId ||
+    currentItem?.storySlug ||
+    currentItem?.sourceType === 'FEATURED_STORY' ||
+    currentItem?.sourceType === 'MOODBOARD' ||
+    currentItem?.isFeaturedStory ||
+    currentItem?.isMoodboard
+  );
+  const canDownload = Boolean(enableDownload && !isNonGalleryItem && !isDownloadBlockedByEvent);
+
+  // Screen Capture Protection: if downloads are blocked for this item or gallery, prevent screenshot/recording
+  useEffect(() => {
+    const shouldBlockCapture = visible && (!canDownload || isDownloadBlockedByEvent);
+    if (shouldBlockCapture) {
+      preventScreenCaptureAsync('editorial_lightbox');
+    } else {
+      allowScreenCaptureAsync('editorial_lightbox');
+    }
+    return () => {
+      allowScreenCaptureAsync('editorial_lightbox');
+    };
+  }, [visible, canDownload, isDownloadBlockedByEvent]);
+
   const handleToggleSave = async () => {
     if (!currentUrl) return;
 
@@ -566,6 +599,7 @@ export function EditorialLightbox({
     } catch {}
     try {
       const shareUrl = getAppShareUrl({
+        customSlug: currentItem?.eventSlug || currentItem?.slug || null,
         storySlug: storySlug || (storyId && isNaN(Number(storyId)) ? storyId : null),
       });
       const displayTitle = title || 'the celebration';
@@ -587,9 +621,9 @@ export function EditorialLightbox({
 
   const handleDownload = async () => {
     console.log('[DOWNLOAD DEBUG 🚀] handleDownload invoked!');
-    if (!enableDownload) {
-      console.warn('[DOWNLOAD DEBUG ⚠️] enableDownload is false!');
-      showToast('Download disabled');
+    if (!canDownload) {
+      console.warn('[DOWNLOAD DEBUG ⚠️] Download disabled or not permitted for this media item!');
+      showToast(isDownloadBlockedByEvent ? 'Downloads disabled by event host' : 'Download unavailable');
       return;
     }
     if (!currentItem) {
@@ -1100,7 +1134,7 @@ export function EditorialLightbox({
                       />
                     </Pressable>
 
-                    {enableDownload && (
+                    {canDownload && (
                       <Pressable
                         style={({ pressed }) => [
                           styles.lightboxIconOnlyBtn,

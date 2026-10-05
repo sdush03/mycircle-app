@@ -40,7 +40,9 @@ export function parseDeepLink(incomingUrl: string): DeepLinkResult | null {
       } else if (parts[0] && parts[0] !== 'join' && parts[0] !== 'gallery' && parts[0] !== 'celebration' && parts[0] !== 'event') {
         slug = parts[0];
       }
-    } else if (parsed.hostname && parsed.hostname !== 'mycircle.mistyvisuals.com' && parsed.hostname !== 'join') {
+    }
+
+    if (!slug && parsed.hostname && parsed.hostname !== 'mycircle.mistyvisuals.com' && parsed.hostname !== 'join') {
       slug = parsed.hostname;
     }
 
@@ -74,9 +76,9 @@ export function handleIncomingUrl(url: string) {
   if (!result) return;
 
   const { slug, passcode, tab } = result;
-  const token = useAuthStore.getState().token;
+  const { token, isLoading } = useAuthStore.getState();
 
-  console.log('[DeepLink] Processing event invite:', { slug, passcode, tab, isAuthenticated: !!token });
+  console.log('[DeepLink] Processing event invite:', { slug, passcode, tab, isAuthenticated: !!token, isLoading });
 
   if (token) {
     useAuthStore.getState().setEventDetails(slug, passcode, null, null, 'mycircle', tab || null);

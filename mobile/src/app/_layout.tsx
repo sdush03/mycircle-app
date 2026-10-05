@@ -142,13 +142,31 @@ function RootLayoutContent() {
     initialize();
   }, []);
 
-  // Handle incoming deep links globally across all tabs / cold launches
+  // Handle incoming deep links globally across all tabs / cold launches / background resumes
   const incomingUrl = Linking.useURL();
   useEffect(() => {
     if (incomingUrl) {
       handleIncomingUrl(incomingUrl);
     }
   }, [incomingUrl]);
+
+  useEffect(() => {
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleIncomingUrl(url);
+      }
+    }).catch(() => {});
+
+    const sub = Linking.addEventListener('url', (event) => {
+      if (event?.url) {
+        handleIncomingUrl(event.url);
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   // Check server for deferred invite on first launch (Zero-prompt iOS & Android install handoff)
   useEffect(() => {

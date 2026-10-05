@@ -48,8 +48,8 @@ export default function ForceUpdateModal() {
 
   const checkAppVersion = async () => {
     try {
-      // Get currently installed app version from native build / Constants (defaults to 1.2.1)
-      const installedVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.1';
+      // Get currently installed app version from native build / Constants (defaults to 1.2.2)
+      const installedVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.2';
 
       // Call backend version endpoint (fails silently if backend endpoint is not yet live)
       const response = await api.get('/api/app-config/version', { timeout: 5000 });
@@ -127,7 +127,7 @@ export default function ForceUpdateModal() {
 
         <View style={styles.footer}>
           <Text style={styles.versionText}>
-            Current Version: {Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.1'}
+            Current Version: {Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.2'}
           </Text>
         </View>
       </SafeAreaView>

@@ -315,7 +315,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       } catch (_) {}
 
-      set({ token, profile, galleryCache, isLoading: false, isPhoneSkipped: false });
+      // If an incoming deep link arrived while Keychain was loading, activate it immediately
+      const pending = get().pendingInvite;
+      if (token && pending && pending.slug) {
+        set({
+          token,
+          profile,
+          galleryCache,
+          isLoading: false,
+          isPhoneSkipped: false,
+          pendingInvite: null,
+          eventSlug: pending.slug,
+          passcode: pending.passcode,
+          openedFrom: 'mycircle',
+          initialTab: pending.tab || null,
+        });
+        import('../services/galleryPrefetch').then((m) => {
+          m.prefetchEventGalleryData(pending.slug, pending.passcode);
+        }).catch(() => {});
+      } else {
+        set({ token, profile, galleryCache, isLoading: false, isPhoneSkipped: false });
+      }
     } catch (e) {
       // SecureStore may fail on simulator builds without keychain entitlements — this is expected.
       console.warn('SecureStore unavailable, starting with no stored session:', e);

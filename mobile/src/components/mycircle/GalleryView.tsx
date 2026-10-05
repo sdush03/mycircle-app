@@ -201,6 +201,10 @@ function mapPhotoItem(p: any): Photo {
     videoReplacedAt: p.videoReplacedAt || p.exif?.videoReplacedAt || p.meta?.videoReplacedAt || undefined,
     version: p.version || p.exif?.version || p.meta?.version || undefined,
     exif: p.exif || undefined,
+    allowDownloads: p.allowDownloads !== undefined ? (p.allowDownloads !== false && p.allow_downloads !== false) : (p.allow_downloads !== undefined ? p.allow_downloads !== false : undefined),
+    allow_downloads: p.allow_downloads !== undefined ? (p.allowDownloads !== false && p.allow_downloads !== false) : (p.allowDownloads !== undefined ? p.allowDownloads !== false : undefined),
+    eventAllowDownloads: p.eventAllowDownloads !== undefined ? p.eventAllowDownloads : (p.allowDownloads !== undefined ? (p.allowDownloads !== false && p.allow_downloads !== false) : (p.allow_downloads !== undefined ? p.allow_downloads !== false : undefined)),
+    eventSlug: p.eventSlug || p.event_slug || undefined,
     raw: p,
   };
 }
@@ -2234,17 +2238,26 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
   }, [isLoading, availableTabs, activeTab, highlightsCount, hasFullAccess]);
 
+  // ── Download Permissions & Screen Capture Protection ────────────────────────
+  const isGalleryDownloadAllowed = useMemo(() => {
+    if (!eventDetails) return true;
+    return eventDetails.allowDownloads !== false && eventDetails.allow_downloads !== false;
+  }, [eventDetails]);
+
+  const isGalleryBulkAllowed = useMemo(() => {
+    if (!isGalleryDownloadAllowed || !eventDetails) return false;
+    return Boolean(eventDetails.allowBulkDownloads ?? eventDetails.allow_bulk_downloads);
+  }, [isGalleryDownloadAllowed, eventDetails]);
+
   // Screen Capture Protection:
+  //   - If downloads are blocked on this gallery, screen capture and recording are completely prohibited
+  //   - Applies immediately (even while loading) if cached/current eventDetails has blocked downloads
   //   - Calls onScreenProtectionChange so _layout.tsx applies it to the main UIWindow (iOS)
   //   - Also calls preventScreenCaptureAsync directly here (Android FLAG_SECURE, same Activity)
   useEffect(() => {
-    if (isLoading || !eventDetails) return;
+    const shouldPrevent = !isGalleryDownloadAllowed;
 
-    const allowPhotoDownloads = eventDetails?.allowDownloads ?? true;
-    const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
-    const shouldPrevent = !allowPhotoDownloads || !allowBulkDownloads;
-
-    console.log(`[MYCIRCLE SECURITY 🛡️] PhotoDownloads: ${allowPhotoDownloads} | BulkDownloads: ${allowBulkDownloads} | PreventCapture: ${shouldPrevent}`);
+    console.log(`[MYCIRCLE SECURITY 🛡️] isGalleryDownloadAllowed: ${isGalleryDownloadAllowed} | BulkDownloads: ${isGalleryBulkAllowed} | PreventCapture: ${shouldPrevent}`);
 
     // Notify root layout (covers iOS main UIWindow)
     onScreenProtectionChange?.(shouldPrevent);
@@ -2255,9 +2268,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     } else {
       allowScreenCaptureAsync('gallery_protection');
     }
-
-    // Screen capture protection active — silent black screen on capture
-  }, [isLoading, eventDetails, eventDetails?.allowDownloads, eventDetails?.allowBulkDownloads, onScreenProtectionChange]);
+  }, [isGalleryDownloadAllowed, isGalleryBulkAllowed, onScreenProtectionChange]);
 
   // On unmount: release protection everywhere
   useEffect(() => {
@@ -2265,7 +2276,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       onScreenProtectionChange?.(false);
       allowScreenCaptureAsync('gallery_protection');
     };
-  }, []);
+  }, [onScreenProtectionChange]);
 
   // Current active photo tab: resolves to last non-cinema tab (e.g. ALL) when in Cinema
   const currentPhotoTab = useMemo(() => {
@@ -2446,6 +2457,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [activeCinemaVideos, isCinema]);
 
   const downloadCurrentTabPhotos = useCallback(async () => {
+    if (!isGalleryDownloadAllowed || !isGalleryBulkAllowed) {
+      Alert.alert('Downloads Disabled', 'Photo downloads are disabled for this celebration.');
+      return;
+    }
+
     const listToDownload = activeListRef.current || [];
     if (!listToDownload || listToDownload.length === 0 || isBatchDownloading) return;
 
@@ -2527,7 +2543,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setIsBatchDownloading(false);
       setBatchDownloadProgress(null);
     }
-  }, [isBatchDownloading]);
+  }, [isBatchDownloading, isGalleryDownloadAllowed, isGalleryBulkAllowed]);
 
   // Immediate full render limit: prevents staggered height jumps that trigger native scroll resets
   const renderLimit = Infinity;
@@ -2791,8 +2807,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const renderTabHeaderInner = useCallback(() => {
     const activeTabCount = currentTabExpectedCount;
 
-    const allowBulkDownloads = eventDetails?.allowBulkDownloads ?? false;
-    const isDownloadableTab = allowBulkDownloads && (
+    const isDownloadableTab = isGalleryBulkAllowed && (
       isBrideOrGroom || (
         currentPhotoTab.trim().toUpperCase().includes('MY PHOTO') ||
         currentPhotoTab.trim().toUpperCase().includes('MY FAVOURITES') ||
@@ -2850,6 +2865,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     currentTabExpectedCount,
     eventDetails,
     isBrideOrGroom,
+    isGalleryBulkAllowed,
     isBatchDownloading,
     batchDownloadProgress,
     downloadCurrentTabPhotos,
@@ -3096,6 +3112,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                     />
                   }
                   isLoading={isTabLoading}
+                  allowDownloads={isGalleryDownloadAllowed}
                 />
               </Animated.View>
             )}
@@ -3238,7 +3255,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               onGetBoundsForIndex={getBoundsForIndex}
               onToggleLike={handleToggleLike}
               likeTargetName="My Favourites"
-              enableDownload={eventDetails?.allowDownloads ?? true}
+              enableDownload={isGalleryDownloadAllowed}
               totalCount={activeTabTotalCount}
               enableDelete={isBrideOrGroom}
               onDeletePhoto={handleDeletePhoto}
@@ -3270,7 +3287,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             updateStatusBarStyle(statusBarStyle);
           }}
           eventTitle={cleanTitle}
-          allowDownloads={eventDetails?.allowDownloads ?? true}
+          allowDownloads={isGalleryDownloadAllowed}
         />
 
         {/* ── 6. Retake Selfie Camera Modal ── */}
