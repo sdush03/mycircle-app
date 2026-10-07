@@ -261,9 +261,10 @@ const loupeCardStyles = StyleSheet.create({
 
 interface SpatialFilmLoupeCardProps {
   thumbnails: string[];
+  keyframeIndices?: number[];
   scrollY: SharedValue<number>;
-  contentHeightShared: SharedValue<number>;
-  layoutHeightShared: SharedValue<number>;
+  totalPhotosShared: SharedValue<number>;
+  columnsShared: SharedValue<number>;
   loupeOpacity: SharedValue<number>;
   insetsTop: number;
   insetsBottom: number;
@@ -273,9 +274,10 @@ interface SpatialFilmLoupeCardProps {
 
 const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   thumbnails,
+  keyframeIndices,
   scrollY,
-  contentHeightShared,
-  layoutHeightShared,
+  totalPhotosShared,
+  columnsShared,
   loupeOpacity,
   insetsTop,
   insetsBottom,
@@ -285,14 +287,32 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const [activeIdx, setActiveIdx] = useState(0);
   const activeIdxRef = useRef(0);
   const lastUpdateRef = useRef(0);
+  const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleIndexChange = useCallback((nextIdx: number) => {
     activeIdxRef.current = nextIdx;
     const now = Date.now();
+    if (trailingTimerRef.current) {
+      clearTimeout(trailingTimerRef.current);
+      trailingTimerRef.current = null;
+    }
     if (now - lastUpdateRef.current >= 35) {
       lastUpdateRef.current = now;
       setActiveIdx(nextIdx);
+    } else {
+      trailingTimerRef.current = setTimeout(() => {
+        lastUpdateRef.current = Date.now();
+        setActiveIdx(activeIdxRef.current);
+      }, 40);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (trailingTimerRef.current) {
+        clearTimeout(trailingTimerRef.current);
+      }
+    };
   }, []);
 
   const handleCardPress = useCallback(() => {
@@ -305,8 +325,26 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     () => {
       'worklet';
       if (!thumbnails || thumbnails.length === 0) return 0;
-      const maxScroll = Math.max(1, contentHeightShared.value - layoutHeightShared.value);
-      const progress = Math.max(0, Math.min(1, scrollY.value / maxScroll));
+      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+      const cols = columnsShared.value || 2;
+      const heroHeight = Math.round(screenHeight * 0.70);
+      const relativeY = Math.max(0, scrollY.value - heroHeight);
+      const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
+      const currentRow = relativeY / rowH;
+      const currentPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, Math.floor(currentRow * cols)));
+
+      if (keyframeIndices && keyframeIndices.length > 0) {
+        let foundIdx = 0;
+        for (let i = keyframeIndices.length - 1; i >= 0; i--) {
+          if (currentPhotoIdx >= keyframeIndices[i]) {
+            foundIdx = i;
+            break;
+          }
+        }
+        return Math.min(thumbnails.length - 1, Math.max(0, foundIdx));
+      }
+
+      const progress = Math.max(0, Math.min(1, currentPhotoIdx / Math.max(1, totalPhotos - 1)));
       return Math.min(thumbnails.length - 1, Math.floor(progress * thumbnails.length));
     },
     (nextIdx, prevIdx) => {
@@ -315,13 +353,20 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         runOnJS(handleIndexChange)(nextIdx);
       }
     },
-    [thumbnails, handleIndexChange]
+    [thumbnails, keyframeIndices, handleIndexChange, screenHeight]
   );
 
   const animatedStyle = useAnimatedStyle(() => {
     'worklet';
-    const maxScroll = Math.max(1, contentHeightShared.value - layoutHeightShared.value);
-    const progress = Math.max(0, Math.min(1, scrollY.value / maxScroll));
+    const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+    const cols = columnsShared.value || 2;
+    const heroHeight = Math.round(screenHeight * 0.70);
+    const relativeY = Math.max(0, scrollY.value - heroHeight);
+    const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
+    const currentRow = relativeY / rowH;
+    const continuousPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, currentRow * cols));
+    const progress = Math.max(0, Math.min(1, continuousPhotoIdx / Math.max(1, totalPhotos - 1)));
+
     const minY = insetsTop + 60;
     const maxY = screenHeight - insetsBottom - 130;
     const targetY = interpolate(progress, [0, 1], [minY, maxY], 'clamp');
@@ -538,6 +583,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const [galleryColumns, setGalleryColumns] = useState<number>(2);
   const galleryColumnsRef = useRef<number>(2);
   galleryColumnsRef.current = galleryColumns;
+  const columnsShared = useSharedValue(2);
   const scheduleBatchPrefetchRef = useRef<((mappedList: Photo[], cols?: number) => void) | null>(null);
 
   useEffect(() => {
@@ -547,19 +593,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (parsed >= 1 && parsed <= 5) {
           setGalleryColumns(parsed);
           galleryColumnsRef.current = parsed;
+          columnsShared.value = parsed;
         }
       }
     }).catch(() => {});
-  }, []);
+  }, [columnsShared]);
 
   const handleGalleryColumnsChange = useCallback((newCols: number) => {
     setGalleryColumns(newCols);
     galleryColumnsRef.current = newCols;
+    columnsShared.value = newCols;
     AsyncStorage.setItem('mycircle_gallery_columns', String(newCols)).catch(() => {});
     if (activeListRef.current && activeListRef.current.length > 0) {
       scheduleBatchPrefetchRef.current?.(activeListRef.current, newCols);
     }
-  }, []);
+  }, [columnsShared]);
 
   const cleanTitle = (eventTitle || eventDetails?.title || eventSlug || 'WEDDING CELEBRATION')
     .toString()
@@ -591,6 +639,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const lastScrollYShared = useSharedValue(0);
   const contentHeightShared = useSharedValue(screenHeight * 2);
   const layoutHeightShared = useSharedValue(screenHeight);
+  const totalPhotosShared = useSharedValue(0);
   const loupeThumbnailsRef = useRef<string[]>([]);
   const filmstripCacheRef = useRef<Record<string, FilmstripData>>({});
   const [activeFilmstrip, setActiveFilmstrip] = useState<FilmstripData | null>(null);
@@ -3145,6 +3194,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return loupeSampleInfo.thumbnails;
   }, [activeFilmstrip, loupeSampleInfo]);
 
+  // Derived keyframe photo indices corresponding 1:1 with loupeThumbnails
+  const loupeKeyframeIndices = useMemo(() => {
+    if (activeFilmstrip?.keyframes && activeFilmstrip.keyframes.length > 0) {
+      return activeFilmstrip.keyframes.map((kf) => kf.index);
+    }
+    if (loupeSampleInfo.sampledItems && loupeSampleInfo.sampledItems.length > 0) {
+      return loupeSampleInfo.sampledItems.map((item) => item.index);
+    }
+    return [];
+  }, [activeFilmstrip, loupeSampleInfo]);
+
   // Pre-load sampled thumbnails into native memory & disk cache (fallback mode)
   useEffect(() => {
     loupeThumbnailsRef.current = loupeThumbnails;
@@ -3183,6 +3243,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
     return tabCache[normTab]?.length || activeList.length;
   }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length]);
+
+  useEffect(() => {
+    totalPhotosShared.value = totalTabPhotos;
+  }, [totalTabPhotos, totalPhotosShared]);
 
 
 
@@ -3583,9 +3647,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               {!isCinema && loupeThumbnails.length > 0 && (
                 <SpatialFilmLoupeCard
                   thumbnails={loupeThumbnails}
+                  keyframeIndices={loupeKeyframeIndices}
                   scrollY={scrollY}
-                  contentHeightShared={contentHeightShared}
-                  layoutHeightShared={layoutHeightShared}
+                  totalPhotosShared={totalPhotosShared}
+                  columnsShared={columnsShared}
                   loupeOpacity={loupeOpacity}
                   insetsTop={insets.top}
                   insetsBottom={insets.bottom}
