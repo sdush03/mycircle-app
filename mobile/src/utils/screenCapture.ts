@@ -23,6 +23,12 @@ try {
 }
 
 export async function preventScreenCaptureAsync(key: string = 'default'): Promise<void> {
+  // In development mode, screen mirroring or QuickTime to Mac is commonly used for testing.
+  // Enabling native screen capture prevention can blank out the screen to black.
+  if (__DEV__) {
+    console.log(`[MYCIRCLE SCREEN CAPTURE 🛡️ DEV] Bypassed preventScreenCaptureAsync('${key}') in development mode to prevent black screen`);
+    return;
+  }
   if (!_mod?.preventScreenCaptureAsync) {
     console.warn(`[MYCIRCLE SCREEN CAPTURE ⚠️] preventScreenCaptureAsync skipped — module not available`);
     return;

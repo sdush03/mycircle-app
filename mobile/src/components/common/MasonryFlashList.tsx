@@ -1158,7 +1158,10 @@ export function MasonryFlashList<T = any>({
   }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize]);
 
   useAnimatedReaction(
-    () => scrollSharedValue?.value ?? 0,
+    () => {
+      'worklet';
+      return scrollSharedValue?.value ?? 0;
+    },
     (y) => {
       'worklet';
       if (!isPinching.value && !isTransitioningShared.value && !isScrollRestoringShared.value) {

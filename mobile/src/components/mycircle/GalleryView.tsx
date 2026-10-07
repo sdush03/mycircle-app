@@ -613,6 +613,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const heroCoverHeight = Math.round(screenHeight * 0.70);
 
   const floatingHeaderAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
     const isLocked = scrollY.value >= heroCoverHeight;
     return {
       opacity: isLocked ? 1 : 0,
@@ -639,13 +640,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const drawerPanY = useSharedValue(0);
 
-  const drawerBackdropStyle = useAnimatedStyle(() => ({
-    opacity: 0,
-  }));
+  const drawerBackdropStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: 0,
+    };
+  });
 
-  const drawerContentStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (1 - drawerProgress.value) * screenHeight + Math.max(0, drawerPanY.value) }],
-  }));
+  const drawerContentStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      transform: [{ translateY: (1 - drawerProgress.value) * screenHeight + Math.max(0, drawerPanY.value) }],
+    };
+  });
 
   const drawerHandlePanGesture = Gesture.Pan()
     .onUpdate((e) => {
@@ -681,9 +688,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     },
   });
 
-  const animatedBackTextStyle = useAnimatedStyle(() => ({
-    color: (scrollY?.value ?? 0) >= exactTouchPoint ? (isCinemaShared?.value ? '#ffffff' : '#3a3632') : '#ffffff',
-  }));
+  const animatedBackTextStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      color: (scrollY?.value ?? 0) >= exactTouchPoint ? (isCinemaShared?.value ? '#ffffff' : '#3a3632') : '#ffffff',
+    };
+  });
 
   // ─── Dynamic Taskbar / Status Bar Color Engine ───────────────────────────
   // - White icon/text ('light-content') when hero cover is on top (<- BACK is white)
@@ -722,7 +732,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       StatusBar.setTranslucent(true);
       StatusBar.setBackgroundColor('transparent', true);
     }
-    const initialStyle = isCinema ? 'light-content' : ((scrollY?.value ?? 0) >= exactTouchPoint ? 'dark-content' : 'light-content');
+    const initialStyle = isCinema ? 'light-content' : (currentYRef.current >= exactTouchPoint ? 'dark-content' : 'light-content');
     setStatusBarStyle(initialStyle);
     StatusBar.setBarStyle(initialStyle, true);
 
@@ -743,7 +753,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   useEffect(() => {
     isCinemaShared.value = isCinema;
-    const targetStyle = isCinema ? 'light-content' : ((scrollY?.value ?? 0) >= exactTouchPoint ? 'dark-content' : 'light-content');
+    const targetStyle = isCinema ? 'light-content' : (currentYRef.current >= exactTouchPoint ? 'dark-content' : 'light-content');
     updateStatusBarStyle(targetStyle);
 
     if (!isCinema) {
@@ -755,11 +765,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     });
   }, [isCinema, cinemaProgress, isCinemaShared, cinemaSwipeX, exactTouchPoint, updateStatusBarStyle]);
 
-  const cinemaAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: cinemaSwipeX.value }],
-  }));
+  const cinemaAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      transform: [{ translateX: cinemaSwipeX.value }],
+    };
+  });
 
   const photosDimAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
     if (!isCinemaShared.value) return { opacity: 0 };
     const progress = cinemaSwipeX.value / width;
     return {
@@ -767,9 +781,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     };
   });
 
-
-
   const animatedHeroImageStyle = useAnimatedStyle(() => {
+    'worklet';
     const y = scrollY.value;
     if (y < 0) {
       // Overscroll pull-down: scale up smoothly and anchor to top
@@ -787,6 +800,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   });
 
   const animatedTitleContainerStyle = useAnimatedStyle(() => {
+    'worklet';
     const y = scrollY.value;
     if (y < 0) {
       return {
@@ -804,6 +818,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   });
 
   const animatedCoverLogoStyle = useAnimatedStyle(() => {
+    'worklet';
     const y = scrollY.value;
     if (y < 0) {
       return { opacity: 1, transform: [{ translateY: 0 }] };
@@ -1005,18 +1020,24 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     );
   }, [scrollTargetY, isSmoothScrollingToTop, backToTopOpacity]);
 
-  const backToTopAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: backToTopOpacity.value,
-    transform: [
-      { translateY: (1 - backToTopOpacity.value) * 12 },
-      { scale: 0.92 + backToTopOpacity.value * 0.08 },
-    ],
-  }));
+  const backToTopAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: backToTopOpacity.value,
+      transform: [
+        { translateY: (1 - backToTopOpacity.value) * 12 },
+        { scale: 0.92 + backToTopOpacity.value * 0.08 },
+      ],
+    };
+  });
 
-  const resumePillAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: resumePillOpacity.value,
-    transform: [{ translateY: resumePillTranslateY.value }],
-  }));
+  const resumePillAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: resumePillOpacity.value,
+      transform: [{ translateY: resumePillTranslateY.value }],
+    };
+  });
 
   useEffect(() => {
     isLightboxOpen.value = activeImageIndex !== null || activeVideoItem !== null || isMoreDrawerOpen;
@@ -1152,9 +1173,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
 
-  const screenSwipeAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: screenSwipeX.value }],
-  }));
+  const screenSwipeAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      transform: [{ translateX: screenSwipeX.value }],
+    };
+  });
 
   const fetchPhotosFallback = async () => {
     try {
@@ -1198,6 +1222,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         );
         if (ssoRes.data?.token) {
           eventHeadersRef.current = { Authorization: `Bearer ${ssoRes.data.token}` };
+          fetchFilmstrip(activeTab);
           if (ssoRes.data?.guest) {
             const g = ssoRes.data.guest;
             setEventGuest(g);
@@ -1445,6 +1470,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Silent token rotation from server
       if (bundleData.token) {
         eventHeadersRef.current = { Authorization: `Bearer ${bundleData.token}` };
+        fetchFilmstrip(activeTab);
       }
 
       // 1. Process Event Details
@@ -2966,7 +2992,30 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return { thumbnails: [], sampledItems: [], step: 1, sourceCount: 0 };
     }
 
-    const step = source.length >= 6000 ? 120 : Math.max(1, Math.floor(source.length / 50));
+    const normTab = (activeTab || 'ALL').trim().toUpperCase();
+    const isAllTab = normTab === 'ALL';
+    const total = source.length;
+
+    let step: number;
+    if (isAllTab) {
+      if (total >= 500) {
+        step = 100;
+      } else if (total >= 200) {
+        step = 50;
+      } else {
+        step = Math.max(15, Math.floor(total / 6));
+      }
+    } else {
+      if (total >= 250) {
+        step = 50;
+      } else if (total >= 100) {
+        step = 25;
+      } else {
+        step = Math.max(10, Math.floor(total / 6));
+      }
+    }
+    step = Math.max(5, step);
+
     const sampledItems: { index: number; id: number; url: string }[] = [];
 
     source.forEach((p, idx) => {
@@ -2984,7 +3033,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       step,
       sourceCount: source.length,
     };
-  }, [allPhotos, activeList]);
+  }, [allPhotos, activeList, activeTab]);
 
   // Fetch full timeline indexed filmstrip keyframes from server (covers all 4,000+ photos across active tab)
   const fetchFilmstrip = useCallback(async (tabName: string) => {
@@ -3005,10 +3054,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
 
     try {
-      const eventHeaders = eventHeadersRef.current;
+      const familyToken = useAuthStore.getState().token;
+      const authHeader = eventHeadersRef.current.Authorization || (familyToken ? `Bearer ${familyToken}` : undefined);
+      const headers = authHeader ? { Authorization: authHeader } : {};
+
       const res = await guestApi.get(
         `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(normTab)}`,
-        { headers: eventHeaders }
+        { headers }
       );
 
       if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
@@ -3059,9 +3111,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const norm = t.trim().toUpperCase();
         if (filmstripCacheRef.current[norm]) return;
         try {
+          const familyToken = useAuthStore.getState().token;
+          const authHeader = eventHeadersRef.current.Authorization || (familyToken ? `Bearer ${familyToken}` : undefined);
+          const headers = authHeader ? { Authorization: authHeader } : {};
+
           const res = await guestApi.get(
             `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(norm)}`,
-            { headers: eventHeadersRef.current }
+            { headers }
           );
           if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
             filmstripCacheRef.current[norm] = res.data;
