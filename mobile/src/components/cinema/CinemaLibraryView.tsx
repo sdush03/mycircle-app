@@ -74,6 +74,7 @@ interface CinemaLibraryViewProps {
   isLoading?: boolean;
   scrollY?: SharedValue<number>;
   allowDownloads?: boolean;
+  hasFullAccess?: boolean;
 }
 
 
@@ -298,6 +299,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   isLoading = false,
   scrollY,
   allowDownloads = true,
+  hasFullAccess = true,
 }) => {
   const insets = useSafeAreaInsets();
   const internalScrollY = useSharedValue(0);
@@ -392,7 +394,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
           pIdx = (longestIdx !== -1 && maxDuration > 0) ? longestIdx : 0;
         }
         primary = sortedDirectorsCut[pIdx];
-      } else if (sortedExtendedCuts.length > 0) {
+      } else if (hasFullAccess && sortedExtendedCuts.length > 0) {
         primary = sortedExtendedCuts[0];
       } else if (sortedStageSpotlight.length > 0) {
         primary = sortedStageSpotlight[0];
@@ -429,11 +431,11 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
         type: 'stage-spotlight',
         items: sortedStageSpotlight,
       },
-      {
-        title: 'THE EXTENDED CUTS',
-        type: 'extended-cuts',
+      ...(hasFullAccess ? [{
+        title: 'THE EXTENDED CUTS' as const,
+        type: 'extended-cuts' as const,
         items: sortedExtendedCuts,
-      },
+      }] : []),
     ];
     const shelfList = rawShelves.filter((s) => s.items.length > 0);
 
@@ -442,7 +444,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
       shelves: shelfList,
       totalVideos: videos.length,
     };
-  }, [videos]);
+  }, [videos, hasFullAccess]);
 
   const getProgress = useCallback((item: CinemaVideoItem): WatchProgress | null => {
     return videoWatchProgressManager.getProgress(item);
@@ -451,13 +453,16 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   const continueWatchingVideos = useMemo(() => {
     if (!videos || videos.length === 0) return [];
     return videos
-      .filter((v) => !isVideoComingSoon(v) && videoWatchProgressManager.isCurrentlyViewing(v))
+      .filter((v) => {
+        if (!hasFullAccess && classifyCinemaCategory(v) === 'THE EXTENDED CUTS') return false;
+        return !isVideoComingSoon(v) && videoWatchProgressManager.isCurrentlyViewing(v);
+      })
       .sort((a, b) => {
         const pA = videoWatchProgressManager.getProgress(a);
         const pB = videoWatchProgressManager.getProgress(b);
         return (pB?.updatedAt || 0) - (pA?.updatedAt || 0);
       });
-  }, [videos, progressTick]);
+  }, [videos, progressTick, hasFullAccess]);
 
   const getBadgeForFilm = useCallback((film: CinemaVideoItem, index: number, shelfType: string) => {
     return undefined;
