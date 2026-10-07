@@ -48,11 +48,13 @@ import Animated, {
   runOnUI,
   withTiming,
   withSpring,
+  withDelay,
   runOnJS,
   Easing,
   useAnimatedScrollHandler,
   interpolate,
   interpolateColor,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
@@ -66,7 +68,6 @@ import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsE
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import CameraViewScreen from './CameraView';
-import { SpatialFilmLoupe } from './SpatialFilmLoupe';
 import {
   FONT_MONTSERRAT_REGULAR,
   FONT_JOST_REGULAR,
@@ -90,6 +91,21 @@ interface Photo {
   videoUrl?: string;
   thumbnailUrl?: string;
   [key: string]: any;
+}
+
+export interface FilmstripKeyframe {
+  index: number;
+  id: number;
+  r2Url: string;
+  thumbnailUrl: string;
+  tabName?: string;
+}
+
+export interface FilmstripData {
+  total: number;
+  step: number;
+  tab: string;
+  keyframes: FilmstripKeyframe[];
 }
 
 export function isVideoMedia(p: any): boolean {
@@ -209,6 +225,144 @@ function mapPhotoItem(p: any): Photo {
     raw: p,
   };
 }
+
+const loupeCardStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    right: 8,
+    top: 0,
+    zIndex: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  card: {
+    width: 66,
+    height: 88,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#d4af37',
+    marginRight: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.55,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+  bead: {
+    width: 3,
+    height: 22,
+    borderTopLeftRadius: 3,
+    borderBottomLeftRadius: 3,
+    backgroundColor: '#d4af37',
+  },
+});
+
+interface SpatialFilmLoupeCardProps {
+  thumbnails: string[];
+  scrollY: SharedValue<number>;
+  contentHeightShared: SharedValue<number>;
+  layoutHeightShared: SharedValue<number>;
+  loupeOpacity: SharedValue<number>;
+  insetsTop: number;
+  insetsBottom: number;
+  screenHeight: number;
+  onPressCard?: (index: number) => void;
+}
+
+const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
+  thumbnails,
+  scrollY,
+  contentHeightShared,
+  layoutHeightShared,
+  loupeOpacity,
+  insetsTop,
+  insetsBottom,
+  screenHeight,
+  onPressCard,
+}) => {
+  const [activeIdx, setActiveIdx] = useState(0);
+  const activeIdxRef = useRef(0);
+  const lastUpdateRef = useRef(0);
+
+  const handleIndexChange = useCallback((nextIdx: number) => {
+    activeIdxRef.current = nextIdx;
+    const now = Date.now();
+    if (now - lastUpdateRef.current >= 35) {
+      lastUpdateRef.current = now;
+      setActiveIdx(nextIdx);
+    }
+  }, []);
+
+  const handleCardPress = useCallback(() => {
+    if (loupeOpacity.value > 0.3) {
+      onPressCard?.(activeIdxRef.current);
+    }
+  }, [loupeOpacity, onPressCard]);
+
+  useAnimatedReaction(
+    () => {
+      'worklet';
+      if (!thumbnails || thumbnails.length === 0) return 0;
+      const maxScroll = Math.max(1, contentHeightShared.value - layoutHeightShared.value);
+      const progress = Math.max(0, Math.min(1, scrollY.value / maxScroll));
+      return Math.min(thumbnails.length - 1, Math.floor(progress * thumbnails.length));
+    },
+    (nextIdx, prevIdx) => {
+      'worklet';
+      if (nextIdx !== prevIdx) {
+        runOnJS(handleIndexChange)(nextIdx);
+      }
+    },
+    [thumbnails, handleIndexChange]
+  );
+
+  const animatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    const maxScroll = Math.max(1, contentHeightShared.value - layoutHeightShared.value);
+    const progress = Math.max(0, Math.min(1, scrollY.value / maxScroll));
+    const minY = insetsTop + 60;
+    const maxY = screenHeight - insetsBottom - 130;
+    const targetY = interpolate(progress, [0, 1], [minY, maxY], 'clamp');
+
+    return {
+      opacity: loupeOpacity.value,
+      transform: [
+        { translateY: targetY },
+        { scale: interpolate(loupeOpacity.value, [0, 1], [0.82, 1], 'clamp') },
+      ],
+    };
+  });
+
+  const currentUri = thumbnails[activeIdx];
+
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      style={[loupeCardStyles.container, animatedStyle]}
+    >
+      <Pressable
+        onPress={handleCardPress}
+        style={({ pressed }) => [
+          loupeCardStyles.card,
+          pressed && { transform: [{ scale: 0.92 }] },
+        ]}
+      >
+        {currentUri ? (
+          <Image
+            source={{ uri: currentUri }}
+            style={StyleSheet.absoluteFillObject}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={50}
+          />
+        ) : null}
+      </Pressable>
+      <View style={loupeCardStyles.bead} pointerEvents="none" />
+    </Animated.View>
+  );
+});
 
 interface GalleryViewProps {
   onLogout: () => void;
@@ -372,6 +526,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     tabCacheRef.current = tabCache;
   }, [tabCache]);
   const isFastCatchingUpRef = useRef<boolean>(false);
+  const fastCatchupPhotosRef = useRef<((targetY: number, targetTab: string) => Promise<void>) | null>(null);
   const tabOffsetsRef = useRef<Record<string, number>>({});
   const tabItemCountsRef = useRef<Record<string, number>>({});
   const isResumingScrollRef = useRef<boolean>(false);
@@ -429,12 +584,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const isPinching = useSharedValue(false);
   const [isPast60Photos, setIsPast60Photos] = useState(false);
 
-  // ─── Spatial Film Loupe Shared Values ───────────────────────────────────────
+  // ─── Spatial Film Loupe Shared Values & State ──────────────────────────────
   const loupeOpacity = useSharedValue(0);
-  const isEdgeScrubbing = useSharedValue(false);
+  const isFadingLoupe = useSharedValue(false);
+  const isLoupeAwake = useSharedValue(false);
+  const lastScrollYShared = useSharedValue(0);
   const contentHeightShared = useSharedValue(screenHeight * 2);
   const layoutHeightShared = useSharedValue(screenHeight);
-  const scrollVelocityShared = useSharedValue(0);
+  const fullTabContentHeightShared = useSharedValue(0);
+  const loupeThumbnailsRef = useRef<string[]>([]);
+  const filmstripCacheRef = useRef<Record<string, FilmstripData>>({});
+  const [activeFilmstrip, setActiveFilmstrip] = useState<FilmstripData | null>(null);
+  const activeFilmstripRef = useRef<FilmstripData | null>(null);
+  useEffect(() => {
+    activeFilmstripRef.current = activeFilmstrip;
+  }, [activeFilmstrip]);
 
   // ─── Resume Where You Left Off ───────────────────────────────────────────────
   const [showResumePill, setShowResumePill] = useState(false);
@@ -732,6 +896,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       loadMorePhotosRef.current();
     }
 
+    // ─── Fast Catchup: Stream missing photo chunks if user scrolled/scrubbed past loaded memory bounds
+    if (
+      visibleStartIndex >= activeListRef.current.length - 30 &&
+      hasMorePhotos &&
+      !isFetchingMoreRef.current &&
+      !isFastCatchingUpRef.current &&
+      fastCatchupPhotosRef.current
+    ) {
+      fastCatchupPhotosRef.current(offsetY + layoutHeight * 2, activeTab);
+    }
+
     // ─── Resume Viewing: Trigger as soon as user starts scrolling down ─────────
     const normTab = (activeTab || '').trim().toUpperCase();
     if (normTab !== 'CINEMA') {
@@ -771,19 +946,39 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       'worklet';
-      scrollY.value = event.contentOffset.y;
+      const currentY = event.contentOffset.y;
+      scrollY.value = currentY;
       layoutHeightShared.value = event.layoutMeasurement.height;
-      contentHeightShared.value = event.contentSize.height;
-
-      const vy = Math.abs(event.velocity?.y ?? 0);
-      scrollVelocityShared.value = vy;
+      contentHeightShared.value = Math.max(
+        event.contentSize.height,
+        fullTabContentHeightShared.value
+      );
 
       // ─── Spatial Film Loupe Velocity Gating ─────────────────────────────────
-      // Fast scroll (> 1.8 px/ms): smoothly reveal the pure photo loupe
-      if (vy > 1.8) {
-        loupeOpacity.value = withTiming(1, { duration: 100 });
-      } else if (vy < 0.8 && !isEdgeScrubbing.value && loupeOpacity.value > 0) {
-        loupeOpacity.value = withTiming(0, { duration: 320 });
+      const deltaY = Math.abs(currentY - lastScrollYShared.value);
+      lastScrollYShared.value = currentY;
+
+      // Fast flick / brisk scroll detection (deltaY > 10px per frame on 60Hz/120Hz)
+      if (deltaY > 10) {
+        if (!isLoupeAwake.value) {
+          isLoupeAwake.value = true;
+          isFadingLoupe.value = false;
+          console.log(`[FILM LOUPE ⚡] Fast scroll flick (deltaY=${deltaY.toFixed(1)}px > 10px) -> Loupe waking up`);
+        }
+        loupeOpacity.value = withTiming(1, { duration: 120 });
+      } else if (deltaY <= 3 && isLoupeAwake.value && !isFadingLoupe.value) {
+        // Schedule fade-out ONCE when scroll settles (prevents loop/flood)
+        isFadingLoupe.value = true;
+        console.log(`[FILM LOUPE 💤] Scroll settled -> Loupe fading out after 500ms delay`);
+        loupeOpacity.value = withDelay(
+          500,
+          withTiming(0, { duration: 350 }, (finished) => {
+            if (finished) {
+              isLoupeAwake.value = false;
+              isFadingLoupe.value = false;
+            }
+          })
+        );
       }
 
       runOnJS(handleViewportScroll)(
@@ -791,19 +986,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         event.layoutMeasurement.height,
         event.contentSize.height
       );
-    },
-    onMomentumEnd: () => {
-      'worklet';
-      if (!isEdgeScrubbing.value) {
-        loupeOpacity.value = withTiming(0, { duration: 320 });
-      }
-    },
-    onEndDrag: (event) => {
-      'worklet';
-      const vy = Math.abs(event.velocity?.y ?? 0);
-      if (vy < 1.0 && !isEdgeScrubbing.value) {
-        loupeOpacity.value = withTiming(0, { duration: 320 });
-      }
     },
   });
 
@@ -1148,6 +1330,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const allList = allRes.data?.photos || (Array.isArray(allRes.data) ? allRes.data : []);
       const mappedPhotos = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
       const total = typeof allRes.data?.total === 'number' ? allRes.data.total : mappedPhotos.length;
+
+      console.log(`\n================== [GALLERY OPEN DEBUG (FALLBACK) 🏛️] ==================`);
+      console.log(`📸 EVENT SLUG: ${eventSlug}`);
+      console.log(`📊 TOTAL PHOTOS ON SERVER: ${total}`);
+      console.log(`📥 INITIAL BATCH PHOTOS RECEIVED: ${mappedPhotos.length}`);
+      console.log(`👤 MATCHED PHOTOS: ${mappedMatched.length}`);
+      console.log(`❤️ FAVORITES: ${mappedFavs.length}`);
+      console.log(`🎬 CINEMA VIDEOS: ${mappedCinema.length}`);
+      console.log(`========================================================================\n`);
+
       setTotalAllPhotosCount(total);
       setAllPhotos((prev) => {
         if (prev.length > mappedPhotos.length) {
@@ -1347,6 +1539,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
 
       const total = typeof bundleData.total === 'number' ? bundleData.total : mappedPhotos.length;
+
+      console.log(`\n================== [GALLERY OPEN DEBUG (BUNDLE) 🏛️] ==================`);
+      console.log(`📸 EVENT SLUG: ${eventSlug}`);
+      console.log(`📊 TOTAL PHOTOS ON SERVER: ${total}`);
+      console.log(`📥 INITIAL BATCH PHOTOS RECEIVED: ${mappedPhotos.length}`);
+      console.log(`👤 MATCHED PHOTOS: ${mappedMatched.length}`);
+      console.log(`❤️ FAVORITES: ${mappedFavs.length}`);
+      console.log(`🎬 CINEMA VIDEOS: ${mappedCinema.length}`);
+      console.log(`📑 TAB COUNTS:`, bundleData?.event?.tabCounts || 'none');
+      console.log(`======================================================================\n`);
+
       setTotalAllPhotosCount(total);
       setAllPhotos((prev) => {
         if (prev.length > mappedPhotos.length) {
@@ -1510,8 +1713,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       isFetchingMoreRef.current = true;
       setIsLoadingMore(true);
 
-      const CHUNK_SIZE = 120;
       const startOffset = currentCount;
+      const CHUNK_SIZE = (estPhotosNeeded - startOffset > 400) ? 200 : 120;
       const offsets: number[] = [];
       for (let off = startOffset; off < estPhotosNeeded; off += CHUNK_SIZE) {
         offsets.push(off);
@@ -1592,6 +1795,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setIsLoadingMore(false);
     }
   }, [eventSlug, totalAllPhotosCount, eventDetails, tabCache, scheduleBatchPrefetch]);
+  fastCatchupPhotosRef.current = fastCatchupPhotos;
 
   useEffect(() => {
     fetchPhotos();
@@ -2772,29 +2976,235 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return activeList;
   }, [activeList, isLoading, isTabLoading, currentTabExpectedCount]);
 
-  // ─── Spatial Film Loupe: Sample every 120th photo & pre-cache in local storage/RAM ───
-  const loupeThumbnails = useMemo(() => {
+  // ─── Spatial Film Loupe: Sample photos fallback (when offline or personal tabs) ───
+  const loupeSampleInfo = useMemo(() => {
     const source = (allPhotos && allPhotos.length > 0) ? allPhotos : activeList;
-    if (!source || source.length === 0) return [];
+    if (!source || source.length === 0) {
+      return { thumbnails: [], sampledItems: [], step: 1, sourceCount: 0 };
+    }
 
-    // Sample every 120th photo (or evenly sample ~100 items if fewer or more)
-    const step = source.length > 200 ? 120 : Math.max(1, Math.floor(source.length / 25));
-    const sampled = source.filter((_, idx) => idx % step === 0);
-    return sampled
-      .map((p) => getThumbnailUrl(p, 150) || p.r2Url || p.uri || '')
-      .filter((url) => typeof url === 'string' && url.length > 0);
+    const step = source.length >= 6000 ? 120 : Math.max(1, Math.floor(source.length / 50));
+    const sampledItems: { index: number; id: number; url: string }[] = [];
+
+    source.forEach((p, idx) => {
+      if (idx % step === 0) {
+        const thumbUrl = getThumbnailUrl(p, 150) || p.r2Url || p.uri || '';
+        if (thumbUrl && typeof thumbUrl === 'string') {
+          sampledItems.push({ index: idx, id: p.id, url: thumbUrl });
+        }
+      }
+    });
+
+    return {
+      thumbnails: sampledItems.map((s) => s.url),
+      sampledItems,
+      step,
+      sourceCount: source.length,
+    };
   }, [allPhotos, activeList]);
 
-  // Pre-load sampled thumbnails into native memory & disk cache on initial load
+  // Fetch full timeline indexed filmstrip keyframes from server (covers all 4,000+ photos across active tab)
+  const fetchFilmstrip = useCallback(async (tabName: string) => {
+    if (!eventSlug) return;
+    const normTab = (tabName || 'ALL').trim().toUpperCase();
+    if (normTab === 'CINEMA') return;
+
+    // Instant return if already in RAM cache
+    if (filmstripCacheRef.current[normTab]) {
+      setActiveFilmstrip(filmstripCacheRef.current[normTab]);
+      return;
+    }
+
+    // Skip server call for personal virtual tabs
+    if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') {
+      setActiveFilmstrip(null);
+      return;
+    }
+
+    try {
+      const eventHeaders = eventHeadersRef.current;
+      const res = await guestApi.get(
+        `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(normTab)}`,
+        { headers: eventHeaders }
+      );
+
+      if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
+        const data: FilmstripData = res.data;
+        filmstripCacheRef.current[normTab] = data;
+        setActiveFilmstrip(data);
+
+        console.log(`\n================== [FILM LOUPE TIMELINE 🎞️] ==================`);
+        console.log(`📸 EVENT: "${cleanTitle}" (${eventSlug}) | TAB: "${normTab}"`);
+        console.log(`📊 TOTAL PHOTOS ON SERVER: ${data.total}`);
+        console.log(`🎯 SAMPLING STEP: Every ${data.step}th photo`);
+        console.log(`📥 KEYFRAMES LOADED: ${data.keyframes.length} milestone thumbnails`);
+        data.keyframes.slice(0, 10).forEach((kf, idx) => {
+          console.log(`   [#${idx + 1}/${data.keyframes.length}] Full-Album Photo #${kf.index} (ID: ${kf.id}) -> ${kf.thumbnailUrl || kf.r2Url}`);
+        });
+        if (data.keyframes.length > 10) {
+          console.log(`   ... plus ${data.keyframes.length - 10} more keyframes.`);
+        }
+        console.log(`==============================================================\n`);
+
+        const urlsToPrefetch = data.keyframes
+          .map((kf) => getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url)
+          .filter(Boolean);
+
+        if (urlsToPrefetch.length > 0) {
+          Image.prefetch(urlsToPrefetch, 'memory-disk');
+        }
+      }
+    } catch (err) {
+      console.log(`[FILM LOUPE ⚠️] Could not fetch server filmstrip for tab "${normTab}", falling back to local sampling:`, err);
+    }
+  }, [eventSlug, cleanTitle]);
+
+  // Fetch filmstrip whenever activeTab or eventSlug changes
   useEffect(() => {
-    if (loupeThumbnails.length > 0) {
+    fetchFilmstrip(activeTab);
+  }, [activeTab, fetchFilmstrip]);
+
+  // Silently prefetch filmstrips for other ceremony tabs in the background
+  useEffect(() => {
+    if (!eventSlug || !eventDetails?.tabs || !Array.isArray(eventDetails.tabs)) return;
+    const tabsToPrefetch = ['ALL', ...eventDetails.tabs].filter(
+      (t) => t.toUpperCase() !== 'CINEMA' && t.toUpperCase() !== activeTab.toUpperCase()
+    );
+
+    const timer = setTimeout(() => {
+      tabsToPrefetch.forEach(async (t) => {
+        const norm = t.trim().toUpperCase();
+        if (filmstripCacheRef.current[norm]) return;
+        try {
+          const res = await guestApi.get(
+            `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(norm)}`,
+            { headers: eventHeadersRef.current }
+          );
+          if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
+            filmstripCacheRef.current[norm] = res.data;
+            const urls = res.data.keyframes
+              .map((kf: FilmstripKeyframe) => getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url)
+              .filter(Boolean);
+            if (urls.length > 0) {
+              Image.prefetch(urls, 'memory-disk');
+            }
+          }
+        } catch (_) {}
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [eventSlug, eventDetails?.tabs, activeTab]);
+
+  // Derived loupe thumbnails: prioritize full server timeline keyframes over local batch
+  const loupeThumbnails = useMemo(() => {
+    if (activeFilmstrip?.keyframes && activeFilmstrip.keyframes.length > 0) {
+      return activeFilmstrip.keyframes.map((kf) => {
+        return getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url;
+      });
+    }
+    return loupeSampleInfo.thumbnails;
+  }, [activeFilmstrip, loupeSampleInfo]);
+
+  // Pre-load sampled thumbnails into native memory & disk cache (fallback mode)
+  useEffect(() => {
+    loupeThumbnailsRef.current = loupeThumbnails;
+    if (!activeFilmstrip && loupeThumbnails.length > 0) {
+      console.log(`\n================== [FILM LOUPE LOCAL FALLBACK 🎞️] ==================`);
+      console.log(`📸 EVENT: "${cleanTitle}" (${eventSlug})`);
+      console.log(`📊 TOTAL GALLERY SIZE (Server Total): ${totalAllPhotosCount ?? 'unknown'} photos`);
+      console.log(`📦 CLIENT LOADED IN-MEMORY: ${loupeSampleInfo.sourceCount} photos (allPhotos: ${allPhotos.length}, activeList: ${activeList.length})`);
+      console.log(`🎯 SAMPLING STEP: Every ${loupeSampleInfo.step}th photo`);
+      console.log(`📥 DOWNLOADING / PREFETCHING: ${loupeThumbnails.length} thumbnail files into local memory-disk cache`);
+      console.log(`====================================================================\n`);
+
       loupeThumbnails.forEach((url) => {
         if (url && typeof url === 'string') {
           Image.prefetch(url, 'memory-disk');
         }
       });
     }
-  }, [loupeThumbnails]);
+  }, [loupeThumbnails, cleanTitle, eventSlug, totalAllPhotosCount, allPhotos.length, activeList.length, loupeSampleInfo, activeFilmstrip]);
+
+  // Total photos in the active tab (used to scale container height to match the entire 4,000+ photo timeline)
+  const totalTabPhotos = useMemo(() => {
+    const normTab = (activeTab || '').trim().toUpperCase();
+    if (normTab === 'CINEMA') return 0;
+    if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') {
+      return activeList.length;
+    }
+    if (activeFilmstrip?.total && activeFilmstrip.total > 0) {
+      return activeFilmstrip.total;
+    }
+    if (normTab === 'ALL') {
+      return totalAllPhotosCount ?? allPhotos.length;
+    }
+    if (eventDetails?.tabCounts?.[normTab] && typeof eventDetails.tabCounts[normTab] === 'number') {
+      return eventDetails.tabCounts[normTab];
+    }
+    return tabCache[normTab]?.length || activeList.length;
+  }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length]);
+
+  // Full estimated scroll height across all photos of the active tab
+  const fullTabEstimatedContentHeight = useMemo(() => {
+    if (!totalTabPhotos || totalTabPhotos <= 0) return 0;
+    const currentCols = galleryColumns || 2;
+    const heroHeight = Math.round(screenHeight * 0.70);
+    const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
+    const totalRows = Math.ceil(totalTabPhotos / currentCols);
+    return heroHeight + totalRows * rowH + 600;
+  }, [totalTabPhotos, galleryColumns, screenHeight]);
+
+  useEffect(() => {
+    fullTabContentHeightShared.value = fullTabEstimatedContentHeight;
+    if (fullTabEstimatedContentHeight > 0) {
+      contentHeightShared.value = fullTabEstimatedContentHeight;
+    }
+  }, [fullTabEstimatedContentHeight, fullTabContentHeightShared, contentHeightShared]);
+
+  // Tapping the Film Loupe card: smoothly jumps to that exact milestone in the gallery
+  const handleJumpToKeyframe = useCallback(
+    (keyframeIdx: number) => {
+      let targetPhotoIndex = 0;
+      if (activeFilmstrip?.keyframes && activeFilmstrip.keyframes[keyframeIdx]) {
+        targetPhotoIndex = activeFilmstrip.keyframes[keyframeIdx].index;
+      } else if (loupeSampleInfo.sampledItems && loupeSampleInfo.sampledItems[keyframeIdx]) {
+        targetPhotoIndex = loupeSampleInfo.sampledItems[keyframeIdx].index;
+      } else {
+        const step = activeFilmstrip?.step ?? (activeTab.trim().toUpperCase() === 'ALL' ? 100 : 50);
+        targetPhotoIndex = keyframeIdx * step;
+      }
+
+      const currentCols = galleryColumnsRef.current || 2;
+      const heroHeight = Math.round(screenHeight * 0.70);
+      const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
+      const targetRow = Math.floor(targetPhotoIndex / currentCols);
+      const targetY = heroHeight + targetRow * rowH;
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      console.log(`[FILM LOUPE 🚀 JUMP] User tapped keyframe #${keyframeIdx + 1} -> Jumping to photo index #${targetPhotoIndex} (Target Y: ${targetY}px) in tab "${activeTab}"`);
+
+      // Awaken loupe briefly for visual confirmation, then schedule fade-out
+      loupeOpacity.value = withTiming(1, { duration: 100 });
+      loupeOpacity.value = withDelay(1500, withTiming(0, { duration: 350 }, (finished) => {
+        if (finished) {
+          isLoupeAwake.value = false;
+          isFadingLoupe.value = false;
+        }
+      }));
+
+      // Parallel stream missing photos around targetY into memory
+      fastCatchupPhotos(targetY + screenHeight, activeTab);
+
+      // Perform smooth scroll to target milestone
+      scrollToY(targetY, true);
+      currentYRef.current = targetY;
+      lastSavedScrollYRef.current = targetY;
+      saveResumeScrollPosition(targetY);
+    },
+    [activeFilmstrip, loupeSampleInfo, activeTab, fastCatchupPhotos, scrollToY, screenHeight, saveResumeScrollPosition, loupeOpacity, isLoupeAwake, isFadingLoupe]
+  );
 
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
@@ -3086,7 +3496,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 data={displayData as any}
                 numColumns={galleryColumns}
                 onNumColumnsChange={handleGalleryColumnsChange}
-                minContentHeight={resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0}
+                minContentHeight={Math.max(
+                  resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0,
+                  fullTabEstimatedContentHeight
+                )}
                 enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
                 isPinchingShared={isPinching}
                 minColumns={1}
@@ -3134,28 +3547,31 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               )}
 
               {/* iOS Underlay Dimming Overlay (Fades from 0.15 to 0 as Cinema slides away) */}
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  StyleSheet.absoluteFillObject,
-                  { backgroundColor: '#000000', zIndex: 5 },
-                  photosDimAnimatedStyle,
-                ]}
-              />
+              {isCinema && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFillObject,
+                    { backgroundColor: '#000000', zIndex: 5 },
+                    photosDimAnimatedStyle,
+                  ]}
+                />
+              )}
 
               {/* ── Spatial Film Loupe (Velocity-Gated Pure-Photo Scrubber) ── */}
-              <SpatialFilmLoupe
-                thumbnails={loupeThumbnails}
-                scrollY={scrollY}
-                contentHeight={contentHeightShared}
-                layoutHeight={layoutHeightShared}
-                loupeOpacity={loupeOpacity}
-                isEdgeScrubbing={isEdgeScrubbing}
-                mainScrollRef={mainScrollRef}
-                isCinema={isCinema}
-                topInset={insets.top}
-                bottomInset={insets.bottom}
-              />
+              {!isCinema && loupeThumbnails.length > 0 && (
+                <SpatialFilmLoupeCard
+                  thumbnails={loupeThumbnails}
+                  scrollY={scrollY}
+                  contentHeightShared={contentHeightShared}
+                  layoutHeightShared={layoutHeightShared}
+                  loupeOpacity={loupeOpacity}
+                  insetsTop={insets.top}
+                  insetsBottom={insets.bottom}
+                  screenHeight={screenHeight}
+                  onPressCard={handleJumpToKeyframe}
+                />
+              )}
             </View>
 
             {/* ── Top Layer: Cinema Library View (Mounted when isCinema is true; slides to reveal Photos on Apple back swipe) ── */}
@@ -3186,6 +3602,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   }
                   isLoading={isTabLoading}
                   allowDownloads={isGalleryDownloadAllowed}
+                  hasFullAccess={hasFullAccess}
                 />
               </Animated.View>
             )}
