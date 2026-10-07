@@ -66,6 +66,7 @@ import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsE
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import CameraViewScreen from './CameraView';
+import { SpatialFilmLoupe } from './SpatialFilmLoupe';
 import {
   FONT_MONTSERRAT_REGULAR,
   FONT_JOST_REGULAR,
@@ -428,6 +429,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const isPinching = useSharedValue(false);
   const [isPast60Photos, setIsPast60Photos] = useState(false);
 
+  // ─── Spatial Film Loupe Shared Values ───────────────────────────────────────
+  const loupeOpacity = useSharedValue(0);
+  const isEdgeScrubbing = useSharedValue(false);
+  const contentHeightShared = useSharedValue(screenHeight * 2);
+  const layoutHeightShared = useSharedValue(screenHeight);
+  const scrollVelocityShared = useSharedValue(0);
+
   // ─── Resume Where You Left Off ───────────────────────────────────────────────
   const [showResumePill, setShowResumePill] = useState(false);
   const resumePillOpacity = useSharedValue(0);
@@ -764,11 +772,38 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     onScroll: (event) => {
       'worklet';
       scrollY.value = event.contentOffset.y;
+      layoutHeightShared.value = event.layoutMeasurement.height;
+      contentHeightShared.value = event.contentSize.height;
+
+      const vy = Math.abs(event.velocity?.y ?? 0);
+      scrollVelocityShared.value = vy;
+
+      // ─── Spatial Film Loupe Velocity Gating ─────────────────────────────────
+      // Fast scroll (> 1.8 px/ms): smoothly reveal the pure photo loupe
+      if (vy > 1.8) {
+        loupeOpacity.value = withTiming(1, { duration: 100 });
+      } else if (vy < 0.8 && !isEdgeScrubbing.value && loupeOpacity.value > 0) {
+        loupeOpacity.value = withTiming(0, { duration: 320 });
+      }
+
       runOnJS(handleViewportScroll)(
         event.contentOffset.y,
         event.layoutMeasurement.height,
         event.contentSize.height
       );
+    },
+    onMomentumEnd: () => {
+      'worklet';
+      if (!isEdgeScrubbing.value) {
+        loupeOpacity.value = withTiming(0, { duration: 320 });
+      }
+    },
+    onEndDrag: (event) => {
+      'worklet';
+      const vy = Math.abs(event.velocity?.y ?? 0);
+      if (vy < 1.0 && !isEdgeScrubbing.value) {
+        loupeOpacity.value = withTiming(0, { duration: 320 });
+      }
     },
   });
 
@@ -2737,6 +2772,30 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return activeList;
   }, [activeList, isLoading, isTabLoading, currentTabExpectedCount]);
 
+  // ─── Spatial Film Loupe: Sample every 120th photo & pre-cache in local storage/RAM ───
+  const loupeThumbnails = useMemo(() => {
+    const source = (allPhotos && allPhotos.length > 0) ? allPhotos : activeList;
+    if (!source || source.length === 0) return [];
+
+    // Sample every 120th photo (or evenly sample ~100 items if fewer or more)
+    const step = source.length > 200 ? 120 : Math.max(1, Math.floor(source.length / 25));
+    const sampled = source.filter((_, idx) => idx % step === 0);
+    return sampled
+      .map((p) => getThumbnailUrl(p, 150) || p.r2Url || p.uri || '')
+      .filter((url) => typeof url === 'string' && url.length > 0);
+  }, [allPhotos, activeList]);
+
+  // Pre-load sampled thumbnails into native memory & disk cache on initial load
+  useEffect(() => {
+    if (loupeThumbnails.length > 0) {
+      loupeThumbnails.forEach((url) => {
+        if (url && typeof url === 'string') {
+          Image.prefetch(url, 'memory-disk');
+        }
+      });
+    }
+  }, [loupeThumbnails]);
+
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
 
@@ -3082,6 +3141,20 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   { backgroundColor: '#000000', zIndex: 5 },
                   photosDimAnimatedStyle,
                 ]}
+              />
+
+              {/* ── Spatial Film Loupe (Velocity-Gated Pure-Photo Scrubber) ── */}
+              <SpatialFilmLoupe
+                thumbnails={loupeThumbnails}
+                scrollY={scrollY}
+                contentHeight={contentHeightShared}
+                layoutHeight={layoutHeightShared}
+                loupeOpacity={loupeOpacity}
+                isEdgeScrubbing={isEdgeScrubbing}
+                mainScrollRef={mainScrollRef}
+                isCinema={isCinema}
+                topInset={insets.top}
+                bottomInset={insets.bottom}
               />
             </View>
 

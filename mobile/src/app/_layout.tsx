@@ -38,6 +38,7 @@ import * as Linking from 'expo-linking';
 import { handleIncomingUrl, checkServerDeferredDeepLink } from '../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 import ForceUpdateModal from '../components/common/ForceUpdateModal';
+import { pushNotificationService } from '../services/pushNotificationService';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -128,11 +129,13 @@ function RootLayoutContent() {
     }
   }, [shouldPreventCapture]);
 
-  // Load persisted session once on mount
+  // Load persisted session once on mount & initialize push notifications
   useEffect(() => {
     async function initialize() {
       try {
         await loadStoredAuth();
+        await pushNotificationService.initialize().catch(() => {});
+        pushNotificationService.registerForPushNotifications().catch(() => {});
       } catch (e) {
         console.warn('Auth initialization error:', e);
       } finally {
@@ -140,7 +143,18 @@ function RootLayoutContent() {
       }
     }
     initialize();
+
+    return () => {
+      pushNotificationService.cleanup();
+    };
   }, []);
+
+  // Re-register push token when user logs in so the token gets linked to their account
+  useEffect(() => {
+    if (isAuthenticated) {
+      pushNotificationService.registerForPushNotifications().catch(() => {});
+    }
+  }, [isAuthenticated]);
 
   // Handle incoming deep links globally across all tabs / cold launches / background resumes
   const incomingUrl = Linking.useURL();

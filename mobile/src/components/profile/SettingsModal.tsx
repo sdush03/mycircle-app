@@ -21,6 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../services/api';
+import { pushNotificationService } from '../../services/pushNotificationService';
 import { getThumbnailUrl } from '../../utils/imageUrl';
 import {
   FONT_FUTURA_BOLD,
@@ -96,6 +97,10 @@ export default function SettingsModal({
     setPushEnabled(value);
     try {
       await AsyncStorage.setItem(PREF_PUSH_KEY, value ? 'true' : 'false');
+      await pushNotificationService.updatePushPreference(value);
+      if (value) {
+        pushNotificationService.registerForPushNotifications().catch(() => {});
+      }
     } catch (_e) {}
   };
 

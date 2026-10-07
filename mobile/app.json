@@ -76,7 +76,8 @@
       },
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -138,7 +139,14 @@
           }
         }
       ],
-      ["expo-video", { "supportsBackgroundPlayback": true, "supportsPictureInPicture": false }]
+      ["expo-video", { "supportsBackgroundPlayback": true, "supportsPictureInPicture": false }],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#111111"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
