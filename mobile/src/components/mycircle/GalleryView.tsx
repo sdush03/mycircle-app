@@ -591,7 +591,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const lastScrollYShared = useSharedValue(0);
   const contentHeightShared = useSharedValue(screenHeight * 2);
   const layoutHeightShared = useSharedValue(screenHeight);
-  const fullTabContentHeightShared = useSharedValue(0);
   const loupeThumbnailsRef = useRef<string[]>([]);
   const filmstripCacheRef = useRef<Record<string, FilmstripData>>({});
   const [activeFilmstrip, setActiveFilmstrip] = useState<FilmstripData | null>(null);
@@ -896,17 +895,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       loadMorePhotosRef.current();
     }
 
-    // ─── Fast Catchup: Stream missing photo chunks if user scrolled/scrubbed past loaded memory bounds
-    if (
-      visibleStartIndex >= activeListRef.current.length - 30 &&
-      hasMorePhotos &&
-      !isFetchingMoreRef.current &&
-      !isFastCatchingUpRef.current &&
-      fastCatchupPhotosRef.current
-    ) {
-      fastCatchupPhotosRef.current(offsetY + layoutHeight * 2, activeTab);
-    }
-
     // ─── Resume Viewing: Trigger as soon as user starts scrolling down ─────────
     const normTab = (activeTab || '').trim().toUpperCase();
     if (normTab !== 'CINEMA') {
@@ -949,10 +937,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const currentY = event.contentOffset.y;
       scrollY.value = currentY;
       layoutHeightShared.value = event.layoutMeasurement.height;
-      contentHeightShared.value = Math.max(
-        event.contentSize.height,
-        fullTabContentHeightShared.value
-      );
+      contentHeightShared.value = event.contentSize.height;
 
       // ─── Spatial Film Loupe Velocity Gating ─────────────────────────────────
       const deltaY = Math.abs(currentY - lastScrollYShared.value);
@@ -963,13 +948,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (!isLoupeAwake.value) {
           isLoupeAwake.value = true;
           isFadingLoupe.value = false;
-          console.log(`[FILM LOUPE ⚡] Fast scroll flick (deltaY=${deltaY.toFixed(1)}px > 10px) -> Loupe waking up`);
+          loupeOpacity.value = withTiming(1, { duration: 120 });
         }
-        loupeOpacity.value = withTiming(1, { duration: 120 });
       } else if (deltaY <= 3 && isLoupeAwake.value && !isFadingLoupe.value) {
-        // Schedule fade-out ONCE when scroll settles (prevents loop/flood)
+        // Schedule fade-out ONCE when scroll settles
         isFadingLoupe.value = true;
-        console.log(`[FILM LOUPE 💤] Scroll settled -> Loupe fading out after 500ms delay`);
         loupeOpacity.value = withDelay(
           500,
           withTiming(0, { duration: 350 }, (finished) => {
@@ -3145,22 +3128,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return tabCache[normTab]?.length || activeList.length;
   }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length]);
 
-  // Full estimated scroll height across all photos of the active tab
-  const fullTabEstimatedContentHeight = useMemo(() => {
-    if (!totalTabPhotos || totalTabPhotos <= 0) return 0;
-    const currentCols = galleryColumns || 2;
-    const heroHeight = Math.round(screenHeight * 0.70);
-    const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
-    const totalRows = Math.ceil(totalTabPhotos / currentCols);
-    return heroHeight + totalRows * rowH + 600;
-  }, [totalTabPhotos, galleryColumns, screenHeight]);
 
-  useEffect(() => {
-    fullTabContentHeightShared.value = fullTabEstimatedContentHeight;
-    if (fullTabEstimatedContentHeight > 0) {
-      contentHeightShared.value = fullTabEstimatedContentHeight;
-    }
-  }, [fullTabEstimatedContentHeight, fullTabContentHeightShared, contentHeightShared]);
 
   // Tapping the Film Loupe card: smoothly jumps to that exact milestone in the gallery
   const handleJumpToKeyframe = useCallback(
@@ -3496,10 +3464,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 data={displayData as any}
                 numColumns={galleryColumns}
                 onNumColumnsChange={handleGalleryColumnsChange}
-                minContentHeight={Math.max(
-                  resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0,
-                  fullTabEstimatedContentHeight
-                )}
+                minContentHeight={resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0}
                 enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
                 isPinchingShared={isPinching}
                 minColumns={1}
