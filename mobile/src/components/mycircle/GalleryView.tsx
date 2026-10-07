@@ -229,11 +229,14 @@ function mapPhotoItem(p: any): Photo {
 const loupeCardStyles = StyleSheet.create({
   container: {
     position: 'absolute',
-    right: 8,
+    right: 4,
     top: 0,
     zIndex: 50,
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 4,
   },
   card: {
     width: 66,
@@ -243,7 +246,7 @@ const loupeCardStyles = StyleSheet.create({
     backgroundColor: '#18181b',
     borderWidth: 1.5,
     borderColor: '#d4af37',
-    marginRight: 4,
+    marginRight: 6,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.55,
@@ -251,10 +254,9 @@ const loupeCardStyles = StyleSheet.create({
     elevation: 10,
   },
   bead: {
-    width: 3,
-    height: 22,
-    borderTopLeftRadius: 3,
-    borderBottomLeftRadius: 3,
+    width: 3.5,
+    height: 24,
+    borderRadius: 2,
     backgroundColor: '#d4af37',
   },
 });
@@ -266,10 +268,13 @@ interface SpatialFilmLoupeCardProps {
   totalPhotosShared: SharedValue<number>;
   columnsShared: SharedValue<number>;
   loupeOpacity: SharedValue<number>;
+  isDraggingLoupeShared: SharedValue<boolean>;
+  mainScrollRef: any;
   insetsTop: number;
   insetsBottom: number;
   screenHeight: number;
   onPressCard?: (index: number) => void;
+  onDragEnd?: (finalScrollY: number) => void;
 }
 
 const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
@@ -279,15 +284,33 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   totalPhotosShared,
   columnsShared,
   loupeOpacity,
+  isDraggingLoupeShared,
+  mainScrollRef,
   insetsTop,
   insetsBottom,
   screenHeight,
   onPressCard,
+  onDragEnd,
 }) => {
   const [activeIdx, setActiveIdx] = useState(0);
   const activeIdxRef = useRef(0);
   const lastUpdateRef = useRef(0);
   const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isDragging = useSharedValue(false);
+  const dragStartY = useSharedValue(0);
+  const dragStartProgress = useSharedValue(0);
+  const currentCardYShared = useSharedValue(insetsTop + 60);
+  const currentActiveKeyframeShared = useSharedValue(0);
+  const cardScale = useSharedValue(1);
+
+  const triggerHapticTick = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+  }, []);
+
+  const triggerGrabHaptic = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }, []);
 
   const handleIndexChange = useCallback((nextIdx: number) => {
     activeIdxRef.current = nextIdx;
@@ -316,14 +339,16 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   }, []);
 
   const handleCardPress = useCallback(() => {
-    if (loupeOpacity.value > 0.3) {
+    if (loupeOpacity.value > 0.15) {
       onPressCard?.(activeIdxRef.current);
     }
   }, [loupeOpacity, onPressCard]);
 
+  // Sync activeIdx when scrolling normally (not dragging)
   useAnimatedReaction(
     () => {
       'worklet';
+      if (isDragging.value) return currentActiveKeyframeShared.value;
       if (!thumbnails || thumbnails.length === 0) return 0;
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const cols = columnsShared.value || 2;
@@ -349,33 +374,161 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     },
     (nextIdx, prevIdx) => {
       'worklet';
-      if (nextIdx !== prevIdx) {
+      if (!isDragging.value && nextIdx !== prevIdx) {
+        currentActiveKeyframeShared.value = nextIdx;
         runOnJS(handleIndexChange)(nextIdx);
       }
     },
     [thumbnails, keyframeIndices, handleIndexChange, screenHeight]
   );
 
-  const animatedStyle = useAnimatedStyle(() => {
-    'worklet';
-    const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
-    const cols = columnsShared.value || 2;
-    const heroHeight = Math.round(screenHeight * 0.70);
-    const relativeY = Math.max(0, scrollY.value - heroHeight);
-    const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
-    const currentRow = relativeY / rowH;
-    const continuousPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, currentRow * cols));
-    const progress = Math.max(0, Math.min(1, continuousPhotoIdx / Math.max(1, totalPhotos - 1)));
+  const panGesture = Gesture.Pan()
+    .minPointers(1)
+    .maxPointers(1)
+    .activeOffsetY([-4, 4])
+    .onBegin((e) => {
+      'worklet';
+      isDragging.value = true;
+      isDraggingLoupeShared.value = true;
+      cardScale.value = withTiming(1.08, { duration: 100 });
+      loupeOpacity.value = withTiming(1, { duration: 80 });
 
+      dragStartY.value = e.absoluteY;
+      const minY = insetsTop + 60;
+      const maxY = screenHeight - insetsBottom - 130;
+      const trackLength = Math.max(1, maxY - minY);
+      dragStartProgress.value = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
+
+      runOnJS(triggerGrabHaptic)();
+    })
+    .onUpdate((e) => {
+      'worklet';
+      if (!isDragging.value) return;
+
+      const minY = insetsTop + 60;
+      const maxY = screenHeight - insetsBottom - 130;
+      const trackLength = Math.max(1, maxY - minY);
+
+      const deltaY = e.absoluteY - dragStartY.value;
+      const deltaProgress = deltaY / trackLength;
+      const newProgress = Math.max(0, Math.min(1, dragStartProgress.value + deltaProgress));
+
+      currentCardYShared.value = minY + newProgress * trackLength;
+
+      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+      const continuousPhotoIdx = newProgress * Math.max(1, totalPhotos - 1);
+      const cols = columnsShared.value || 2;
+      const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
+      const heroHeight = Math.round(screenHeight * 0.70);
+      const targetRow = continuousPhotoIdx / cols;
+      const targetScrollY = newProgress === 0 ? 0 : heroHeight + targetRow * rowH;
+
+      scrollTo(mainScrollRef, 0, targetScrollY, false);
+      scrollY.value = targetScrollY;
+
+      const currentPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, Math.floor(continuousPhotoIdx)));
+      let nextIdx = 0;
+      if (keyframeIndices && keyframeIndices.length > 0) {
+        for (let i = keyframeIndices.length - 1; i >= 0; i--) {
+          if (currentPhotoIdx >= keyframeIndices[i]) {
+            nextIdx = i;
+            break;
+          }
+        }
+      } else if (thumbnails.length > 0) {
+        const normProgress = Math.max(0, Math.min(1, currentPhotoIdx / Math.max(1, totalPhotos - 1)));
+        nextIdx = Math.floor(normProgress * thumbnails.length);
+      }
+      nextIdx = Math.max(0, Math.min(thumbnails.length - 1, nextIdx));
+
+      if (nextIdx !== currentActiveKeyframeShared.value) {
+        currentActiveKeyframeShared.value = nextIdx;
+        runOnJS(handleIndexChange)(nextIdx);
+        runOnJS(triggerHapticTick)();
+      }
+    })
+    .onEnd(() => {
+      'worklet';
+      isDragging.value = false;
+      isDraggingLoupeShared.value = false;
+      cardScale.value = withTiming(1, { duration: 120 });
+
+      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+      const minY = insetsTop + 60;
+      const maxY = screenHeight - insetsBottom - 130;
+      const trackLength = Math.max(1, maxY - minY);
+      const finalProgress = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
+      const continuousPhotoIdx = finalProgress * Math.max(1, totalPhotos - 1);
+      const cols = columnsShared.value || 2;
+      const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
+      const heroHeight = Math.round(screenHeight * 0.70);
+      const targetRow = continuousPhotoIdx / cols;
+      const finalScrollY = finalProgress === 0 ? 0 : heroHeight + targetRow * rowH;
+
+      if (onDragEnd) {
+        runOnJS(onDragEnd)(finalScrollY);
+      }
+    })
+    .onFinalize(() => {
+      'worklet';
+      isDragging.value = false;
+      isDraggingLoupeShared.value = false;
+      cardScale.value = withTiming(1, { duration: 120 });
+    });
+
+  const tapGesture = Gesture.Tap()
+    .maxDuration(250)
+    .maxDistance(8)
+    .onEnd((_e, success) => {
+      'worklet';
+      if (success) {
+        runOnJS(handleCardPress)();
+      }
+    });
+
+  const composedGesture = Gesture.Exclusive(panGesture, tapGesture);
+
+  const animatedContainerStyle = useAnimatedStyle(() => {
+    'worklet';
     const minY = insetsTop + 60;
     const maxY = screenHeight - insetsBottom - 130;
-    const targetY = interpolate(progress, [0, 1], [minY, maxY], 'clamp');
 
+    let targetY = currentCardYShared.value;
+    if (!isDragging.value) {
+      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+      const cols = columnsShared.value || 2;
+      const heroHeight = Math.round(screenHeight * 0.70);
+      const relativeY = Math.max(0, scrollY.value - heroHeight);
+      const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
+      const currentRow = relativeY / rowH;
+      const continuousPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, currentRow * cols));
+      const progress = Math.max(0, Math.min(1, continuousPhotoIdx / Math.max(1, totalPhotos - 1)));
+      targetY = interpolate(progress, [0, 1], [minY, maxY], 'clamp');
+      currentCardYShared.value = targetY;
+    }
+
+    return {
+      transform: [{ translateY: targetY }],
+    };
+  });
+
+  const cardAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
     return {
       opacity: loupeOpacity.value,
       transform: [
-        { translateY: targetY },
-        { scale: interpolate(loupeOpacity.value, [0, 1], [0.82, 1], 'clamp') },
+        { scale: interpolate(loupeOpacity.value, [0, 1], [0.82, 1], 'clamp') * cardScale.value },
+      ],
+    };
+  });
+
+  const beadAnimatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: interpolate(loupeOpacity.value, [0, 1], [0.35, 1], 'clamp'),
+      transform: [
+        { scaleY: isDragging.value ? 1.3 : (loupeOpacity.value > 0.5 ? 1.1 : 1.0) },
+        { scaleX: isDragging.value ? 1.2 : 1.0 },
       ],
     };
   });
@@ -383,29 +536,25 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const currentUri = thumbnails[activeIdx];
 
   return (
-    <Animated.View
-      pointerEvents="box-none"
-      style={[loupeCardStyles.container, animatedStyle]}
-    >
-      <Pressable
-        onPress={handleCardPress}
-        style={({ pressed }) => [
-          loupeCardStyles.card,
-          pressed && { transform: [{ scale: 0.92 }] },
-        ]}
+    <GestureDetector gesture={composedGesture}>
+      <Animated.View
+        collapsable={false}
+        style={[loupeCardStyles.container, animatedContainerStyle]}
       >
-        {currentUri ? (
-          <Image
-            source={{ uri: currentUri }}
-            style={StyleSheet.absoluteFillObject}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={50}
-          />
-        ) : null}
-      </Pressable>
-      <View style={loupeCardStyles.bead} pointerEvents="none" />
-    </Animated.View>
+        <Animated.View style={[loupeCardStyles.card, cardAnimatedStyle]}>
+          {currentUri ? (
+            <Image
+              source={{ uri: currentUri }}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={50}
+            />
+          ) : null}
+        </Animated.View>
+        <Animated.View style={[loupeCardStyles.bead, beadAnimatedStyle]} />
+      </Animated.View>
+    </GestureDetector>
   );
 });
 
@@ -636,6 +785,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const loupeOpacity = useSharedValue(0);
   const isFadingLoupe = useSharedValue(false);
   const isLoupeAwake = useSharedValue(false);
+  const isDraggingLoupe = useSharedValue(false);
   const lastScrollYShared = useSharedValue(0);
   const contentHeightShared = useSharedValue(screenHeight * 2);
   const layoutHeightShared = useSharedValue(screenHeight);
@@ -1004,6 +1154,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       contentHeightShared.value = event.contentSize.height;
 
       // ─── Spatial Film Loupe Velocity Gating ─────────────────────────────────
+      if (isDraggingLoupe.value) {
+        lastScrollYShared.value = currentY;
+        return;
+      }
       const deltaY = Math.abs(currentY - lastScrollYShared.value);
       lastScrollYShared.value = currentY;
 
@@ -1772,7 +1926,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setIsLoadingMore(true);
 
       const startOffset = currentCount;
-      const CHUNK_SIZE = (estPhotosNeeded - startOffset > 400) ? 200 : 120;
+      const CHUNK_SIZE = (estPhotosNeeded - startOffset > 800) ? 350 : ((estPhotosNeeded - startOffset > 300) ? 200 : 120);
       const offsets: number[] = [];
       for (let off = startOffset; off < estPhotosNeeded; off += CHUNK_SIZE) {
         offsets.push(off);
@@ -1780,7 +1934,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       const eventHeaders = eventHeadersRef.current;
       const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(targetTab)}` : '';
-      const CONCURRENCY = 4;
+      const CONCURRENCY = 5;
       const allFetchedChunks: Photo[][] = [];
 
       for (let i = 0; i < offsets.length; i += CONCURRENCY) {
@@ -3294,6 +3448,40 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     [activeFilmstrip, loupeSampleInfo, activeTab, fastCatchupPhotos, scrollToY, screenHeight, saveResumeScrollPosition, loupeOpacity, isLoupeAwake, isFadingLoupe]
   );
 
+  // Dragging the Film Loupe card: user released after scrubbing
+  const handleLoupeDragEnd = useCallback(
+    (finalScrollY: number) => {
+      currentYRef.current = finalScrollY;
+      lastSavedScrollYRef.current = finalScrollY;
+      saveResumeScrollPosition(finalScrollY);
+
+      // Parallel stream missing photos around destination
+      fastCatchupPhotos(finalScrollY + screenHeight, activeTab);
+
+      // Awaken loupe briefly for confirmation, then schedule fade-out
+      loupeOpacity.value = withDelay(
+        1200,
+        withTiming(0, { duration: 350 }, (finished) => {
+          if (finished) {
+            isLoupeAwake.value = false;
+            isFadingLoupe.value = false;
+          }
+        })
+      );
+    },
+    [fastCatchupPhotos, activeTab, screenHeight, saveResumeScrollPosition, loupeOpacity, isLoupeAwake, isFadingLoupe]
+  );
+
+  // Scaled container height so scrollview can physically scroll across all 4,000+ photos
+  const estimatedTotalContentHeight = useMemo(() => {
+    if (totalTabPhotos <= 0) return 0;
+    const currentCols = galleryColumnsRef.current || galleryColumns || 2;
+    const heroHeight = Math.round(screenHeight * 0.70);
+    const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
+    const totalRows = Math.ceil(totalTabPhotos / currentCols);
+    return heroHeight + totalRows * rowH + 400;
+  }, [totalTabPhotos, galleryColumns, screenHeight]);
+
   // Header Cover Metadata: Priority 1: Vertical Cover -> Priority 2: Horizontal Cover -> Priority 3: First Gallery Photo
   const firstPhotoUrl = activeList[0]?.r2Url || activeList[0]?.url || allPhotos[0]?.r2Url || allPhotos[0]?.url || null;
 
@@ -3584,7 +3772,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 data={displayData as any}
                 numColumns={galleryColumns}
                 onNumColumnsChange={handleGalleryColumnsChange}
-                minContentHeight={resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0}
+                minContentHeight={Math.max(
+                  estimatedTotalContentHeight,
+                  resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0
+                )}
                 enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
                 isPinchingShared={isPinching}
                 minColumns={1}
@@ -3643,7 +3834,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 />
               )}
 
-              {/* ── Spatial Film Loupe (Velocity-Gated Pure-Photo Scrubber) ── */}
+              {/* ── Spatial Film Loupe (Velocity-Gated Pure-Photo Scrubber with Click & Drag) ── */}
               {!isCinema && loupeThumbnails.length > 0 && (
                 <SpatialFilmLoupeCard
                   thumbnails={loupeThumbnails}
@@ -3652,10 +3843,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   totalPhotosShared={totalPhotosShared}
                   columnsShared={columnsShared}
                   loupeOpacity={loupeOpacity}
+                  isDraggingLoupeShared={isDraggingLoupe}
+                  mainScrollRef={mainScrollRef}
                   insetsTop={insets.top}
                   insetsBottom={insets.bottom}
                   screenHeight={screenHeight}
                   onPressCard={handleJumpToKeyframe}
+                  onDragEnd={handleLoupeDragEnd}
                 />
               )}
             </View>
