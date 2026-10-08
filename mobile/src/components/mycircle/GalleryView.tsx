@@ -32,6 +32,11 @@ import * as MediaLibrary from 'expo-media-library';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
 import { tabEvents, EVENT_SAVES_UPDATED } from '../../lib/tabEvents';
 import {
+  getStoredFilmstrip,
+  persistFilmstripKeyframes,
+  getKeyframe150pxUrl,
+} from '../../services/filmstripStorage';
+import {
   GestureHandlerRootView,
   GestureDetector,
   Gesture,
@@ -234,31 +239,140 @@ const loupeCardStyles = StyleSheet.create({
     zIndex: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingLeft: 12,
-    paddingRight: 4,
+    paddingVertical: 12,
+    paddingLeft: 16,
+    paddingRight: 6,
   },
-  card: {
-    width: 66,
-    height: 88,
+  stripColumn: {
+    width: 62,
+    height: 62,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  squareCard: {
+    width: 62,
+    height: 62,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#18181b',
     borderWidth: 1.5,
     borderColor: '#d4af37',
-    marginRight: 6,
+    position: 'absolute',
+    right: 0,
+    top: 0,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.55,
-    shadowRadius: 14,
+    shadowRadius: 10,
     elevation: 10,
   },
-  bead: {
-    width: 3.5,
-    height: 24,
-    borderRadius: 2,
-    backgroundColor: '#d4af37',
-  },
+});
+
+interface ReelSlotProps {
+  targetIdx: number;
+  uri: string;
+  continuousPos: SharedValue<number>;
+  activeDirection: SharedValue<number>;
+  peekTopAnim: SharedValue<number>;
+  peekBottomAnim: SharedValue<number>;
+}
+
+const ReelSlot: React.FC<ReelSlotProps> = React.memo(({
+  targetIdx,
+  uri,
+  continuousPos,
+  activeDirection,
+  peekTopAnim,
+  peekBottomAnim,
+}) => {
+  const animatedStyle = useAnimatedStyle(() => {
+    'worklet';
+    const u = targetIdx - continuousPos.value;
+    const dist = Math.abs(u);
+
+    // If outside visible range (|u| >= 2.5), collapse and hide
+    if (dist >= 2.5) {
+      return {
+        opacity: 0,
+        transform: [
+          { translateY: u > 0 ? 122 : -122 },
+          { scale: 0.01 },
+          { translateX: 0 },
+        ],
+      };
+    }
+
+    // Monotonic vertical conveyor position:
+    // u = 0 -> center (0)
+    // u = 1 -> bottom flank (+56)
+    // u = 2 -> bottom peek (+98)
+    // u = -1 -> top flank (-56)
+    // u = -2 -> top peek (-98)
+    const translateY = interpolate(
+      u,
+      [-2.5, -2, -1, 0, 1, 2, 2.5],
+      [-122, -98, -56, 0, 56, 98, 122],
+      'clamp'
+    );
+
+    // macOS Dock Magnification Wavy Curve:
+    // Center: 1.0 peak (62pt)
+    // Flank: 0.72 (45pt)
+    // Peek: 0.45 (28pt)
+    // Edge: 0.01 (tapers seamlessly to zero)
+    const finalScale = interpolate(
+      dist,
+      [0, 0.5, 1.0, 1.5, 2.0, 2.5],
+      [1.0, 0.88, 0.72, 0.58, 0.45, 0.01],
+      'clamp'
+    );
+
+    // Right-edge anchor: keeps all squares flush to the right edge next to the gold bead
+    const shiftX = (1 - finalScale) * 31;
+
+    // Base opacity: 1.0 at center, 0.82 at flank, 0.55 at peek, 0 at 2.5
+    let op = interpolate(dist, [0, 1.0, 1.8, 2.5], [1.0, 0.82, 0.55, 0], 'clamp');
+
+    // 4th Peek Square directional gating:
+    // When below center (u > 1.25), only visible if scrolling DOWN (activeDirection === 1)
+    if (u > 1.25) {
+      const dirFactor = activeDirection.value === 1 ? peekBottomAnim.value : 0;
+      op = op * interpolate(dirFactor, [0, 1], [0, 1], 'clamp');
+    }
+    // When above center (u < -1.25), only visible if scrolling UP (activeDirection === -1)
+    else if (u < -1.25) {
+      const dirFactor = activeDirection.value === -1 ? peekTopAnim.value : 0;
+      op = op * interpolate(dirFactor, [0, 1], [0, 1], 'clamp');
+    }
+
+    const isCenter = dist < 0.5;
+
+    return {
+      opacity: op,
+      zIndex: Math.round(10 - dist * 3),
+      borderColor: isCenter ? '#d4af37' : 'rgba(212, 175, 55, 0.45)',
+      borderWidth: isCenter ? 1.5 : 1,
+      transform: [
+        { translateY },
+        { scale: Math.max(0.01, finalScale) },
+        { translateX: shiftX },
+      ],
+    };
+  });
+
+  return (
+    <Animated.View style={[loupeCardStyles.squareCard, animatedStyle]}>
+      <Image
+        source={{ uri }}
+        style={StyleSheet.absoluteFillObject}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        priority="high"
+        recyclingKey={uri}
+        transition={0}
+      />
+    </Animated.View>
+  );
 });
 
 interface SpatialFilmLoupeCardProps {
@@ -269,6 +383,7 @@ interface SpatialFilmLoupeCardProps {
   columnsShared: SharedValue<number>;
   loupeOpacity: SharedValue<number>;
   isDraggingLoupeShared: SharedValue<boolean>;
+  scrollDirectionShared?: SharedValue<number>;
   mainScrollRef: any;
   insetsTop: number;
   insetsBottom: number;
@@ -285,6 +400,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   columnsShared,
   loupeOpacity,
   isDraggingLoupeShared,
+  scrollDirectionShared,
   mainScrollRef,
   insetsTop,
   insetsBottom,
@@ -292,17 +408,21 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   onPressCard,
   onDragEnd,
 }) => {
-  const [activeIdx, setActiveIdx] = useState(0);
-  const activeIdxRef = useRef(0);
-  const lastUpdateRef = useRef(0);
-  const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const isDragging = useSharedValue(false);
   const dragStartY = useSharedValue(0);
   const dragStartProgress = useSharedValue(0);
-  const currentCardYShared = useSharedValue(insetsTop + 60);
+  const currentCardYShared = useSharedValue(insetsTop + 75);
   const currentActiveKeyframeShared = useSharedValue(0);
-  const cardScale = useSharedValue(1);
+  const continuousPosShared = useSharedValue(0);
+  const [canInteract, setCanInteract] = useState(false);
+
+  // Direction & Peek animation shared values for 4th square (1 = down, -1 = up)
+  const internalScrollDir = useSharedValue(1);
+  const activeDirection = scrollDirectionShared || internalScrollDir;
+  const enterDirection = useSharedValue(1);
+  const lastDragYShared = useSharedValue(0);
+  const peekTopAnim = useSharedValue(0);
+  const peekBottomAnim = useSharedValue(1); // Default to 1 so 4th square appears in scroll direction
 
   const triggerHapticTick = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
@@ -312,90 +432,135 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
 
-  const handleIndexChange = useCallback((nextIdx: number) => {
-    activeIdxRef.current = nextIdx;
-    const now = Date.now();
-    if (trailingTimerRef.current) {
-      clearTimeout(trailingTimerRef.current);
-      trailingTimerRef.current = null;
-    }
-    if (now - lastUpdateRef.current >= 35) {
-      lastUpdateRef.current = now;
-      setActiveIdx(nextIdx);
+  const handleCardPressWithCoord = useCallback((tapY: number) => {
+    const current = Math.round(continuousPosShared.value);
+    if (tapY < -34 && current >= 2) {
+      onPressCard?.(current - 2);
+    } else if (tapY < 15 && current >= 1) {
+      onPressCard?.(current - 1);
+    } else if (tapY > 120 && current <= thumbnails.length - 3) {
+      onPressCard?.(current + 2);
+    } else if (tapY > 71 && current <= thumbnails.length - 2) {
+      onPressCard?.(current + 1);
     } else {
-      trailingTimerRef.current = setTimeout(() => {
-        lastUpdateRef.current = Date.now();
-        setActiveIdx(activeIdxRef.current);
-      }, 40);
+      onPressCard?.(current);
     }
-  }, []);
+  }, [onPressCard, thumbnails.length]);
 
-  useEffect(() => {
-    return () => {
-      if (trailingTimerRef.current) {
-        clearTimeout(trailingTimerRef.current);
+  const calcContinuousKfPos = useCallback((photoIdx: number, totalPhotos: number): number => {
+    'worklet';
+    if (!thumbnails || thumbnails.length === 0) return 0;
+    if (keyframeIndices && keyframeIndices.length > 1) {
+      const lastKfIdx = keyframeIndices.length - 1;
+      if (photoIdx <= keyframeIndices[0]) return 0;
+      if (photoIdx >= keyframeIndices[lastKfIdx]) return lastKfIdx;
+      for (let i = 0; i < lastKfIdx; i++) {
+        const kfStart = keyframeIndices[i];
+        const kfEnd = keyframeIndices[i + 1];
+        if (photoIdx >= kfStart && photoIdx <= kfEnd) {
+          const segSpan = Math.max(1, kfEnd - kfStart);
+          return i + (photoIdx - kfStart) / segSpan;
+        }
       }
-    };
-  }, []);
-
-  const handleCardPress = useCallback(() => {
-    if (loupeOpacity.value > 0.15) {
-      onPressCard?.(activeIdxRef.current);
+      return 0;
     }
-  }, [loupeOpacity, onPressCard]);
+    const normProgress = Math.max(0, Math.min(1, photoIdx / Math.max(1, totalPhotos - 1)));
+    return normProgress * Math.max(0, thumbnails.length - 1);
+  }, [thumbnails, keyframeIndices]);
 
-  // Sync activeIdx when scrolling normally (not dragging)
+  // Reactive animation for 4th peek square on scroll direction change (normal scroll + drag)
+  useAnimatedReaction(
+    () => activeDirection.value,
+    (dir) => {
+      'worklet';
+      if (dir === 1) {
+        peekBottomAnim.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) });
+        peekTopAnim.value = withTiming(0, { duration: 150 });
+      } else if (dir === -1) {
+        peekTopAnim.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) });
+        peekBottomAnim.value = withTiming(0, { duration: 150 });
+      }
+    },
+    [activeDirection]
+  );
+
+  // Wake up 4th peek square and latch entrance direction when loupe becomes awake / visible
+  useAnimatedReaction(
+    () => loupeOpacity.value > 0.05,
+    (isAwake, prevIsAwake) => {
+      'worklet';
+      if (isAwake !== prevIsAwake) {
+        runOnJS(setCanInteract)(Boolean(isAwake));
+      }
+      if (isAwake && !prevIsAwake) {
+        const dir = activeDirection.value >= 0 ? 1 : -1;
+        enterDirection.value = dir;
+        if (dir === 1) {
+          peekBottomAnim.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+          peekTopAnim.value = withTiming(0, { duration: 150 });
+        } else {
+          peekTopAnim.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+          peekBottomAnim.value = withTiming(0, { duration: 150 });
+        }
+      }
+    },
+    [activeDirection]
+  );
+
+  // Sync continuous float position when scrolling normally
   useAnimatedReaction(
     () => {
       'worklet';
-      if (isDragging.value) return currentActiveKeyframeShared.value;
+      if (isDragging.value) return -1;
       if (!thumbnails || thumbnails.length === 0) return 0;
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const cols = columnsShared.value || 2;
       const heroHeight = Math.round(screenHeight * 0.70);
       const relativeY = Math.max(0, scrollY.value - heroHeight);
       const rowH = cols === 1 ? 380 : (cols === 2 ? 220 : (cols === 3 ? 145 : (cols === 4 ? 105 : 80)));
-      const currentRow = relativeY / rowH;
-      const currentPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, Math.floor(currentRow * cols)));
+      const continuousRow = relativeY / rowH;
+      const continuousPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, continuousRow * cols));
 
-      if (keyframeIndices && keyframeIndices.length > 0) {
-        let foundIdx = 0;
-        for (let i = keyframeIndices.length - 1; i >= 0; i--) {
-          if (currentPhotoIdx >= keyframeIndices[i]) {
-            foundIdx = i;
-            break;
-          }
-        }
-        return Math.min(thumbnails.length - 1, Math.max(0, foundIdx));
-      }
+      const continuousKfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+      continuousPosShared.value = continuousKfPos;
 
-      const progress = Math.max(0, Math.min(1, currentPhotoIdx / Math.max(1, totalPhotos - 1)));
-      return Math.min(thumbnails.length - 1, Math.floor(progress * thumbnails.length));
+      return Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
     },
     (nextIdx, prevIdx) => {
       'worklet';
-      if (!isDragging.value && nextIdx !== prevIdx) {
+      if (!isDragging.value && nextIdx >= 0 && prevIdx !== null && nextIdx !== prevIdx) {
         currentActiveKeyframeShared.value = nextIdx;
-        runOnJS(handleIndexChange)(nextIdx);
+        runOnJS(triggerHapticTick)();
       }
     },
-    [thumbnails, keyframeIndices, handleIndexChange, screenHeight]
+    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, triggerHapticTick]
   );
 
   const panGesture = Gesture.Pan()
     .minPointers(1)
     .maxPointers(1)
     .activeOffsetY([-4, 4])
-    .onBegin((e) => {
+    .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
+    .onBegin(() => {
+      'worklet';
+      loupeOpacity.value = withTiming(1, { duration: 80 });
+    })
+    .onStart((e) => {
       'worklet';
       isDragging.value = true;
       isDraggingLoupeShared.value = true;
-      cardScale.value = withTiming(1.08, { duration: 100 });
       loupeOpacity.value = withTiming(1, { duration: 80 });
 
+      if (activeDirection.value === 1) {
+        peekBottomAnim.value = withTiming(1, { duration: 150 });
+      } else {
+        peekTopAnim.value = withTiming(1, { duration: 150 });
+      }
+
       dragStartY.value = e.absoluteY;
-      const minY = insetsTop + 60;
-      const maxY = screenHeight - insetsBottom - 130;
+      lastDragYShared.value = e.absoluteY;
+      const minY = insetsTop + 75;
+      const maxY = screenHeight - insetsBottom - 145;
       const trackLength = Math.max(1, maxY - minY);
       dragStartProgress.value = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
 
@@ -405,8 +570,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       if (!isDragging.value) return;
 
-      const minY = insetsTop + 60;
-      const maxY = screenHeight - insetsBottom - 130;
+      const minY = insetsTop + 75;
+      const maxY = screenHeight - insetsBottom - 145;
       const trackLength = Math.max(1, maxY - minY);
 
       const deltaY = e.absoluteY - dragStartY.value;
@@ -414,6 +579,15 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       const newProgress = Math.max(0, Math.min(1, dragStartProgress.value + deltaProgress));
 
       currentCardYShared.value = minY + newProgress * trackLength;
+
+      // Track drag direction for the 4th peek square
+      const dragDelta = e.absoluteY - lastDragYShared.value;
+      lastDragYShared.value = e.absoluteY;
+      if (dragDelta > 1) {
+        activeDirection.value = 1;
+      } else if (dragDelta < -1) {
+        activeDirection.value = -1;
+      }
 
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const continuousPhotoIdx = newProgress * Math.max(1, totalPhotos - 1);
@@ -426,24 +600,13 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       scrollTo(mainScrollRef, 0, targetScrollY, false);
       scrollY.value = targetScrollY;
 
-      const currentPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, Math.floor(continuousPhotoIdx)));
-      let nextIdx = 0;
-      if (keyframeIndices && keyframeIndices.length > 0) {
-        for (let i = keyframeIndices.length - 1; i >= 0; i--) {
-          if (currentPhotoIdx >= keyframeIndices[i]) {
-            nextIdx = i;
-            break;
-          }
-        }
-      } else if (thumbnails.length > 0) {
-        const normProgress = Math.max(0, Math.min(1, currentPhotoIdx / Math.max(1, totalPhotos - 1)));
-        nextIdx = Math.floor(normProgress * thumbnails.length);
-      }
-      nextIdx = Math.max(0, Math.min(thumbnails.length - 1, nextIdx));
+      // Continuous keyframe position using identical non-linear timeline mapping
+      const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+      continuousPosShared.value = kfPos;
 
+      const nextIdx = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
       if (nextIdx !== currentActiveKeyframeShared.value) {
         currentActiveKeyframeShared.value = nextIdx;
-        runOnJS(handleIndexChange)(nextIdx);
         runOnJS(triggerHapticTick)();
       }
     })
@@ -451,11 +614,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
-      cardScale.value = withTiming(1, { duration: 120 });
+      peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+      peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
 
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
-      const minY = insetsTop + 60;
-      const maxY = screenHeight - insetsBottom - 130;
+      const minY = insetsTop + 75;
+      const maxY = screenHeight - insetsBottom - 145;
       const trackLength = Math.max(1, maxY - minY);
       const finalProgress = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
       const continuousPhotoIdx = finalProgress * Math.max(1, totalPhotos - 1);
@@ -473,16 +637,22 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
-      cardScale.value = withTiming(1, { duration: 120 });
+      peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+      peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
     });
 
   const tapGesture = Gesture.Tap()
-    .maxDuration(250)
-    .maxDistance(8)
-    .onEnd((_e, success) => {
+    .maxDuration(500)
+    .maxDistance(12)
+    .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
+    .onBegin(() => {
+      'worklet';
+      loupeOpacity.value = withTiming(1, { duration: 80 });
+    })
+    .onEnd((e, success) => {
       'worklet';
       if (success) {
-        runOnJS(handleCardPress)();
+        runOnJS(handleCardPressWithCoord)(e.y);
       }
     });
 
@@ -490,8 +660,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
 
   const animatedContainerStyle = useAnimatedStyle(() => {
     'worklet';
-    const minY = insetsTop + 60;
-    const maxY = screenHeight - insetsBottom - 130;
+    const minY = insetsTop + 75;
+    const maxY = screenHeight - insetsBottom - 145;
 
     let targetY = currentCardYShared.value;
     if (!isDragging.value) {
@@ -508,51 +678,57 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     }
 
     return {
+      opacity: loupeOpacity.value,
       transform: [{ translateY: targetY }],
     };
   });
 
-  const cardAnimatedStyle = useAnimatedStyle(() => {
+  // Entire strip column blossoms out from the right edge with a directional swoop along the scroll vector
+  const stripAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
+    const enterScale = interpolate(loupeOpacity.value, [0, 1], [0.35, 1], 'clamp');
+    const shiftX = (1 - enterScale) * 31; // Center card half-width (62 / 2)
+
+    // Directional swoop along the scroll vector:
+    // Down (dir = 1): swoops down from -32pt into resting position
+    // Up (dir = -1): swoops up from +32pt into resting position
+    const startOffsetY = enterDirection.value === 1 ? -32 : 32;
+    const enterTranslateY = interpolate(loupeOpacity.value, [0, 1], [startOffsetY, 0], 'clamp');
+
     return {
       opacity: loupeOpacity.value,
       transform: [
-        { scale: interpolate(loupeOpacity.value, [0, 1], [0.82, 1], 'clamp') * cardScale.value },
+        { translateY: enterTranslateY },
+        { scale: enterScale },
+        { translateX: shiftX },
       ],
     };
   });
-
-  const beadAnimatedStyle = useAnimatedStyle(() => {
-    'worklet';
-    return {
-      opacity: interpolate(loupeOpacity.value, [0, 1], [0.35, 1], 'clamp'),
-      transform: [
-        { scaleY: isDragging.value ? 1.3 : (loupeOpacity.value > 0.5 ? 1.1 : 1.0) },
-        { scaleX: isDragging.value ? 1.2 : 1.0 },
-      ],
-    };
-  });
-
-  const currentUri = thumbnails[activeIdx];
 
   return (
     <GestureDetector gesture={composedGesture}>
       <Animated.View
         collapsable={false}
+        pointerEvents={canInteract ? 'auto' : 'none'}
+        hitSlop={{ top: 90, bottom: 90, left: 30, right: 15 }}
         style={[loupeCardStyles.container, animatedContainerStyle]}
       >
-        <Animated.View style={[loupeCardStyles.card, cardAnimatedStyle]}>
-          {currentUri ? (
-            <Image
-              source={{ uri: currentUri }}
-              style={StyleSheet.absoluteFillObject}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={50}
+        <Animated.View
+          pointerEvents="none"
+          style={[loupeCardStyles.stripColumn, stripAnimatedStyle]}
+        >
+          {thumbnails.map((uri, idx) => (
+            <ReelSlot
+              key={`reel-${idx}`}
+              targetIdx={idx}
+              uri={uri}
+              continuousPos={continuousPosShared}
+              activeDirection={activeDirection}
+              peekTopAnim={peekTopAnim}
+              peekBottomAnim={peekBottomAnim}
             />
-          ) : null}
+          ))}
         </Animated.View>
-        <Animated.View style={[loupeCardStyles.bead, beadAnimatedStyle]} />
       </Animated.View>
     </GestureDetector>
   );
@@ -786,14 +962,18 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const isFadingLoupe = useSharedValue(false);
   const isLoupeAwake = useSharedValue(false);
   const isDraggingLoupe = useSharedValue(false);
+  const fastScrollStartTimeShared = useSharedValue(0);
+  const fastScrollDistanceShared = useSharedValue(0);
   const lastScrollYShared = useSharedValue(0);
   const contentHeightShared = useSharedValue(screenHeight * 2);
   const layoutHeightShared = useSharedValue(screenHeight);
   const totalPhotosShared = useSharedValue(0);
+  const loupeScrollDirection = useSharedValue<number>(1);
   const loupeThumbnailsRef = useRef<string[]>([]);
   const filmstripCacheRef = useRef<Record<string, FilmstripData>>({});
   const [activeFilmstrip, setActiveFilmstrip] = useState<FilmstripData | null>(null);
   const activeFilmstripRef = useRef<FilmstripData | null>(null);
+  const fetchFilmstripRef = useRef<((tabName: string, forceRefresh?: boolean) => Promise<void>) | null>(null);
   useEffect(() => {
     activeFilmstripRef.current = activeFilmstrip;
   }, [activeFilmstrip]);
@@ -1153,33 +1333,83 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       layoutHeightShared.value = event.layoutMeasurement.height;
       contentHeightShared.value = event.contentSize.height;
 
-      // ─── Spatial Film Loupe Velocity Gating ─────────────────────────────────
+      // ─── Spatial Film Loupe Velocity & Intent Gating ──────────────────────
       if (isDraggingLoupe.value) {
         lastScrollYShared.value = currentY;
+        fastScrollStartTimeShared.value = 0;
+        fastScrollDistanceShared.value = 0;
         return;
       }
-      const deltaY = Math.abs(currentY - lastScrollYShared.value);
+      const rawDeltaY = currentY - lastScrollYShared.value;
+      const deltaY = Math.abs(rawDeltaY);
       lastScrollYShared.value = currentY;
 
-      // Fast flick / brisk scroll detection (deltaY > 10px per frame on 60Hz/120Hz)
-      if (deltaY > 10) {
-        if (!isLoupeAwake.value) {
-          isLoupeAwake.value = true;
-          isFadingLoupe.value = false;
-          loupeOpacity.value = withTiming(1, { duration: 120 });
-        }
-      } else if (deltaY <= 3 && isLoupeAwake.value && !isFadingLoupe.value) {
-        // Schedule fade-out ONCE when scroll settles
-        isFadingLoupe.value = true;
-        loupeOpacity.value = withDelay(
-          500,
-          withTiming(0, { duration: 350 }, (finished) => {
+      if (rawDeltaY > 1) {
+        loupeScrollDirection.value = 1;
+      } else if (rawDeltaY < -1) {
+        loupeScrollDirection.value = -1;
+      }
+
+      // Do not trigger loupe when viewing the hero cover image at the very top
+      if (currentY < heroCoverHeight * 0.4) {
+        fastScrollStartTimeShared.value = 0;
+        fastScrollDistanceShared.value = 0;
+        if (isLoupeAwake.value && !isFadingLoupe.value) {
+          isFadingLoupe.value = true;
+          loupeOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
             if (finished) {
               isLoupeAwake.value = false;
               isFadingLoupe.value = false;
             }
-          })
-        );
+          });
+        }
+      } else {
+        const now = Date.now();
+
+        // Fast scrolling threshold: deltaY > 14px per frame (balanced intent gating)
+        if (deltaY > 14) {
+          if (fastScrollStartTimeShared.value === 0) {
+            fastScrollStartTimeShared.value = now;
+            fastScrollDistanceShared.value = deltaY;
+          } else {
+            fastScrollDistanceShared.value += deltaY;
+          }
+
+          const elapsedFastTime = now - fastScrollStartTimeShared.value;
+          const accumulatedDistance = fastScrollDistanceShared.value;
+
+          // Intent condition: user is scrolling intentionally (balanced middle ground)
+          const isIntentionalLongScroll =
+            (elapsedFastTime >= 230 && accumulatedDistance >= 360) || accumulatedDistance >= 600;
+
+          if (isIntentionalLongScroll && !isLoupeAwake.value) {
+            isLoupeAwake.value = true;
+            isFadingLoupe.value = false;
+            loupeOpacity.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
+          } else if (isLoupeAwake.value && isFadingLoupe.value) {
+            // Cancel pending fade-out if user resumes fast scrolling
+            isFadingLoupe.value = false;
+            loupeOpacity.value = withTiming(1, { duration: 140, easing: Easing.out(Easing.cubic) });
+          }
+        } else if (deltaY <= 3) {
+          // Scroll slowed down or stopped
+          fastScrollStartTimeShared.value = 0;
+          fastScrollDistanceShared.value = 0;
+
+          if (isLoupeAwake.value && !isFadingLoupe.value) {
+            // Schedule fade-out ONCE when scroll settles: hold for 800ms, then smoothly fade away to zero
+            isFadingLoupe.value = true;
+            loupeOpacity.value = withDelay(
+              800,
+              withTiming(0, { duration: 300, easing: Easing.inOut(Easing.quad) }, (finished) => {
+                if (finished) {
+                  isLoupeAwake.value = false;
+                  isFadingLoupe.value = false;
+                }
+              })
+            );
+          }
+        }
       }
 
       runOnJS(handleViewportScroll)(
@@ -1425,7 +1655,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         );
         if (ssoRes.data?.token) {
           eventHeadersRef.current = { Authorization: `Bearer ${ssoRes.data.token}` };
-          fetchFilmstrip(activeTab);
+          fetchFilmstripRef.current?.(activeTab, true);
           if (ssoRes.data?.guest) {
             const g = ssoRes.data.guest;
             setEventGuest(g);
@@ -1673,7 +1903,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Silent token rotation from server
       if (bundleData.token) {
         eventHeadersRef.current = { Authorization: `Bearer ${bundleData.token}` };
-        fetchFilmstrip(activeTab);
+        fetchFilmstripRef.current?.(activeTab, true);
       }
 
       // 1. Process Event Details
@@ -1800,6 +2030,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       // Smooth chunked background prefetch of initial batch into native image cache
       scheduleBatchPrefetch(mappedPhotos);
+
+      // Revalidate filmstrip milestones with latest event photo count
+      fetchFilmstripRef.current?.(activeTab, true);
     } catch (err) {
       console.warn('[MYCIRCLE REVALIDATE ⚠️] fetchPhotos error:', err);
     } finally {
@@ -1810,7 +2043,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const handleRefreshGallery = async () => {
     setIsRefreshingGallery(true);
     try {
-      await fetchPhotos();
+      filmstripCacheRef.current = {};
+      await Promise.all([
+        fetchPhotos(),
+        fetchFilmstripRef.current ? fetchFilmstripRef.current(activeTab, true) : Promise.resolve(),
+      ]);
     } catch (_) {
     } finally {
       setIsRefreshingGallery(false);
@@ -3199,31 +3436,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const isAllTab = normTab === 'ALL';
     const total = source.length;
 
-    let step: number;
-    if (isAllTab) {
-      if (total >= 500) {
-        step = 100;
-      } else if (total >= 200) {
-        step = 50;
-      } else {
-        step = Math.max(15, Math.floor(total / 6));
-      }
-    } else {
-      if (total >= 250) {
-        step = 50;
-      } else if (total >= 100) {
-        step = 25;
-      } else {
-        step = Math.max(10, Math.floor(total / 6));
-      }
-    }
-    step = Math.max(5, step);
+    // Dynamically target ~50-70 keyframes for smooth, continuous timeline scrubbing
+    const targetKeyframes = Math.min(65, Math.max(20, Math.floor(total / 3)));
+    const step = Math.max(1, Math.floor(total / targetKeyframes));
 
     const sampledItems: { index: number; id: number; url: string }[] = [];
 
     source.forEach((p, idx) => {
       if (idx % step === 0) {
-        const thumbUrl = getThumbnailUrl(p, 150) || p.r2Url || p.uri || '';
+        const rawUrl = p.r2Url || p.thumbnailUrl || p.uri || '';
+        const thumbUrl = getKeyframe150pxUrl(rawUrl);
         if (thumbUrl && typeof thumbUrl === 'string') {
           sampledItems.push({ index: idx, id: p.id, url: thumbUrl });
         }
@@ -3239,16 +3461,29 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   }, [allPhotos, activeList, activeTab]);
 
   // Fetch full timeline indexed filmstrip keyframes from server (covers all 4,000+ photos across active tab)
-  const fetchFilmstrip = useCallback(async (tabName: string) => {
+  const fetchFilmstrip = useCallback(async (tabName: string, forceRefresh: boolean = false) => {
     if (!eventSlug) return;
     const normTab = (tabName || 'ALL').trim().toUpperCase();
     if (normTab === 'CINEMA') return;
 
-    // Instant return if already in RAM cache
-    if (filmstripCacheRef.current[normTab]) {
+    // 1. Instant return if already in RAM cache (unless forceRefresh is requested)
+    if (!forceRefresh && filmstripCacheRef.current[normTab]) {
       setActiveFilmstrip(filmstripCacheRef.current[normTab]);
       return;
     }
+
+    // 2. Instant return from permanent document storage (0ms offline load)
+    try {
+      const stored = await getStoredFilmstrip(eventSlug, normTab);
+      if (stored) {
+        filmstripCacheRef.current[normTab] = stored;
+        setActiveFilmstrip(stored);
+        const storedUrls = stored.keyframes.map((kf) => kf.thumbnailUrl).filter(Boolean);
+        if (storedUrls.length > 0) {
+          Image.prefetch(storedUrls, 'memory-disk');
+        }
+      }
+    } catch (_) {}
 
     // Skip server call for personal virtual tabs
     if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') {
@@ -3262,40 +3497,59 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const headers = authHeader ? { Authorization: authHeader } : {};
 
       const res = await guestApi.get(
-        `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(normTab)}`,
+        `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(normTab)}&target=65`,
         { headers }
       );
 
       if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
         const data: FilmstripData = res.data;
-        filmstripCacheRef.current[normTab] = data;
-        setActiveFilmstrip(data);
 
-        console.log(`\n================== [FILM LOUPE TIMELINE 🎞️] ==================`);
-        console.log(`📸 EVENT: "${cleanTitle}" (${eventSlug}) | TAB: "${normTab}"`);
-        console.log(`📊 TOTAL PHOTOS ON SERVER: ${data.total}`);
-        console.log(`🎯 SAMPLING STEP: Every ${data.step}th photo`);
-        console.log(`📥 KEYFRAMES LOADED: ${data.keyframes.length} milestone thumbnails`);
-        data.keyframes.slice(0, 10).forEach((kf, idx) => {
-          console.log(`   [#${idx + 1}/${data.keyframes.length}] Full-Album Photo #${kf.index} (ID: ${kf.id}) -> ${kf.thumbnailUrl || kf.r2Url}`);
-        });
-        if (data.keyframes.length > 10) {
-          console.log(`   ... plus ${data.keyframes.length - 10} more keyframes.`);
+        // Immediately warm all 150px remote keyframe URLs into native memory cache
+        const remoteUrls = data.keyframes.map((kf) => getKeyframe150pxUrl(kf.thumbnailUrl || kf.r2Url)).filter(Boolean);
+        if (remoteUrls.length > 0) {
+          Image.prefetch(remoteUrls, 'memory-disk');
         }
-        console.log(`==============================================================\n`);
 
-        const urlsToPrefetch = data.keyframes
-          .map((kf) => getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url)
-          .filter(Boolean);
+        // Check if data actually changed compared to current cache
+        const currentData = filmstripCacheRef.current[normTab];
+        const isIdentical =
+          !forceRefresh &&
+          currentData &&
+          currentData.total === data.total &&
+          currentData.keyframes.length === data.keyframes.length &&
+          currentData.keyframes[0]?.id === data.keyframes[0]?.id &&
+          currentData.keyframes[data.keyframes.length - 1]?.id === data.keyframes[data.keyframes.length - 1]?.id;
 
-        if (urlsToPrefetch.length > 0) {
-          Image.prefetch(urlsToPrefetch, 'memory-disk');
+        if (!isIdentical) {
+          // Immediate display while saving permanently in background
+          filmstripCacheRef.current[normTab] = data;
+          setActiveFilmstrip(data);
+
+          console.log(`\n================== [FILM LOUPE TIMELINE 🎞️] ==================`);
+          console.log(`📸 EVENT: "${cleanTitle}" (${eventSlug}) | TAB: "${normTab}"`);
+          console.log(`📊 TOTAL PHOTOS ON SERVER: ${data.total}`);
+          console.log(`🎯 SAMPLING STEP: Every ${data.step}th photo`);
+          console.log(`📥 KEYFRAMES LOADED: ${data.keyframes.length} milestone thumbnails`);
+          console.log(`💾 DOWNLOADING TO PERMANENT STORAGE AT 150PX RETINA RESOLUTION...`);
+          console.log(`==============================================================\n`);
+
+          // Persist all 150px keyframes permanently to FileSystem.documentDirectory
+          persistFilmstripKeyframes(eventSlug, normTab, data).then((persistedData) => {
+            filmstripCacheRef.current[normTab] = persistedData;
+            setActiveFilmstrip(persistedData);
+          }).catch((err) => {
+            console.warn('[FILMSTRIP] Error persisting keyframes:', err);
+          });
         }
       }
     } catch (err) {
       console.log(`[FILM LOUPE ⚠️] Could not fetch server filmstrip for tab "${normTab}", falling back to local sampling:`, err);
     }
   }, [eventSlug, cleanTitle]);
+
+  useEffect(() => {
+    fetchFilmstripRef.current = fetchFilmstrip;
+  }, [fetchFilmstrip]);
 
   // Fetch filmstrip whenever activeTab or eventSlug changes
   useEffect(() => {
@@ -3314,22 +3568,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const norm = t.trim().toUpperCase();
         if (filmstripCacheRef.current[norm]) return;
         try {
+          // Check permanent storage first
+          const stored = await getStoredFilmstrip(eventSlug, norm);
+          if (stored) {
+            filmstripCacheRef.current[norm] = stored;
+            return;
+          }
+
           const familyToken = useAuthStore.getState().token;
           const authHeader = eventHeadersRef.current.Authorization || (familyToken ? `Bearer ${familyToken}` : undefined);
           const headers = authHeader ? { Authorization: authHeader } : {};
 
           const res = await guestApi.get(
-            `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(norm)}`,
+            `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(norm)}&target=65`,
             { headers }
           );
           if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
-            filmstripCacheRef.current[norm] = res.data;
-            const urls = res.data.keyframes
-              .map((kf: FilmstripKeyframe) => getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url)
-              .filter(Boolean);
-            if (urls.length > 0) {
-              Image.prefetch(urls, 'memory-disk');
-            }
+            persistFilmstripKeyframes(eventSlug, norm, res.data).then((persistedData) => {
+              filmstripCacheRef.current[norm] = persistedData;
+            }).catch(() => {});
           }
         } catch (_) {}
       });
@@ -3342,7 +3599,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const loupeThumbnails = useMemo(() => {
     if (activeFilmstrip?.keyframes && activeFilmstrip.keyframes.length > 0) {
       return activeFilmstrip.keyframes.map((kf) => {
-        return getThumbnailUrl({ r2Url: kf.r2Url, thumbnailUrl: kf.thumbnailUrl }, 150) || kf.thumbnailUrl || kf.r2Url;
+        // If already stored in permanent storage, use local file path directly!
+        if (kf.thumbnailUrl?.startsWith('file:') || (kf as any).localPath?.startsWith('file:')) {
+          return (kf as any).localPath || kf.thumbnailUrl;
+        }
+        return getKeyframe150pxUrl(kf.thumbnailUrl || kf.r2Url);
       });
     }
     return loupeSampleInfo.thumbnails;
@@ -3359,25 +3620,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return [];
   }, [activeFilmstrip, loupeSampleInfo]);
 
-  // Pre-load sampled thumbnails into native memory & disk cache (fallback mode)
+  // Pre-load all loupe thumbnails into native memory & disk cache
   useEffect(() => {
     loupeThumbnailsRef.current = loupeThumbnails;
-    if (!activeFilmstrip && loupeThumbnails.length > 0) {
-      console.log(`\n================== [FILM LOUPE LOCAL FALLBACK 🎞️] ==================`);
-      console.log(`📸 EVENT: "${cleanTitle}" (${eventSlug})`);
-      console.log(`📊 TOTAL GALLERY SIZE (Server Total): ${totalAllPhotosCount ?? 'unknown'} photos`);
-      console.log(`📦 CLIENT LOADED IN-MEMORY: ${loupeSampleInfo.sourceCount} photos (allPhotos: ${allPhotos.length}, activeList: ${activeList.length})`);
-      console.log(`🎯 SAMPLING STEP: Every ${loupeSampleInfo.step}th photo`);
-      console.log(`📥 DOWNLOADING / PREFETCHING: ${loupeThumbnails.length} thumbnail files into local memory-disk cache`);
-      console.log(`====================================================================\n`);
-
-      loupeThumbnails.forEach((url) => {
-        if (url && typeof url === 'string') {
-          Image.prefetch(url, 'memory-disk');
-        }
-      });
+    if (loupeThumbnails.length > 0) {
+      Image.prefetch(loupeThumbnails, 'memory-disk');
     }
-  }, [loupeThumbnails, cleanTitle, eventSlug, totalAllPhotosCount, allPhotos.length, activeList.length, loupeSampleInfo, activeFilmstrip]);
+  }, [loupeThumbnails]);
 
   // Total photos in the active tab (used to scale container height to match the entire 4,000+ photo timeline)
   const totalTabPhotos = useMemo(() => {
@@ -3413,7 +3662,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       } else if (loupeSampleInfo.sampledItems && loupeSampleInfo.sampledItems[keyframeIdx]) {
         targetPhotoIndex = loupeSampleInfo.sampledItems[keyframeIdx].index;
       } else {
-        const step = activeFilmstrip?.step ?? (activeTab.trim().toUpperCase() === 'ALL' ? 100 : 50);
+        const step = activeFilmstrip?.step ?? loupeSampleInfo.step ?? 15;
         targetPhotoIndex = keyframeIdx * step;
       }
 
@@ -3844,6 +4093,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   columnsShared={columnsShared}
                   loupeOpacity={loupeOpacity}
                   isDraggingLoupeShared={isDraggingLoupe}
+                  scrollDirectionShared={loupeScrollDirection}
                   mainScrollRef={mainScrollRef}
                   insetsTop={insets.top}
                   insetsBottom={insets.bottom}
