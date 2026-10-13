@@ -8,8 +8,26 @@ export const API_BASE_URL = 'https://mycircle.mistyvisuals.com';
 
 const appVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.2';
 
+export type ApiErrorInfo = {
+  url: string;
+  method?: string;
+  status?: number;
+  message: string;
+  durationMs?: number;
+  isTimeout?: boolean;
+  isNetworkError?: boolean;
+};
+
+type ApiErrorListener = (info: ApiErrorInfo) => void;
+let apiErrorListener: ApiErrorListener | null = null;
+
+export function setApiErrorListener(listener: ApiErrorListener | null) {
+  apiErrorListener = listener;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 25000,
   headers: {
     'Content-Type': 'application/json',
     'X-App-Version': appVersion,
@@ -21,6 +39,7 @@ const api = axios.create({
 // This lets callers pass a per-event guest token without it being overwritten.
 api.interceptors.request.use(
   (config) => {
+    (config as any)._requestStartTime = Date.now();
     if (config.headers && typeof (config.headers as any).set === 'function') {
       (config.headers as any).set('X-App-Version', appVersion);
       (config.headers as any).set('x-app-version', appVersion);
@@ -67,8 +86,43 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    const url: string = error.config?.url || '';
+    const method = error.config?.method?.toUpperCase() || 'GET';
+    const status = error.response?.status;
+    const startTime = (error.config as any)?._requestStartTime;
+    const durationMs = startTime ? Date.now() - startTime : undefined;
+    const isTimeout = error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout');
+    const isNetworkError = !error.response;
+
+    const errMsg = isTimeout
+      ? `Request timed out (${durationMs || 25000}ms)`
+      : isNetworkError
+      ? 'Network offline or server unreachable'
+      : (error.response?.data?.message || error.message || `HTTP ${status}`);
+
+    if (isTimeout) {
+      console.warn(`[API TIMEOUT ⏱️] ${method} ${url} timed out after ${durationMs}ms`);
+    } else if (isNetworkError) {
+      console.warn(`[API NETWORK 📡] Connection failed for ${method} ${url}:`, error.message);
+    } else if (status && status >= 500) {
+      console.warn(`[API 5xx ⚠️] Server error ${status} on ${method} ${url}:`, errMsg);
+    }
+
+    if (apiErrorListener) {
+      try {
+        apiErrorListener({
+          url,
+          method,
+          status,
+          message: errMsg,
+          durationMs,
+          isTimeout,
+          isNetworkError,
+        });
+      } catch (_) {}
+    }
+
     if (error.response && error.response.status === 401) {
-      const url: string = error.config?.url || '';
       // Only skip logout for operations where 401 is an input error, NOT a session expiration
       // (e.g. invalid bulk download PIN).
       const isInputPinError = url.includes('/download');
@@ -88,6 +142,7 @@ export default api;
 // to call verifyGuestAuth-protected endpoints without header overwriting.
 export const guestApi = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 25000,
   headers: {
     'Content-Type': 'application/json',
     'X-App-Version': appVersion,
@@ -95,6 +150,7 @@ export const guestApi = axios.create({
   },
 });
 guestApi.interceptors.request.use((config) => {
+  (config as any)._requestStartTime = Date.now();
   if (config.headers && typeof (config.headers as any).set === 'function') {
     (config.headers as any).set('X-App-Version', appVersion);
     (config.headers as any).set('x-app-version', appVersion);
@@ -103,4 +159,38 @@ guestApi.interceptors.request.use((config) => {
   config.headers['x-app-version'] = appVersion;
   return config;
 });
+guestApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const url: string = error.config?.url || '';
+    const method = error.config?.method?.toUpperCase() || 'GET';
+    const status = error.response?.status;
+    const startTime = (error.config as any)?._requestStartTime;
+    const durationMs = startTime ? Date.now() - startTime : undefined;
+    const isTimeout = error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout');
+    const isNetworkError = !error.response;
+
+    const errMsg = isTimeout
+      ? `Guest request timed out (${durationMs || 25000}ms)`
+      : isNetworkError
+      ? 'Guest network offline or server unreachable'
+      : (error.response?.data?.message || error.message || `HTTP ${status}`);
+
+    if (apiErrorListener) {
+      try {
+        apiErrorListener({
+          url,
+          method,
+          status,
+          message: errMsg,
+          durationMs,
+          isTimeout,
+          isNetworkError,
+        });
+      } catch (_) {}
+    }
+
+    return Promise.reject(error);
+  }
+);
 

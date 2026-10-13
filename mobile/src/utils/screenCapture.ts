@@ -22,30 +22,34 @@ try {
   console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] expo-screen-capture unavailable — rebuild required:', e?.message);
 }
 
+const activePreventedKeys = new Set<string>();
+
 export async function preventScreenCaptureAsync(key: string = 'default'): Promise<void> {
+  if (activePreventedKeys.has(key)) return;
+  activePreventedKeys.add(key);
+
   // In development mode, screen mirroring or QuickTime to Mac is commonly used for testing.
   // Enabling native screen capture prevention can blank out the screen to black.
   if (__DEV__) {
-    console.log(`[MYCIRCLE SCREEN CAPTURE 🛡️ DEV] Bypassed preventScreenCaptureAsync('${key}') in development mode to prevent black screen`);
     return;
   }
   if (!_mod?.preventScreenCaptureAsync) {
-    console.warn(`[MYCIRCLE SCREEN CAPTURE ⚠️] preventScreenCaptureAsync skipped — module not available`);
     return;
   }
   try {
     await _mod.preventScreenCaptureAsync(key);
-    console.log(`[MYCIRCLE SCREEN CAPTURE ✅] PREVENTED — key: ${key}`);
   } catch (err: any) {
     console.error('[MYCIRCLE SCREEN CAPTURE ❌] prevent failed:', err?.message);
   }
 }
 
 export async function allowScreenCaptureAsync(key: string = 'default'): Promise<void> {
+  if (!activePreventedKeys.has(key)) return;
+  activePreventedKeys.delete(key);
+
   if (!_mod?.allowScreenCaptureAsync) return;
   try {
     await _mod.allowScreenCaptureAsync(key);
-    console.log(`[MYCIRCLE SCREEN CAPTURE 🔓] ALLOWED — key: ${key}`);
   } catch (_) {}
 }
 

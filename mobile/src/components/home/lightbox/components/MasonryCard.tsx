@@ -19,6 +19,13 @@ export interface MasonryCardProps {
 
 const DEFAULT_NEUTRAL_BLURHASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
 
+// Track photos that have completed their organic reveal bloom in this gallery session
+const revealedPhotoIds = new Set<string>();
+
+export function clearRevealedPhotosCache(): void {
+  revealedPhotoIds.clear();
+}
+
 export const MasonryCard = React.memo(function MasonryCard({ 
   img, index, isColumn0, columnIndex, numColumns = 2, isHighPriority, onSelect, onRegisterRef, onToggleLike
 }: MasonryCardProps) {
@@ -74,8 +81,8 @@ export const MasonryCard = React.memo(function MasonryCard({
     : (blurhash ? { blurhash, width: 32, height: 32 } : undefined);
 
   const effectivePriority = typeof isHighPriority === 'boolean'
-    ? (isHighPriority ? "high" : "normal")
-    : (index < 30 ? "high" : "normal");
+    ? (isHighPriority ? "high" : "low")
+    : (index < 20 ? "high" : "normal");
 
   const isVideo =
     !!img?.isVideo ||
@@ -141,9 +148,10 @@ export const MasonryCard = React.memo(function MasonryCard({
           contentFit="cover"
           priority={effectivePriority}
           cachePolicy="memory-disk"
+          recyclingKey={String(cardId)}
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={0}
+          transition={Platform.OS === 'android' ? 0 : 50}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
@@ -212,7 +220,6 @@ export const MasonryCard = React.memo(function MasonryCard({
     prevProps.isColumn0 === nextProps.isColumn0 &&
     prevProps.columnIndex === nextProps.columnIndex &&
     prevProps.numColumns === nextProps.numColumns &&
-    prevProps.isHighPriority === nextProps.isHighPriority &&
     prevProps.img?.id === nextProps.img?.id &&
     prevProps.img?.uri === nextProps.img?.uri &&
     prevProps.img?.r2Url === nextProps.img?.r2Url &&
@@ -224,14 +231,14 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     overflow: 'hidden',
     position: 'relative',
   },
   masonryImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
   },
   heartOverlay: {
     position: 'absolute',

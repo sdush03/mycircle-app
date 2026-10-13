@@ -12,7 +12,9 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
+  Linking,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -168,6 +170,27 @@ export default function SettingsModal({
         },
       ]
     );
+  };
+
+  // Handle Support & Feedback
+  const handleOpenSupport = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const appVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.2';
+    const osInfo = `${Platform.OS.toUpperCase()} ${Platform.Version}`;
+    const userEmail = profile?.email || 'Guest';
+    const currentSlug = useAuthStore.getState().eventSlug || 'None';
+
+    const subject = encodeURIComponent(`[MyCircle Support] App Issue - v${appVersion}`);
+    const body = encodeURIComponent(
+      `Hi Misty Visuals Support Team,\n\nI need help with:\n[Describe your issue here]\n\nDiagnostic Info:\n- App Version: ${appVersion}\n- Device OS: ${osInfo}\n- Event Slug: ${currentSlug}\n- User: ${userEmail}\n`
+    );
+
+    Linking.openURL(`mailto:support@mistyvisuals.com?subject=${subject}&body=${body}`).catch(() => {
+      Alert.alert(
+        'Support & Feedback',
+        'Please write to our team directly at support@mistyvisuals.com and include details about what happened.'
+      );
+    });
   };
 
   // Handle Logout
@@ -612,7 +635,25 @@ export default function SettingsModal({
               <Ionicons name="chevron-forward" size={18} color="#888888" />
             </TouchableOpacity>
 
-            {/* ── 6. LOG OUT BUTTON ── */}
+            {/* ── 6. HELP & SUPPORT ROW ── */}
+            <TouchableOpacity
+              style={styles.actionCard}
+              activeOpacity={0.7}
+              onPress={handleOpenSupport}
+            >
+              <View style={styles.actionCardLeft}>
+                <View style={styles.actionIconCircle}>
+                  <Ionicons name="chatbubbles-outline" size={18} color="#111111" />
+                </View>
+                <View>
+                  <Text style={styles.actionCardTitle}>Help & Support</Text>
+                  <Text style={styles.actionCardSub}>Report an issue or chat with Misty Visuals</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#888888" />
+            </TouchableOpacity>
+
+            {/* ── 7. LOG OUT BUTTON ── */}
             <TouchableOpacity
               style={styles.logoutBtn}
               activeOpacity={0.7}

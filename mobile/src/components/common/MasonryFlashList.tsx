@@ -43,10 +43,8 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 export const DEFAULT_HORIZONTAL_MARGIN = 6;
 export const DEFAULT_CARD_GAP = 5;
 export const HORIZONTAL_MARGIN = 6;
-export const CARD_GAP = 5;
-// Right-sized overscan: On Android, 700dp covers ~0.9 screens above and below,
-// preventing excess bitmap memory and decoding pressure while eliminating blank slots.
-const OVERSCAN = Platform.OS === 'android' ? 700 : 1000;
+// Right-sized overscan: 1500px pre-fetches ~1.8 viewports ahead for instantaneous 120fps zero pop-in
+const OVERSCAN = Platform.OS === 'android' ? 1200 : 1500;
 
 export const getCardGapForCols = (cols: number): number => {
   switch (cols) {
@@ -63,24 +61,13 @@ export const getHorizontalMarginForCols = (_cols?: number): number => {
 };
 
 export const getPoolSizeForCols = (cols: number): number => {
-  // On Android, keeping 100-230 views in memory causes severe ART GC thrashing,
-  // Yoga layout recalculation lag, and frame drops.
-  // We right-size the pool to cover ~3.5-4 viewports (plenty for high-speed scrolling).
-  if (Platform.OS === 'android') {
-    switch (cols) {
-      case 1: return 18;
-      case 2: return 22; // 2 cols * 22 = 44 total views (vs 100 before!)
-      case 3: return 20; // 3 cols * 20 = 60 total views (vs 144 before!)
-      case 4: return 18; // 4 cols * 18 = 72 total views (vs 184 before!)
-      case 5: default: return 16;
-    }
-  }
+  // Right-size pool to cover ~4.5-5.5 viewports (plenty for high-speed flings without GC or layout spikes)
   switch (cols) {
-    case 1: return 30;
-    case 2: return 36;
-    case 3: return 34;
-    case 4: return 32;
-    case 5: default: return 28;
+    case 1: return 18;
+    case 2: return 22; // 2 cols * 22 = 44 total views
+    case 3: return 20; // 3 cols * 20 = 60 total views
+    case 4: return 18; // 4 cols * 18 = 72 total views
+    case 5: default: return 16;
   }
 };
 
@@ -114,6 +101,7 @@ interface SlotState {
   top: number;
   height: number;
   itemId?: string;
+  isOnScreen?: boolean;
 }
 
 function getItemId<T>(item: ColumnItem<T> | undefined): string | undefined {
@@ -163,6 +151,8 @@ export interface MasonryFlashListProps<T = any> {
     isColumn0: boolean;
     columnIndex?: number;
     numColumns?: number;
+    isOnScreen?: boolean;
+    isHighPriority?: boolean;
   }) => React.ReactElement;
   keyExtractor?: (item: T, index: number) => string;
   renderHeroCover?: () => React.ReactElement | null;
@@ -279,6 +269,14 @@ function assignSlots<T>(
     }
   }
 
+  // Track which items are already assigned in prevSlots for hysteresis:
+  const prevAssignedSet = new Set<number>();
+  for (let s = 0; s < prevSlots.length; s++) {
+    if (prevSlots[s].colItemIdx >= 0) {
+      prevAssignedSet.add(prevSlots[s].colItemIdx);
+    }
+  }
+
   // 2. Prioritize candidates only when there are more candidates than poolSize:
   if (candidates.length > poolSize) {
     candidates.sort((a, b) => {
@@ -286,6 +284,12 @@ function assignSlots<T>(
       const bOnScreen = onScreenSet.has(b);
       if (aOnScreen && !bOnScreen) return -1;
       if (!aOnScreen && bOnScreen) return 1;
+
+      // Hysteresis: retain items that ALREADY have an active slot assigned to avoid churning
+      const aInPrev = prevAssignedSet.has(a);
+      const bInPrev = prevAssignedSet.has(b);
+      if (aInPrev && !bInPrev) return -1;
+      if (!aInPrev && bInPrev) return 1;
 
       const itemA = items[a];
       const itemB = items[b];
@@ -322,12 +326,15 @@ function assignSlots<T>(
       assignedItems.add(colItemIdx);
       occupiedSlots.add(s);
       const currentItem = items[colItemIdx];
+      const isOnScreen = onScreenSet.has(colItemIdx);
+      // Retain slot reference if geometry has not moved
       if (slot.top !== currentItem.topY || slot.height !== currentItem.height) {
         next[s] = {
           colItemIdx,
           top: currentItem.topY,
           height: currentItem.height,
           itemId: String(itemId),
+          isOnScreen,
         };
       }
     }
@@ -351,7 +358,8 @@ function assignSlots<T>(
         const newTop = newItem.topY;
         const newH   = newItem.height;
         const newId  = String(getItemId(newItem) ?? itemIdx);
-        next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId };
+        const isOnScreen = onScreenSet.has(itemIdx);
+        next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId, isOnScreen };
       }
     }
   }
@@ -360,7 +368,7 @@ function assignSlots<T>(
   while (freeIdx < freeSlotIndices.length) {
     const slotIdx = freeSlotIndices[freeIdx++];
     if (next[slotIdx].colItemIdx !== -1) {
-      next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined };
+      next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined, isOnScreen: false };
     }
   }
 
@@ -757,7 +765,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       ],
       opacity,
       overflow: 'hidden',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#f2eee8',
     };
   });
 
@@ -766,7 +774,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       {card.uri ? (
         <Image
           source={{ uri: card.uri }}
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#ffffff' }]}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#f2eee8' }]}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={0}
@@ -787,32 +795,40 @@ const AnimatingCard = React.memo(function AnimatingCard({
 
 interface SlotViewProps {
   slot: SlotState;
+  left: number;
+  width: number;
   item: any;
   originalIndex: number;
   isColumn0: boolean;
   columnIndex: number;
   numColumns: number;
+  isOnScreen: boolean;
   renderItem: (info: {
     item: any;
     index: number;
     isColumn0: boolean;
     columnIndex?: number;
     numColumns?: number;
+    isOnScreen?: boolean;
+    isHighPriority?: boolean;
   }) => React.ReactElement;
 }
 
 const SlotView = React.memo(
   function SlotView({
     slot,
+    left,
+    width,
     item,
     originalIndex,
     isColumn0,
     columnIndex,
     numColumns,
+    isOnScreen,
     renderItem: renderFn,
   }: SlotViewProps) {
     return (
-      <View style={[styles.slot, { top: slot.top, height: slot.height }]}>
+      <View style={[styles.slot, { top: slot.top, left, width, height: slot.height }]}>
         {item
           ? renderFn({
               item,
@@ -820,6 +836,8 @@ const SlotView = React.memo(
               isColumn0,
               columnIndex,
               numColumns,
+              isOnScreen,
+              isHighPriority: isOnScreen,
             })
           : null}
       </View>
@@ -827,6 +845,8 @@ const SlotView = React.memo(
   },
   (prev, next) =>
     prev.slot === next.slot &&
+    prev.left === next.left &&
+    prev.width === next.width &&
     prev.item === next.item &&
     prev.originalIndex === next.originalIndex &&
     prev.isColumn0 === next.isColumn0 &&
@@ -883,6 +903,8 @@ export function MasonryFlashList<T = any>({
   const fromScrollYShared = useSharedValue(0);
   const targetScrollYShared = useSharedValue(0);
   const gestureStartTimeShared = useSharedValue(0);
+  const lastDispatchedSlotY = useSharedValue(0);
+  const lastDispatchedSlotTime = useSharedValue(0);
 
   const internalScrollRef = useAnimatedRef<Animated.ScrollView>();
   const effectiveScrollRef = (mainScrollRef || internalScrollRef) as any;
@@ -1081,12 +1103,9 @@ export function MasonryFlashList<T = any>({
     const timeDelta = now - lastUpdateRef.current;
     const distDelta = Math.abs(y - lastRenderedYRef.current);
 
-    // Dynamic threshold:
-    // On Android, don't re-render React on every 16ms if the scroll has only moved a few pixels!
-    // A card is ~200-250px tall, so moving 40px doesn't change visible cards in the pool.
-    // Throttling by time delta AND distance delta frees up the JS thread for 60/120fps scrolling!
-    const minTimeDelta = Platform.OS === 'android' ? 32 : 16;
-    const minDistDelta = Platform.OS === 'android' ? 45 : 30;
+    // Smooth 16ms cadence (60/120fps sync) with 20px delta check
+    const minTimeDelta = Platform.OS === 'android' ? 24 : 16;
+    const minDistDelta = Platform.OS === 'android' ? 30 : 20;
 
     if (!force && (timeDelta < minTimeDelta || distDelta < minDistDelta)) {
       if (trailingUpdateTimerRef.current) {
@@ -1645,6 +1664,49 @@ export function MasonryFlashList<T = any>({
     return ListFooterComponent as React.ReactNode;
   }, [ListFooterComponent]);
 
+  // Fixed, STABLE interleaving order: (col 0, slot 0), (col 1, slot 0), (col 0, slot 1), (col 1, slot 1)...
+  // The children array order NEVER changes, completely eliminating UIKit view reordering on scroll!
+  const allRenderSlots = useMemo(() => {
+    const list: Array<{
+      colIdx: number;
+      sIdx: number;
+      slot: SlotState;
+      colItem: ColumnItem<T> | null;
+      originalIndex: number;
+      left: number;
+      width: number;
+    }> = [];
+
+    const gap = layout.colGap ?? getCardGapForCols(currentCols);
+    const maxPool = Math.max(...layout.columns.map((_, c) => (columnSlots[c] || []).length));
+
+    for (let sIdx = 0; sIdx < maxPool; sIdx++) {
+      for (let colIdx = 0; colIdx < layout.columns.length; colIdx++) {
+        const slots = columnSlots[colIdx];
+        if (!slots || sIdx >= slots.length) continue;
+        const slot = slots[sIdx];
+        const col = layout.columns[colIdx];
+        const colItem =
+          slot.colItemIdx >= 0 && col.items && slot.colItemIdx < col.items.length
+            ? col.items[slot.colItemIdx]
+            : null;
+        const originalIndex = colItem?.originalIndex ?? (slot.colItemIdx >= 0 ? slot.colItemIdx : 999999);
+        const left = colIdx * (layout.colWidth + gap);
+        list.push({
+          colIdx,
+          sIdx,
+          slot,
+          colItem,
+          originalIndex,
+          left,
+          width: layout.colWidth,
+        });
+      }
+    }
+
+    return list;
+  }, [layout, columnSlots, currentCols]);
+
   const isScrolledPastHero = !renderHeroCover || scrollYRef.current >= heroHeightRef.current;
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -1728,50 +1790,28 @@ export function MasonryFlashList<T = any>({
                   styles.gridRow,
                   {
                     alignSelf: 'center',
+                    position: 'relative',
                     width: layout.columns.length * layout.colWidth + Math.max(0, layout.columns.length - 1) * (layout.colGap ?? getCardGapForCols(currentCols)),
+                    height: layout.maxHeight,
                   },
                   gridVisibilityStyle,
                 ]}
               >
-                {layout.columns.map((col, colIdx) => {
-                  const isLastCol = colIdx === layout.columns.length - 1;
-                  const slots = columnSlots[colIdx] || [];
-                  const gap = layout.colGap ?? getCardGapForCols(currentCols);
-
-                  return (
-                    <View
-                      key={`col-${colIdx}`}
-                      style={[
-                        styles.column,
-                        {
-                          width: layout.colWidth,
-                          height: col.height,
-                          marginRight: isLastCol ? 0 : gap,
-                          overflow: 'hidden',
-                        },
-                      ]}
-                    >
-                      {slots.map((slot, sIdx) => {
-                        const colItem =
-                          slot.colItemIdx >= 0 && col.items && slot.colItemIdx < col.items.length
-                            ? col.items[slot.colItemIdx]
-                            : null;
-                        return (
-                          <SlotView
-                            key={`slot-${colIdx}-${sIdx}`}
-                            slot={slot}
-                            item={colItem?.item}
-                            originalIndex={colItem?.originalIndex ?? 0}
-                            isColumn0={colIdx === 0}
-                            columnIndex={colIdx}
-                            numColumns={currentCols}
-                            renderItem={renderItem}
-                          />
-                        );
-                      })}
-                    </View>
-                  );
-                })}
+                {allRenderSlots.map(({ colIdx, sIdx, slot, colItem, originalIndex, left, width }) => (
+                  <SlotView
+                    key={`slot-${colIdx}-${sIdx}`}
+                    slot={slot}
+                    left={left}
+                    width={width}
+                    item={colItem?.item}
+                    originalIndex={originalIndex}
+                    isColumn0={colIdx === 0}
+                    columnIndex={colIdx}
+                    numColumns={currentCols}
+                    isOnScreen={!!slot.isOnScreen}
+                    renderItem={renderItem}
+                  />
+                ))}
               </Animated.View>
             )}
 
@@ -1809,33 +1849,28 @@ export function MasonryFlashList<T = any>({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   viewport: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   contentContainer: {
-    backgroundColor: '#ffffff',
     paddingBottom: 40,
   },
   gridRow: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
   },
   column: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
   },
   slot: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f2eee8',
     overflow: 'hidden',
   },
   stickyHeaderOverlay: {

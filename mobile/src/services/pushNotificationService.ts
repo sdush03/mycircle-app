@@ -22,6 +22,8 @@ Notifications.setNotificationHandler({
 class PushNotificationService {
   private isConfigured = false;
   private responseSubscription: Notifications.Subscription | null = null;
+  private registrationInFlight: Promise<string | null> | null = null;
+  private cachedToken: string | null = null;
 
   /**
    * Configure Android notification channel and setup response tap listener.
@@ -64,43 +66,54 @@ class PushNotificationService {
    * Request OS permissions, obtain Expo Push Token, and register it with backend.
    */
   public async registerForPushNotifications(): Promise<string | null> {
-    try {
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-
-      if (finalStatus !== 'granted') {
-        console.log('[PushNotificationService] Push notification permissions not granted.');
-        return null;
-      }
-
-      const projectId =
-        Constants.expoConfig?.extra?.eas?.projectId ||
-        Constants.easConfig?.projectId ||
-        '0e3ae02b-253b-4061-b328-0ea03b9e7308';
-
-      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-      const token = tokenData?.data;
-
-      if (!token) {
-        console.warn('[PushNotificationService] Could not retrieve Expo push token.');
-        return null;
-      }
-
-      console.log('[PushNotificationService] Retrieved Push Token:', token);
-
-      // Sync with backend API
-      await this.syncTokenWithBackend(token);
-
-      return token;
-    } catch (error: any) {
-      console.warn('[PushNotificationService] Error registering push notifications:', error?.message || error);
-      return null;
+    if (this.registrationInFlight) {
+      return this.registrationInFlight;
     }
+
+    this.registrationInFlight = (async () => {
+      try {
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+
+        if (finalStatus !== 'granted') {
+          return null;
+        }
+
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId ||
+          Constants.easConfig?.projectId ||
+          '0e3ae02b-253b-4061-b328-0ea03b9e7308';
+
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        const token = tokenData?.data;
+
+        if (!token) {
+          return null;
+        }
+
+        if (this.cachedToken !== token) {
+          console.log('[PushNotificationService] Push Token active:', token);
+          this.cachedToken = token;
+        }
+
+        // Sync with backend API
+        await this.syncTokenWithBackend(token);
+
+        return token;
+      } catch (error: any) {
+        console.warn('[PushNotificationService] Error registering push notifications:', error?.message || error);
+        return null;
+      } finally {
+        this.registrationInFlight = null;
+      }
+    })();
+
+    return this.registrationInFlight;
   }
 
   /**

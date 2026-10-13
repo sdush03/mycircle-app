@@ -68,12 +68,9 @@ export const SpatialFilmLoupe = React.memo(function SpatialFilmLoupe({
     (nextIdx, prevIdx) => {
       if (nextIdx !== prevIdx) {
         runOnJS(setActivePhotoIndex)(nextIdx);
-        if (isEdgeScrubbing.value) {
-          runOnJS(triggerHaptic)();
-        }
       }
     },
-    [thumbCount, triggerHaptic]
+    [thumbCount]
   );
 
   // Vertical gliding track bounds

@@ -146,7 +146,8 @@
           "icon": "./assets/images/icon.png",
           "color": "#111111"
         }
-      ]
+      ],
+      "./plugins/withDisableContentCapture"
     ],
     "experiments": {
       "typedRoutes": true,

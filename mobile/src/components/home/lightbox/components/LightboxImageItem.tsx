@@ -97,7 +97,7 @@ export const LightboxImageItem = React.memo(function LightboxImageItem({
       i.preview_url, i.uri, i.r2Url, i.fullUri, i.photoUrl, i.url,
     ];
     for (const c of candidates) {
-      if (typeof c === 'string' && c.startsWith('http') && !isVideoFileUrl(c)) return c;
+      if (typeof c === 'string' && (c.startsWith('http') || c.startsWith('file:') || c.startsWith('/')) && !isVideoFileUrl(c)) return c;
     }
     return null;
   };

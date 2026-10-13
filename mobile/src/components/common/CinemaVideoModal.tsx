@@ -480,9 +480,17 @@ function VideoPlayerView({
       userPausedRef.current = false;
       setUserPaused(false);
       player.muted = false;
+      trackedMilestonesRef.current.clear();
+      analyticsService.trackVideoPlayback(
+        videoId,
+        'REPLAY',
+        { totalDurationSeconds: player.duration || 0 },
+        'CINEMA_MODAL',
+        videoUrl
+      );
       player.play();
     } catch {}
-  }, [player]);
+  }, [player, videoId, videoUrl]);
 
   const lastSeekThrottleRef = useRef(0);
   const seekThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -585,12 +593,20 @@ function VideoPlayerView({
       setCurrentTimeSec(0);
       setResumedToastSec(null);
       player.muted = false;
+      trackedMilestonesRef.current.clear();
+      analyticsService.trackVideoPlayback(
+        videoId,
+        'REPLAY',
+        { totalDurationSeconds: player.duration || 0 },
+        'CINEMA_MODAL',
+        videoUrl
+      );
       player.play();
       if (videoItem) {
         videoWatchProgressManager.clearProgress(videoItem);
       }
     } catch {}
-  }, [player, videoItem]);
+  }, [player, videoItem, videoId, videoUrl]);
 
   // Ground-truth runtime track size from expo-video
   const [trackSize, setTrackSize] = useState<{ width: number; height: number } | null>(() => {

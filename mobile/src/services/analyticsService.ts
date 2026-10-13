@@ -1,5 +1,5 @@
 import { AppState, AppStateStatus } from 'react-native';
-import api, { guestApi } from './api';
+import api, { guestApi, setApiErrorListener, type ApiErrorInfo } from './api';
 import { useAuthStore } from '../store/authStore';
 
 export type AnalyticsEventType =
@@ -7,7 +7,10 @@ export type AnalyticsEventType =
   | 'DISCOVERY'
   | 'DOWNLOAD'
   | 'VIDEO_PLAYBACK'
-  | 'MEDIA_ERROR';
+  | 'MEDIA_ERROR'
+  | 'UI_ERROR'
+  | 'API_ERROR'
+  | 'APP_CRASH';
 
 export type VideoPlaybackAction =
   | 'START'
@@ -48,6 +51,7 @@ class AnalyticsService {
   constructor() {
     this.startAutoFlushTimer();
     this.listenToAppState();
+    this.listenToApiErrors();
   }
 
   private listenToAppState(): void {
@@ -55,6 +59,12 @@ class AnalyticsService {
       if (nextState === 'background' || nextState === 'inactive') {
         this.flush();
       }
+    });
+  }
+
+  private listenToApiErrors(): void {
+    setApiErrorListener((info: ApiErrorInfo) => {
+      this.trackApiError(info);
     });
   }
 
@@ -72,6 +82,9 @@ class AnalyticsService {
    */
   public enqueue(event: AnalyticsEvent): void {
     this.queue.push(event);
+    if (this.queue.length > 100) {
+      this.queue = this.queue.slice(-100);
+    }
     if (this.queue.length >= 20) {
       this.flush();
     }
@@ -177,6 +190,64 @@ class AnalyticsService {
   }
 
   /**
+   * Track UI or React render errors caught by ErrorBoundary or ErrorUtils
+   */
+  public trackUiError(
+    error: any,
+    stack?: string,
+    isFatal = false,
+    source = 'ERROR_BOUNDARY'
+  ): void {
+    const errorMessage =
+      typeof error === 'string'
+        ? error
+        : error?.message || 'Unknown UI Error';
+    const errorStack =
+      stack || (typeof error === 'object' && error?.stack ? error.stack : undefined);
+
+    this.enqueue({
+      eventType: isFatal ? 'APP_CRASH' : 'UI_ERROR',
+      action: 'ERROR',
+      source,
+      metrics: {
+        errorType: isFatal ? 'FATAL_EXCEPTION' : 'REACT_RENDER_ERROR',
+        errorMessage,
+        stack: errorStack ? String(errorStack).slice(0, 500) : undefined,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Track network and API failures
+   */
+  public trackApiError(info: {
+    url: string;
+    method?: string;
+    status?: number;
+    message: string;
+    durationMs?: number;
+    isTimeout?: boolean;
+    isNetworkError?: boolean;
+  }): void {
+    this.enqueue({
+      eventType: 'API_ERROR',
+      action: 'ERROR',
+      source: 'AXIOS_INTERCEPTOR',
+      metrics: {
+        url: info.url,
+        method: info.method || 'GET',
+        status: info.status || 0,
+        errorMessage: info.message,
+        durationMs: info.durationMs,
+        isTimeout: info.isTimeout || false,
+        isNetworkError: info.isNetworkError || false,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
    * Flush queued events to backend API
    */
   public async flush(): Promise<void> {
@@ -190,8 +261,8 @@ class AnalyticsService {
     const eventSlug = authState.eventSlug;
 
     if (!eventSlug) {
-      // Re-queue events if no eventSlug is active yet
-      this.queue = [...eventsToSend, ...this.queue];
+      // Re-queue events if no eventSlug is active yet (capping to 50 to avoid memory bloat)
+      this.queue = [...eventsToSend, ...this.queue].slice(-50);
       this.isFlushing = false;
       return;
     }

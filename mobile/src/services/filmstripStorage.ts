@@ -10,6 +10,9 @@ export interface FilmstripKeyframe {
   thumbnailUrl: string;
   tabName?: string;
   localPath?: string;
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
 }
 
 export interface FilmstripData {

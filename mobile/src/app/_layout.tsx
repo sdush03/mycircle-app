@@ -3,7 +3,7 @@ import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Mod
 import { Image as ExpoImage } from 'expo-image';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
-import { Tabs, router, useSegments } from 'expo-router';
+import { Tabs, router, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { ThemeProvider, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Haptics from 'expo-haptics';
@@ -39,6 +39,9 @@ import { handleIncomingUrl, checkServerDeferredDeepLink } from '../utils/deepLin
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../utils/screenCapture';
 import ForceUpdateModal from '../components/common/ForceUpdateModal';
 import { pushNotificationService } from '../services/pushNotificationService';
+import { analyticsService } from '../services/analyticsService';
+import { useDebugCrashStore } from '../store/debugCrashStore';
+import DebugCrashModal from '../components/common/DebugCrashModal';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -55,8 +58,18 @@ if (typeof global !== 'undefined' && (global as any).ErrorUtils) {
     if (error?.message?.includes('keep awake') || error?.message?.includes('Keep awake')) {
       return;
     }
+    try {
+      useDebugCrashStore.getState().reportCrash(error, 'GLOBAL_UNCAUGHT', !!isFatal);
+      analyticsService.trackUiError(error, error?.stack, !!isFatal, 'GLOBAL_ERROR_UTILS');
+    } catch (_) {}
+
+    // In dev mode, never let defaultHandler hard-kill the app so it stays on screen with debug info
     if (defaultHandler) {
-      defaultHandler(error, isFatal);
+      if (__DEV__) {
+        defaultHandler(error, false);
+      } else {
+        defaultHandler(error, isFatal);
+      }
     }
   });
 }
@@ -74,11 +87,114 @@ if (__DEV__) {
 
 export { FONT_FUTURA, FONT_FUTURA_BOLD, FONT_MONTSERRAT_REGULAR } from '../constants/fonts';
 
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  useEffect(() => {
+    try {
+      if (__DEV__) {
+        useDebugCrashStore.getState().reportCrash(error, 'EXPO_ROUTER_BOUNDARY', false);
+      }
+      analyticsService.trackUiError(error, error?.stack, false, 'EXPO_ROUTER_BOUNDARY');
+    } catch (_) {}
+    if (__DEV__) {
+      console.warn('[RECOVERED SCREEN ERROR 🛡️]', error?.message || error);
+    }
+  }, [error]);
+
+  return (
+    <View style={errorBoundaryStyles.container}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="#0a0a0a" />
+      <View style={errorBoundaryStyles.card}>
+        <Ionicons name="alert-circle-outline" size={44} color="#f87171" style={{ marginBottom: 16 }} />
+        <Text style={errorBoundaryStyles.title}>Something went wrong</Text>
+        <Text style={errorBoundaryStyles.message} numberOfLines={4}>
+          {__DEV__
+            ? (error?.message || 'The app encountered an unexpected issue loading this screen. Tap below to reload.')
+            : 'We encountered a momentary issue loading this screen. Tap below to refresh.'}
+        </Text>
+        <Pressable
+          style={({ pressed }) => [
+            errorBoundaryStyles.retryBtn,
+            pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] },
+          ]}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            retry();
+          }}
+        >
+          <Ionicons name="refresh" size={16} color="#000000" style={{ marginRight: 8 }} />
+          <Text style={errorBoundaryStyles.retryBtnText}>Reload Screen</Text>
+        </Pressable>
+
+        {__DEV__ && (
+          <Pressable
+            style={{ marginTop: 14, padding: 8 }}
+            onPress={() => useDebugCrashStore.getState().reportCrash(error, 'EXPO_ROUTER_BOUNDARY', false)}
+          >
+            <Text style={{ color: '#f87171', fontSize: 12, fontWeight: '700' }}>
+              View Detailed Crash Trace →
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const errorBoundaryStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#18181b',
+    borderRadius: 20,
+    padding: 28,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  title: {
+    fontSize: 19,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  message: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#a1a1aa',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 30,
+  },
+  retryBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+  },
+});
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <RootLayoutContent />
+        {__DEV__ && <DebugCrashModal />}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
