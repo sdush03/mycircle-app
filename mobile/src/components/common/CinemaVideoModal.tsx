@@ -442,6 +442,19 @@ function VideoPlayerView({
     if (seekSettlingTimerRef.current) clearTimeout(seekSettlingTimerRef.current);
     if (seekUnmuteTimerRef.current) clearTimeout(seekUnmuteTimerRef.current);
     try {
+      const cur = player.currentTime || 0;
+      const dur = player.duration || 0;
+      if (cur > 1.0) {
+        analyticsService.trackVideoPlayback(
+          videoId,
+          'PROGRESS',
+          { watchTimeSeconds: cur, totalDurationSeconds: dur, completionRatio: dur > 0 ? cur / dur : 0 },
+          'CINEMA_MODAL',
+          videoUrl
+        );
+      }
+    } catch {}
+    try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       // Always disconnect AirPlay and stop playback on the player directly,
       // because returnPlayer() no-ops if the URL isn't in the preload cache (new player path).
@@ -453,7 +466,7 @@ function VideoPlayerView({
       }
     } catch {}
     onClose();
-  }, [player, videoUrl, onClose]);
+  }, [player, videoUrl, videoId, onClose]);
 
   const onPlayPauseToggle = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

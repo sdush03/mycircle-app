@@ -18,7 +18,8 @@ export type VideoPlaybackAction =
   | 'MILESTONE_50'
   | 'MILESTONE_75'
   | 'COMPLETE'
-  | 'REPLAY';
+  | 'REPLAY'
+  | 'PROGRESS';
 
 export interface AnalyticsEventMetrics {
   durationMs?: number;
