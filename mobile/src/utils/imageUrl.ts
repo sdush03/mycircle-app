@@ -82,9 +82,7 @@ export function getThumbnailUrl(
     return getResizedImageUrl(trimmed, width, quality);
   }
 
-  // 0. R2 pre-generated thumbnail — uploaded by the uploader at 400px.
-  //    Detect by checking thumbnailUrl / thumbnail_url against known R2 CDN patterns.
-  //    Return directly without any resize proxy (file already optimised).
+  // 0. Pre-generated thumbnail (600px uploaded directly by the uploader to CDN)
   const r2Thumb = p.thumbnailUrl || p.thumbnail_url;
   if (r2Thumb && typeof r2Thumb === 'string') {
     const t = r2Thumb.trim();
@@ -92,12 +90,7 @@ export function getThumbnailUrl(
       t &&
       !t.startsWith('/api/gallery/resize') &&
       !t.startsWith('file:') &&
-      !t.startsWith('data:') &&
-      (
-        t.includes('.r2.dev/') ||
-        t.includes('/thumbnails/') ||
-        t.includes('/thumbs/')
-      )
+      !t.startsWith('data:')
     ) {
       return t;
     }
@@ -106,8 +99,6 @@ export function getThumbnailUrl(
   // 1. Direct CDN pre-rendered thumbnail properties from backend
   const directThumb =
     p.file_url_thumb ||
-    p.thumbnailUrl ||
-    p.thumbnail_url ||
     p.thumb_url ||
     p.preview_url ||
     p.file_url_mobile ||
@@ -127,7 +118,6 @@ export function getThumbnailUrl(
       trimmedThumb.includes('/thumbs/') ||
       trimmedThumb.includes('/thumbnails/') ||
       trimmedThumb.includes('/mobile/') ||
-      trimmedThumb.includes('/api/gallery/resize') ||
       trimmedThumb.startsWith('file:') ||
       trimmedThumb.startsWith('ph:') ||
       trimmedThumb.startsWith('data:') ||
@@ -137,18 +127,21 @@ export function getThumbnailUrl(
     }
   }
 
-  // 2. If photo URL is on mistyvisuals CDN with /desktop/, map to /thumbs/
+  // 2. Derive direct pre-generated R2 thumbnail from standard /photos/ path:
+  const rawR2 = p.r2Url || p.r2_url || p.url || p.photoUrl || p.uri || '';
+  if (rawR2 && typeof rawR2 === 'string' && rawR2.includes('/photos/')) {
+    const clean = rawR2.split('?')[0];
+    const fn = clean.substring(clean.lastIndexOf('/') + 1);
+    return clean.replace('/photos/' + fn, `/thumbnails/thumb_${fn}`);
+  }
+
+  // 3. Fallback: Full photo URL (will be shown directly if thumbnail missing)
   const fullUri = getFullPhotoUrl(p);
   if (fullUri && fullUri.includes('gallery.mistyvisuals.com') && fullUri.includes('/desktop/')) {
     return fullUri.replace('/desktop/', '/thumbs/');
   }
 
-  // 3. Fallback: On-the-fly resizing from full-resolution original
-  if (fullUri) {
-    return getResizedImageUrl(fullUri, width, quality);
-  }
-
-  return '';
+  return fullUri || '';
 }
 
 /**
