@@ -425,15 +425,6 @@ export default function ProfileScreen() {
       const familyToken = useAuthStore.getState().token;
       const eventsList = await getCombinedEventsList();
 
-      let allMatched: any[] = [];
-      try {
-        const myPhotosRes = await api.get('/api/my-photos');
-        const raw = myPhotosRes.data?.photos || (Array.isArray(myPhotosRes.data) ? myPhotosRes.data : []);
-        if (Array.isArray(raw) && raw.length > 0) {
-          allMatched = raw;
-        }
-      } catch (_e) {}
-
       let grandTotal = 0;
       const groups: EventMatchedGroup[] = [];
 
@@ -457,12 +448,6 @@ export default function ProfileScreen() {
                 evPhotos = raw;
               }
             } catch (_e) {}
-
-            if (evPhotos.length === 0 && allMatched.length > 0) {
-              evPhotos = allMatched.filter(
-                (p) => String(p.eventId || p.event_id) === String(ev.id) || p.eventSlug === ev.slug
-              );
-            }
 
             // Use download settings directly from family events response (no extra fetch)
             const downloadSettings = await getEventDownloadSettings(ev);
@@ -508,30 +493,6 @@ export default function ProfileScreen() {
             grandTotal += result.value.photos.length;
             groups.push(result.value);
           }
-        }
-      }
-
-      if (groups.length === 0 && allMatched.length > 0) {
-        const defaultSettings = eventsList[0] ? await getEventDownloadSettings(eventsList[0]) : { allowDownloads: true, allowBulkDownloads: false };
-        const mappedPhotos = allMatched.map((p) => {
-          const mapped = mapPhotoItem(p);
-          const allowDl = p.allowDownloads !== undefined ? (p.allowDownloads !== false && p.allow_downloads !== false) : defaultSettings.allowDownloads;
-          return {
-            ...mapped,
-            eventSlug: p.eventSlug || p.slug || 'all-photos',
-            allowDownloads: allowDl,
-            eventAllowDownloads: allowDl,
-          };
-        }).filter((p) => !!p.uri || !!p.fullUri);
-        if (mappedPhotos.length > 0) {
-          grandTotal = mappedPhotos.length;
-          groups.push({
-            eventSlug: 'all-photos',
-            eventTitle: 'My Celebration Photos',
-            photos: mappedPhotos,
-            allowDownloads: defaultSettings.allowDownloads,
-            allowBulkDownloads: defaultSettings.allowBulkDownloads,
-          });
         }
       }
 
@@ -692,13 +653,13 @@ export default function ProfileScreen() {
         allowScreenCaptureAsync('profile_blocked_photos');
       }
 
-      // FIX #10: Deferred initial load — only fetch when the user visits Profile for the first time
-      if (!hasInitialLoadedRef.current) {
+      // Initial load or retry if photos are not yet loaded when the user visits Profile
+      if (!hasInitialLoadedRef.current || eventGroups.length === 0) {
         hasInitialLoadedRef.current = true;
         fetchMyCelebrationPhotos();
         fetchSavedPhotos();
       } else if (hasStaleSavesRef.current) {
-        // FIX #5: Flush dirty flag if likes changed while in background
+        // Flush dirty flag if likes changed while in background
         hasStaleSavesRef.current = false;
         fetchSavedPhotos();
       }

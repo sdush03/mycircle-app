@@ -106,14 +106,14 @@ export function getThumbnailUrl(
   // 1. Direct CDN pre-rendered thumbnail properties from backend
   const directThumb =
     p.file_url_thumb ||
+    p.thumbnailUrl ||
+    p.thumbnail_url ||
     p.thumb_url ||
     p.preview_url ||
     p.file_url_mobile ||
     p.mobile_url ||
     p.thumbUrl ||
-    p.grid_image_url ||
-    p.r2Url ||
-    p.uri;
+    p.grid_image_url;
 
   if (directThumb && typeof directThumb === 'string' && directThumb.trim()) {
     let trimmedThumb = directThumb.trim();
@@ -125,6 +125,7 @@ export function getThumbnailUrl(
     }
     if (
       trimmedThumb.includes('/thumbs/') ||
+      trimmedThumb.includes('/thumbnails/') ||
       trimmedThumb.includes('/mobile/') ||
       trimmedThumb.includes('/api/gallery/resize') ||
       trimmedThumb.startsWith('file:') ||
@@ -134,7 +135,6 @@ export function getThumbnailUrl(
     ) {
       return trimmedThumb;
     }
-    return trimmedThumb;
   }
 
   // 2. If photo URL is on mistyvisuals CDN with /desktop/, map to /thumbs/
