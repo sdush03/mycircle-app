@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
 import { videoPreloadManager } from '../../../../services/videoPreloadManager';
+import { getResizedImageUrl } from '../../../../utils/imageUrl';
 
 export interface MasonryCardProps {
   img: any;
@@ -126,15 +127,36 @@ export const MasonryCard = React.memo(function MasonryCard({
     return false;
   };
 
+  // Priority 1: Direct CDN thumbnail (rawThumb)
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri) : null;
-  const isThumbnailFailed = failedUri !== null && rawThumb === failedUri;
-  // If thumbnail failed, skip validThumb so activeUri (fallbackUri) is actually used
+  const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
   const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
-  let candidateUri = validThumb ||
-    (!isVideoFile(activeUri) ? activeUri : null) ||
-    (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url) ? img.r2Url : null) ||
-    (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl) ? img.photoUrl : null) ||
-    (typeof img === 'object' && img?.url && !isVideoFile(img.url) ? img.url : null);
+
+  // Priority 2: On-the-fly resized thumbnail if direct CDN thumbnail fails or is absent
+  const targetForResize = fallbackUri || primaryUri || (typeof img === 'object' ? (img?.r2Url || img?.photoUrl || img?.url) : '');
+  const resizedFallback = (targetForResize && !isVideoFile(targetForResize)) ? getResizedImageUrl(targetForResize, 400, 75) : null;
+  const isResizeFailed = failedUri !== null && resizedFallback === failedUri;
+
+  // Candidate selection in order of priority:
+  // 1. Direct CDN Thumbnail (600px pre-generated)
+  // 2. On-the-fly resize (saves 99% user data when thumbnail is missing)
+  // 3. Original high-res photo (last resort before broken placeholder)
+  let candidateUri: string | null = null;
+  if (validThumb && !isThumbnailFailed) {
+    candidateUri = validThumb;
+  } else if (!isThumbnailFailed && primaryUri && !isVideoFile(primaryUri) && !primaryUri.includes('/photos/')) {
+    candidateUri = primaryUri;
+  } else if (resizedFallback && !isResizeFailed) {
+    candidateUri = resizedFallback;
+  } else if (fallbackUri && !isVideoFile(fallbackUri)) {
+    candidateUri = fallbackUri;
+  } else if (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url)) {
+    candidateUri = img.r2Url;
+  } else if (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl)) {
+    candidateUri = img.photoUrl;
+  } else if (typeof img === 'object' && img?.url && !isVideoFile(img.url)) {
+    candidateUri = img.url;
+  }
 
   if (candidateUri && typeof candidateUri === 'string' && candidateUri.startsWith('/')) {
     candidateUri = `https://mycircle.mistyvisuals.com${candidateUri}`;

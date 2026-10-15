@@ -135,13 +135,17 @@ export function getThumbnailUrl(
     return clean.replace('/photos/' + fn, `/thumbnails/thumb_${fn}`);
   }
 
-  // 3. Fallback: Full photo URL (will be shown directly if thumbnail missing)
+  // 3. Fallback: On-the-fly resize (Priority 2) before high-res original (Priority 3)
   const fullUri = getFullPhotoUrl(p);
   if (fullUri && fullUri.includes('gallery.mistyvisuals.com') && fullUri.includes('/desktop/')) {
     return fullUri.replace('/desktop/', '/thumbs/');
   }
 
-  return fullUri || '';
+  if (fullUri) {
+    return getResizedImageUrl(fullUri, width, quality);
+  }
+
+  return '';
 }
 
 /**
