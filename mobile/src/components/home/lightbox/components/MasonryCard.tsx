@@ -130,9 +130,29 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   // Priority 1: Direct CDN thumbnail or Cinema cover poster (rawThumb)
   const cinemaCover = (typeof img === 'object' && img) ? getValidImageThumbnail(img) : null;
-  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || cinemaCover) : null;
+  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || img.posterUrl || img.coverUrl || cinemaCover) : null;
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
   const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
+
+  // Priority 1.5: For video cards, derive standard pre-generated thumbnail from video URL path
+  let derivedVideoThumb: string | null = null;
+  if (!validThumb && isVideo && typeof img === 'object' && img) {
+    const vUrls = [img.videoUrl, img.r2Url, img.file_url, img.fullUri, img.photoUrl, img.uri, fallbackUri, primaryUri];
+    for (const u of vUrls) {
+      if (typeof u === 'string' && u.trim()) {
+        const clean = u.trim().split('?')[0];
+        const fn = clean.substring(clean.lastIndexOf('/') + 1);
+        const base = fn.replace(/\.[^/.]+$/, '');
+        if (clean.includes('/photos/')) {
+          derivedVideoThumb = clean.replace('/photos/' + fn, `/thumbnails/thumb_${base}.jpg`);
+          break;
+        } else if (clean.includes('/videos/')) {
+          derivedVideoThumb = clean.replace('/videos/' + fn, `/thumbnails/thumb_${base}.jpg`);
+          break;
+        }
+      }
+    }
+  }
 
   // Priority 2: On-the-fly resized thumbnail if direct CDN thumbnail fails or is absent
   const targetForResize = fallbackUri || primaryUri || (typeof img === 'object' ? (img?.r2Url || img?.photoUrl || img?.url) : '');
@@ -141,12 +161,17 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   // Candidate selection in order of priority:
   // 1. Direct CDN Thumbnail (600px pre-generated) or Cinema Cover
+  // 1.5. Derived pre-generated video thumbnail
   // 2. On-the-fly resize (saves 99% user data when thumbnail is missing)
   // 3. Original high-res photo (last resort before broken placeholder)
   // 4. Event Cover fallback (for videos that lack an individual poster)
   let candidateUri: string | null = null;
   if (validThumb && !isThumbnailFailed) {
     candidateUri = validThumb;
+  } else if (derivedVideoThumb && (!failedUri || derivedVideoThumb !== failedUri)) {
+    candidateUri = derivedVideoThumb;
+  } else if (cinemaCover && !isVideoFile(cinemaCover) && (!failedUri || cinemaCover !== failedUri)) {
+    candidateUri = cinemaCover;
   } else if (!isThumbnailFailed && primaryUri && !isVideoFile(primaryUri) && !primaryUri.includes('/photos/')) {
     candidateUri = primaryUri;
   } else if (resizedFallback && !isResizeFailed) {

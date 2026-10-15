@@ -164,7 +164,39 @@ function mapPhotoItem(p: any): Photo {
   };
   const isImageThumb = typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoUrl(rawThumb);
   const validThumb = isImageThumb ? rawThumb : undefined;
-  const thumbUri = validThumb || (isVideo && !isPhotoFile ? undefined : getThumbnailUrl(p, 400));
+
+  // For video media, if no explicit image thumbnail was given, derive standard pre-generated thumbnail
+  let derivedVideoThumb: string | undefined = undefined;
+  if (isVideo) {
+    const candidateVideoUrls = [
+      p.r2Url,
+      p.videoUrl,
+      p.file_url,
+      p.fullUri,
+      p.photoUrl,
+      p.uri,
+      p.filename,
+      p.raw?.r2Url,
+      p.raw?.videoUrl,
+      p.raw?.file_url,
+    ];
+    for (const vUrl of candidateVideoUrls) {
+      if (typeof vUrl === 'string' && vUrl.trim()) {
+        const clean = vUrl.trim().split('?')[0];
+        const fn = clean.substring(clean.lastIndexOf('/') + 1);
+        const base = fn.replace(/\.[^/.]+$/, '');
+        if (clean.includes('/photos/')) {
+          derivedVideoThumb = clean.replace('/photos/' + fn, `/thumbnails/thumb_${base}.jpg`);
+          break;
+        } else if (clean.includes('/videos/')) {
+          derivedVideoThumb = clean.replace('/videos/' + fn, `/thumbnails/thumb_${base}.jpg`);
+          break;
+        }
+      }
+    }
+  }
+  const resolvedCover = validThumb || derivedVideoThumb;
+  const thumbUri = resolvedCover || (isVideo && !isPhotoFile ? undefined : getThumbnailUrl(p, 400));
   const isActualVideo = isVideo && !isPhotoFile;
   const isReel = isVideo && isVerticalVideo(p);
   const defaultW = isVideo ? (isReel ? 9 : 16) : 0;
@@ -180,7 +212,7 @@ function mapPhotoItem(p: any): Photo {
   return {
     id: p.id,
     r2Url: isVideo ? (isPhotoFile ? fullUri : (p.r2Url || p.file_url || fullUri)) : thumbUri,
-    uri: thumbUri || fullUri,
+    uri: resolvedCover || thumbUri || fullUri,
     fullUri: fullUri,
     photoUrl: fullUri,
     videoUrl: isVideo && !isPhotoFile ? fullUri : undefined,
@@ -191,9 +223,9 @@ function mapPhotoItem(p: any): Photo {
     hasBakedCover: isBaked,
     isCoverBaked: isBaked,
     subtitle: p.subtitle || p.exif?.subtitle || (isComingSoon ? 'COMING SOON • TEASER POSTER' : undefined),
-    thumbnailUrl: validThumb || thumbUri || (isVideo ? undefined : fullUri),
-    posterUrl: validThumb || thumbUri || undefined,
-    coverUrl: validThumb || thumbUri || undefined,
+    thumbnailUrl: resolvedCover || thumbUri || (isVideo ? undefined : fullUri),
+    posterUrl: resolvedCover || thumbUri || undefined,
+    coverUrl: resolvedCover || thumbUri || undefined,
     width: w || undefined,
     height: h || undefined,
     aspectRatio,
