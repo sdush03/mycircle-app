@@ -187,6 +187,11 @@ export const MasonryCard = React.memo(function MasonryCard({
             loadStartTimeRef.current = Date.now();
           }}
           onLoad={(e) => {
+            const dur = loadStartTimeRef.current ? Date.now() - loadStartTimeRef.current : 0;
+            const priorityTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
+              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
+              : 'P3 (Original Full-Res)';
+            console.log(`[PERF ⏱️ MasonryCard #${index + 1}] Loaded in ${dur}ms via ${priorityTier} | ${imageDisplayUri?.substring(0, 80)}...`);
             if (e.source?.width && e.source?.height) {
               const aspect = e.source.width / e.source.height;
               if (cardId) savePhotoAspect(cardId, aspect);
@@ -194,7 +199,10 @@ export const MasonryCard = React.memo(function MasonryCard({
             }
           }}
           onError={() => {
-            console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
+            const failedTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
+              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
+              : 'P3 (Original Full-Res)';
+            console.warn(`[PERF ⚠️ MasonryCard #${index + 1}] FAILED on ${failedTier}: ${imageDisplayUri}`);
             if (imageDisplayUri && imageDisplayUri !== failedUri) {
               // First failure: try the fallback URI
               setFailedUri(imageDisplayUri);

@@ -1782,6 +1782,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         : (familyToken ? { Authorization: `Bearer ${familyToken}` } : {});
 
       // 3. Parallel photo fetch
+      const tStartInitial = Date.now();
       const initialFetchLimit = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
         guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
@@ -1797,6 +1798,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           return { data: [], status: e?.response?.status };
         }),
       ]);
+      const initialFetchDuration = Date.now() - tStartInitial;
+      console.log(`[PERF ⏱️ GalleryView] Initial 4-way parallel fetch completed in ${initialFetchDuration}ms | matched: ${matchedRes.data?.photos?.length || 0} | all: ${allRes.data?.photos?.length || 0} | fav: ${favRes.data?.photos?.length || 0} | cinema: ${cinemaRes.data?.photos?.length || 0}`);
 
       if (allRes?.status === 401 && matchedRes?.status === 401) {
         useAuthStore.getState().clearGalleryCache(eventSlug);
@@ -2194,7 +2197,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       const mapped = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
       const loadMoreDuration = Date.now() - loadMoreStartTime;
-      console.log(`[MYCIRCLE DEBUG ✅] Page Fetch Done in ${loadMoreDuration}ms | Received ${mapped.length} new photos for '${normTab}' | New Offset: ${currentOffset + mapped.length}`);
+      console.log(`[PERF ⏱️ GalleryView] Page Fetch Done in ${loadMoreDuration}ms | Received ${mapped.length} new photos for '${normTab}' | New Offset: ${currentOffset + mapped.length}`);
 
       if (mapped.length > 0) {
         if (!tabSparsePhotosRef.current[normTab]) {
