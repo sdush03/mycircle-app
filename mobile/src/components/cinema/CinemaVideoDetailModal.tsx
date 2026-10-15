@@ -429,23 +429,13 @@ const DetailHeroPlayer: React.FC<DetailHeroPlayerProps> = ({
 
   return (
     <View style={[styles.previewContainer, { height: '100%' }]}>
-      {/* Ambient Blurred Backdrop for Portrait Letterboxing */}
-      {isPortrait && thumbnailUrl ? (
-        <Image
-          source={{ uri: thumbnailUrl }}
-          style={[StyleSheet.absoluteFillObject, { opacity: 0.35 }]}
-          contentFit="cover"
-          blurRadius={30}
-          cachePolicy="memory-disk"
-        />
-      ) : null}
 
-      {/* 1. Underlying Poster Thumbnail (instant first frame & closing poster) */}
-      {thumbnailUrl ? (
+      {/* 1. Underlying Poster Thumbnail (instant first frame & closing poster) - only for landscape */}
+      {!isPortrait && thumbnailUrl ? (
         <Image
           source={{ uri: thumbnailUrl }}
           style={[StyleSheet.absoluteFillObject, styles.videoCanvasRadius]}
-          contentFit={isPortrait ? 'contain' : 'cover'}
+          contentFit="cover"
           priority="high"
           cachePolicy="memory-disk"
         />
@@ -1229,16 +1219,6 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
                 />
               ) : (
                 <View style={[styles.previewContainer, { height: '100%' }]}>
-                  {/* Ambient Blurred Backdrop for Portrait Letterboxing */}
-                  {isPortrait && thumbUrl ? (
-                    <Image
-                      source={{ uri: thumbUrl }}
-                      style={[StyleSheet.absoluteFillObject, { opacity: 0.35 }]}
-                      contentFit="cover"
-                      blurRadius={30}
-                      cachePolicy="memory-disk"
-                    />
-                  ) : null}
 
                   {thumbUrl ? (
                     <Image

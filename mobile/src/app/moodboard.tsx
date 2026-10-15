@@ -213,22 +213,31 @@ export default function MoodboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchSaves();
-  }, [fetchSaves]);
+  // Dirty flag: set when saves change in the background (e.g. a like tap on GalleryView).
+  // We do NOT fetch immediately — the background screen is not visible, so there is no reason
+  // to fire server requests. The fetch happens the next time the user actually opens this tab.
+  const hasStaleSavesRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
-      fetchSaves();
-    }, [fetchSaves])
+      // Always fetch on first focus (loading === true means we haven't loaded yet),
+      // or whenever a like/save event dirtied the data while we were in the background.
+      if (loading || hasStaleSavesRef.current) {
+        hasStaleSavesRef.current = false;
+        fetchSaves();
+      }
+    }, [fetchSaves, loading])
   );
 
   useEffect(() => {
+    // FIX #5: On EVENT_SAVES_UPDATED just mark data as stale — do NOT fetch immediately.
+    // The screen may be hidden (background tab), so fetching here would cause 1 like tap
+    // to fire unnecessary API calls against the server. Fetch happens on next focus instead.
     const unsub = tabEvents.on(EVENT_SAVES_UPDATED, () => {
-      fetchSaves();
+      hasStaleSavesRef.current = true;
     });
     return () => unsub();
-  }, [fetchSaves]);
+  }, []);
 
   useEffect(() => {
     const unsub = tabEvents.on(TAB_SCROLL_TO_TOP_MOODBOARD, () => {

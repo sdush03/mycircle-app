@@ -82,11 +82,30 @@ export function getThumbnailUrl(
     return getResizedImageUrl(trimmed, width, quality);
   }
 
+  // 0. R2 pre-generated thumbnail — uploaded by the uploader at 400px.
+  //    Detect by checking thumbnailUrl / thumbnail_url against known R2 CDN patterns.
+  //    Return directly without any resize proxy (file already optimised).
+  const r2Thumb = p.thumbnailUrl || p.thumbnail_url;
+  if (r2Thumb && typeof r2Thumb === 'string') {
+    const t = r2Thumb.trim();
+    if (
+      t &&
+      !t.startsWith('/api/gallery/resize') &&
+      !t.startsWith('file:') &&
+      !t.startsWith('data:') &&
+      (
+        t.includes('.r2.dev/') ||
+        t.includes('/thumbnails/') ||
+        t.includes('/thumbs/')
+      )
+    ) {
+      return t;
+    }
+  }
+
   // 1. Direct CDN pre-rendered thumbnail properties from backend
   const directThumb =
     p.file_url_thumb ||
-    p.thumbnailUrl ||
-    p.thumbnail_url ||
     p.thumb_url ||
     p.preview_url ||
     p.file_url_mobile ||

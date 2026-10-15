@@ -765,7 +765,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       ],
       opacity,
       overflow: 'hidden',
-      backgroundColor: '#f2eee8',
+      backgroundColor: '#ffffff',
     };
   });
 
@@ -774,7 +774,7 @@ const AnimatingCard = React.memo(function AnimatingCard({
       {card.uri ? (
         <Image
           source={{ uri: card.uri }}
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#f2eee8' }]}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#ffffff' }]}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={0}
@@ -1849,16 +1849,16 @@ export function MasonryFlashList<T = any>({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   viewport: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   contentContainer: {
     paddingBottom: 40,
@@ -1866,11 +1866,11 @@ const styles = StyleSheet.create({
   gridRow: {
   },
   column: {
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
   },
   slot: {
     position: 'absolute',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
   },
   stickyHeaderOverlay: {

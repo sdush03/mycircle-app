@@ -17,7 +17,7 @@ export interface MasonryCardProps {
   onToggleLike?: (img: any) => void;
 }
 
-const DEFAULT_NEUTRAL_BLURHASH = 'LEHV6nWB2yk8pyo0adR*.7kCMdnj';
+const DEFAULT_NEUTRAL_BLURHASH = 'L6Pj0^jE.mfQ~qj[j[j[~qfQoffQ';
 
 // Track photos that have completed their organic reveal bloom in this gallery session
 const revealedPhotoIds = new Set<string>();
@@ -38,12 +38,15 @@ export const MasonryCard = React.memo(function MasonryCard({
     ? (img.blurhash || img.blur_hash || img.blurHash)
     : null;
   const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [isBroken, setIsBroken] = useState(false);
 
   useEffect(() => {
     setFailedUri(null);
+    setIsBroken(false);
   }, [primaryUri]);
 
-  const activeUri = (failedUri === primaryUri && fallbackUri) ? fallbackUri : primaryUri;
+  // Switch to fullUri fallback as soon as any image URI fails for this card
+  const activeUri = (failedUri !== null && fallbackUri) ? fallbackUri : primaryUri;
 
   const colIdx = typeof columnIndex === 'number' ? columnIndex : (isColumn0 ? 0 : 1);
   const cardAspect = getPhotoCardAspect(img, index, colIdx, numColumns);
@@ -74,11 +77,15 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const loadStartTimeRef = useRef<number>(0);
 
-  // Only pass placeholder if a real blurUri or blurhash exists (don't pass dummy fallback blurhash string
-  // which causes Android's Glide decoder to fail and freeze transparent)
+  // Show a soft blur placeholder while loading:
+  // 1. Per-photo blurUri (highest quality, pre-generated)
+  // 2. Per-photo blurhash (from server metadata)
+  // 3. Neutral default blurhash (soft warm gray — iOS only, Android Glide has issues with blurhash placeholders)
   const placeholderSource = blurUri
     ? { uri: blurUri }
-    : (blurhash ? { blurhash, width: 32, height: 32 } : undefined);
+    : blurhash
+      ? { blurhash, width: 32, height: 32 }
+      : (Platform.OS === 'ios' ? { blurhash: DEFAULT_NEUTRAL_BLURHASH, width: 32, height: 32 } : undefined);
 
   const effectivePriority = typeof isHighPriority === 'boolean'
     ? (isHighPriority ? "high" : "low")
@@ -120,7 +127,9 @@ export const MasonryCard = React.memo(function MasonryCard({
   };
 
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri) : null;
-  const validThumb = rawThumb && !isVideoFile(rawThumb) ? rawThumb : null;
+  const isThumbnailFailed = failedUri !== null && rawThumb === failedUri;
+  // If thumbnail failed, skip validThumb so activeUri (fallbackUri) is actually used
+  const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
   let candidateUri = validThumb ||
     (!isVideoFile(activeUri) ? activeUri : null) ||
     (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url) ? img.r2Url : null) ||
@@ -151,7 +160,7 @@ export const MasonryCard = React.memo(function MasonryCard({
           recyclingKey={String(cardId)}
           placeholder={placeholderSource}
           placeholderContentFit="cover"
-          transition={Platform.OS === 'android' ? 0 : 50}
+          transition={Platform.OS === 'android' ? 0 : 180}
           onLoadStart={() => {
             loadStartTimeRef.current = Date.now();
           }}
@@ -164,11 +173,24 @@ export const MasonryCard = React.memo(function MasonryCard({
           }}
           onError={() => {
             console.warn(`[MYCIRCLE DEBUG ⚠️] Photo #${index + 1} FAILED to load: ${imageDisplayUri}`);
-            if (fallbackUri && imageDisplayUri !== fallbackUri && !isVideoFile(fallbackUri)) {
-              setFailedUri(primaryUri);
+            if (imageDisplayUri && imageDisplayUri !== failedUri) {
+              // First failure: try the fallback URI
+              setFailedUri(imageDisplayUri);
+            } else {
+              // Fallback also failed: mark as permanently broken
+              setIsBroken(true);
             }
           }}
         />
+      ) : isBroken ? (
+        <View style={[cardStyles.masonryImage, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center', gap: 6 }]}>
+          <Ionicons name="image-outline" size={numColumns >= 4 ? 16 : 24} color="rgba(255,255,255,0.3)" />
+          {numColumns <= 3 && (
+            <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 9, fontFamily: 'System', textAlign: 'center', paddingHorizontal: 4 }}>
+            {'PHOTO\nUNAVAILABLE'}
+            </Text>
+          )}
+        </View>
       ) : (
         <View style={[cardStyles.masonryImage, { backgroundColor: '#141414', justifyContent: 'center', alignItems: 'center' }]}>
           <Ionicons name="videocam-outline" size={28} color="rgba(255, 255, 255, 0.25)" />
@@ -231,7 +253,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 const cardStyles = StyleSheet.create({
   masonryCard: {
     width: '100%',
-    backgroundColor: '#f2eee8',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
     position: 'relative',
   },

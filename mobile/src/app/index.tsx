@@ -310,8 +310,8 @@ export default function HomeScreen() {
               covers.forEach((c) => ExpoImage.prefetch(c));
             });
 
-            // Background pre-fetch full story details for top stories so tapping them opens INSTANTLY
-            storiesData.forEach(async (s: any) => {
+            // Background pre-fetch full story details for top 3 stories only so tapping them opens INSTANTLY
+            storiesData.slice(0, 3).forEach(async (s: any) => {
               if (!s.slug) return;
               try {
                 const sRes = await fetch(`https://www.mistyvisuals.com/api/website/stories/${s.slug}`);
@@ -441,7 +441,8 @@ export default function HomeScreen() {
   }, [token]);
 
   useEffect(() => {
-    fetchUserEvents();
+    // FIX #10 & #23: Removed duplicate fetchUserEvents() call on mount.
+    // useFocusEffect below already handles fetching when this screen focuses.
     const unsub = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
       fetchUserEvents();
     });

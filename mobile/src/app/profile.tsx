@@ -351,15 +351,26 @@ export default function ProfileScreen() {
     return Array.from(map.values());
   }, []);
 
-  // SSO Token Exchange Helper to get event guest headers for public event endpoints
+  // SSO Token Exchange Helper to get event guest headers for public event endpoints.
+  // Prefers eventToken already returned by /api/gallery/family/events to avoid an
+  // extra POST auth-from-family round-trip per event (was the #1 source of N+1 calls).
   const getEventHeaders = useCallback(async (ev: any, familyToken: string | null): Promise<Record<string, string>> => {
+    // 1. Direct eventToken from family events response — no extra network call needed
+    if (ev?.eventToken) {
+      return { Authorization: `Bearer ${ev.eventToken}` };
+    }
+
     if (!ev?.slug) {
       return familyToken ? { Authorization: `Bearer ${familyToken}` } : {};
     }
+
+    // 2. Cached headers from a previous SSO exchange
     const cachedHeaders = useAuthStore.getState().galleryCache[ev.slug]?.headers;
     if (cachedHeaders && cachedHeaders.Authorization) {
       return cachedHeaders;
     }
+
+    // 3. Fallback: SSO exchange (only for events not from family endpoint)
     try {
       const ssoRes = await api.post(
         `/api/gallery/public/events/${ev.slug}/auth-from-family`,
@@ -416,7 +427,7 @@ export default function ProfileScreen() {
 
       let allMatched: any[] = [];
       try {
-        const myPhotosRes = await api.get(`/api/my-photos?t=${Date.now()}`);
+        const myPhotosRes = await api.get('/api/my-photos');
         const raw = myPhotosRes.data?.photos || (Array.isArray(myPhotosRes.data) ? myPhotosRes.data : []);
         if (Array.isArray(raw) && raw.length > 0) {
           allMatched = raw;
@@ -427,63 +438,75 @@ export default function ProfileScreen() {
       const groups: EventMatchedGroup[] = [];
 
       if (Array.isArray(eventsList) && eventsList.length > 0) {
-        for (const ev of eventsList) {
-          let evPhotos: any[] = [];
-          try {
-            const eventHeaders = await getEventHeaders(ev, familyToken);
-            const matchedRes = await guestApi.get(
-              `/api/gallery/public/events/${ev.slug}/matched-photos?t=${Date.now()}`,
-              { headers: eventHeaders }
-            );
-            const raw =
-              matchedRes.data?.photos ||
-              matchedRes.data?.matchedPhotos ||
-              (Array.isArray(matchedRes.data) ? matchedRes.data : []);
-            if (Array.isArray(raw) && raw.length > 0) {
-              evPhotos = raw;
+        // Parallelize all per-event fetches instead of sequential for-loop.
+        // Each event's matched-photos request runs concurrently.
+        const eventResults = await Promise.allSettled(
+          eventsList.map(async (ev) => {
+            let evPhotos: any[] = [];
+            try {
+              const eventHeaders = await getEventHeaders(ev, familyToken);
+              const matchedRes = await guestApi.get(
+                `/api/gallery/public/events/${ev.slug}/matched-photos`,
+                { headers: eventHeaders }
+              );
+              const raw =
+                matchedRes.data?.photos ||
+                matchedRes.data?.matchedPhotos ||
+                (Array.isArray(matchedRes.data) ? matchedRes.data : []);
+              if (Array.isArray(raw) && raw.length > 0) {
+                evPhotos = raw;
+              }
+            } catch (_e) {}
+
+            if (evPhotos.length === 0 && allMatched.length > 0) {
+              evPhotos = allMatched.filter(
+                (p) => String(p.eventId || p.event_id) === String(ev.id) || p.eventSlug === ev.slug
+              );
             }
-          } catch (_e) {}
 
-          if (evPhotos.length === 0 && allMatched.length > 0) {
-            evPhotos = allMatched.filter(
-              (p) => String(p.eventId || p.event_id) === String(ev.id) || p.eventSlug === ev.slug
-            );
-          }
+            // Use download settings directly from family events response (no extra fetch)
+            const downloadSettings = await getEventDownloadSettings(ev);
+            const mappedPhotos = evPhotos
+              .map((p) => {
+                const mapped = mapPhotoItem(p);
+                return {
+                  ...mapped,
+                  eventSlug: ev.slug,
+                  allowDownloads: downloadSettings.allowDownloads,
+                  eventAllowDownloads: downloadSettings.allowDownloads,
+                };
+              })
+              .filter((p) => !!p.uri || !!p.fullUri);
 
-          const downloadSettings = await getEventDownloadSettings(ev);
-          const mappedPhotos = evPhotos
-            .map((p) => {
-              const mapped = mapPhotoItem(p);
+            if (mappedPhotos.length > 0) {
+              const rawCover =
+                ev.coverPhotoUrl ||
+                ev.cover_photo_url ||
+                ev.coverPhotoMobileUrl ||
+                ev.cover_photo_mobile_url ||
+                ev.coverUrl ||
+                ev.cover_url ||
+                ev.coverImage ||
+                ev.imageUrl ||
+                null;
               return {
-                ...mapped,
-                eventSlug: ev.slug,
+                eventSlug: ev.slug || `event-${ev.id}`,
+                eventTitle: ev.title || ev.name || 'Celebration',
+                eventDate: ev.date || ev.eventDate,
+                coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
+                photos: mappedPhotos,
                 allowDownloads: downloadSettings.allowDownloads,
-                eventAllowDownloads: downloadSettings.allowDownloads,
-              };
-            })
-            .filter((p) => !!p.uri || !!p.fullUri);
+                allowBulkDownloads: downloadSettings.allowBulkDownloads,
+              } as EventMatchedGroup;
+            }
+            return null;
+          })
+        );
 
-          if (mappedPhotos.length > 0) {
-            grandTotal += mappedPhotos.length;
-            const rawCover =
-              ev.coverPhotoUrl ||
-              ev.cover_photo_url ||
-              ev.coverPhotoMobileUrl ||
-              ev.cover_photo_mobile_url ||
-              ev.coverUrl ||
-              ev.cover_url ||
-              ev.coverImage ||
-              ev.imageUrl ||
-              null;
-            groups.push({
-              eventSlug: ev.slug || `event-${ev.id}`,
-              eventTitle: ev.title || ev.name || 'Celebration',
-              eventDate: ev.date || ev.eventDate,
-              coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
-              photos: mappedPhotos,
-              allowDownloads: downloadSettings.allowDownloads,
-              allowBulkDownloads: downloadSettings.allowBulkDownloads,
-            });
+        for (const result of eventResults) {
+          if (result.status === 'fulfilled' && result.value) {
+            grandTotal += result.value.photos.length;
+            groups.push(result.value);
           }
         }
       }
@@ -532,57 +555,66 @@ export default function ProfileScreen() {
       const groups: EventMatchedGroup[] = [];
 
       if (Array.isArray(eventsList) && eventsList.length > 0) {
-        for (const ev of eventsList) {
-          let evFavs: any[] = [];
-          try {
-            const eventHeaders = await getEventHeaders(ev, familyToken);
-            const favRes = await guestApi.get(
-              `/api/gallery/public/events/${ev.slug}/favorites?t=${Date.now()}`,
-              { headers: eventHeaders }
-            );
-            const raw =
-              favRes.data?.photos ||
-              favRes.data?.favorites ||
-              (Array.isArray(favRes.data) ? favRes.data : []);
-            if (Array.isArray(raw) && raw.length > 0) {
-              evFavs = raw.map((p) => ({ ...p, isLiked: true }));
-            }
-          } catch (_e) {}
+        const eventResults = await Promise.allSettled(
+          eventsList.map(async (ev) => {
+            let evFavs: any[] = [];
+            try {
+              const eventHeaders = await getEventHeaders(ev, familyToken);
+              const favRes = await guestApi.get(
+                `/api/gallery/public/events/${ev.slug}/favorites`,
+                { headers: eventHeaders }
+              );
+              const raw =
+                favRes.data?.photos ||
+                favRes.data?.favorites ||
+                (Array.isArray(favRes.data) ? favRes.data : []);
+              if (Array.isArray(raw) && raw.length > 0) {
+                evFavs = raw.map((p) => ({ ...p, isLiked: true }));
+              }
+            } catch (_e) {}
 
-          const downloadSettings = await getEventDownloadSettings(ev);
-          const mappedPhotos = evFavs
-            .map((p) => {
-              const mapped = mapPhotoItem(p);
+            const downloadSettings = await getEventDownloadSettings(ev);
+            const mappedPhotos = evFavs
+              .map((p) => {
+                const mapped = mapPhotoItem(p);
+                return {
+                  ...mapped,
+                  eventSlug: ev.slug,
+                  allowDownloads: downloadSettings.allowDownloads,
+                  eventAllowDownloads: downloadSettings.allowDownloads,
+                };
+              })
+              .filter((p) => !!p.uri || !!p.fullUri);
+
+            if (mappedPhotos.length > 0) {
+              const rawCover =
+                ev.coverPhotoUrl ||
+                ev.cover_photo_url ||
+                ev.coverPhotoMobileUrl ||
+                ev.cover_photo_mobile_url ||
+                ev.coverUrl ||
+                ev.cover_url ||
+                ev.coverImage ||
+                ev.imageUrl ||
+                null;
               return {
-                ...mapped,
-                eventSlug: ev.slug,
+                eventSlug: ev.slug || `event-${ev.id}`,
+                eventTitle: ev.title || ev.name || 'Celebration',
+                eventDate: ev.date || ev.eventDate,
+                coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
+                photos: mappedPhotos,
                 allowDownloads: downloadSettings.allowDownloads,
-                eventAllowDownloads: downloadSettings.allowDownloads,
-              };
-            })
-            .filter((p) => !!p.uri || !!p.fullUri);
+                allowBulkDownloads: downloadSettings.allowBulkDownloads,
+              } as EventMatchedGroup;
+            }
+            return null;
+          })
+        );
 
-          if (mappedPhotos.length > 0) {
-            grandTotal += mappedPhotos.length;
-            const rawCover =
-              ev.coverPhotoUrl ||
-              ev.cover_photo_url ||
-              ev.coverPhotoMobileUrl ||
-              ev.cover_photo_mobile_url ||
-              ev.coverUrl ||
-              ev.cover_url ||
-              ev.coverImage ||
-              ev.imageUrl ||
-              null;
-            groups.push({
-              eventSlug: ev.slug || `event-${ev.id}`,
-              eventTitle: ev.title || ev.name || 'Celebration',
-              eventDate: ev.date || ev.eventDate,
-              coverImage: rawCover ? getThumbnailUrl(rawCover, 400) : undefined,
-              photos: mappedPhotos,
-              allowDownloads: downloadSettings.allowDownloads,
-              allowBulkDownloads: downloadSettings.allowBulkDownloads,
-            });
+        for (const result of eventResults) {
+          if (result.status === 'fulfilled' && result.value) {
+            grandTotal += result.value.photos.length;
+            groups.push(result.value);
           }
         }
       }
@@ -608,11 +640,23 @@ export default function ProfileScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchMyCelebrationPhotos();
-    fetchSavedPhotos();
+  // Dirty flag: set when a like/save fires EVENT_SAVES_UPDATED while Profile is in the background.
+  // We do NOT fetch immediately — this was the #1 cause of 18-22 server requests per like tap.
+  // Dirty flag: set when a like/save fires EVENT_SAVES_UPDATED while Profile is in the background.
+  // We do NOT fetch immediately — this was the #1 cause of 18-22 server requests per like tap.
+  // The fetch is deferred until the user actually opens the Profile tab.
+  const hasStaleSavesRef = useRef(false);
+  // FIX #10: Track whether Profile has loaded its initial data upon user opening this tab
+  const hasInitialLoadedRef = useRef(false);
 
-    const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, fetchSavedPhotos);
+  useEffect(() => {
+    // FIX #10: Do NOT fetch on mount here. On cold boot, Profile mounts in the background.
+    // Fetching here caused unnecessary API calls before the user ever opened Profile.
+    // Initial fetch is deferred to useFocusEffect below when the user actually navigates here.
+
+    const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      hasStaleSavesRef.current = true;
+    });
     const unsubJoined = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
       fetchMyCelebrationPhotos();
       fetchSavedPhotos();
@@ -641,22 +685,28 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Screen capture protection
       if (hasBlockedPhotosInProfile) {
         preventScreenCaptureAsync('profile_blocked_photos');
       } else {
         allowScreenCaptureAsync('profile_blocked_photos');
       }
+
+      // FIX #10: Deferred initial load — only fetch when the user visits Profile for the first time
+      if (!hasInitialLoadedRef.current) {
+        hasInitialLoadedRef.current = true;
+        fetchMyCelebrationPhotos();
+        fetchSavedPhotos();
+      } else if (hasStaleSavesRef.current) {
+        // FIX #5: Flush dirty flag if likes changed while in background
+        hasStaleSavesRef.current = false;
+        fetchSavedPhotos();
+      }
+
       return () => {
         allowScreenCaptureAsync('profile_blocked_photos');
       };
-    }, [hasBlockedPhotosInProfile])
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      fetchMyCelebrationPhotos();
-      fetchSavedPhotos();
-    }, [fetchMyCelebrationPhotos, fetchSavedPhotos])
+    }, [hasBlockedPhotosInProfile, fetchMyCelebrationPhotos, fetchSavedPhotos])
   );
 
   const getRoleLabel = () => {

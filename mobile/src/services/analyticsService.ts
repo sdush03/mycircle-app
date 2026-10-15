@@ -1,5 +1,5 @@
 import { AppState, AppStateStatus } from 'react-native';
-import api, { guestApi, setApiErrorListener, type ApiErrorInfo } from './api';
+import api, { guestApi } from './api';
 import { useAuthStore } from '../store/authStore';
 
 export type AnalyticsEventType =
@@ -52,7 +52,10 @@ class AnalyticsService {
   constructor() {
     this.startAutoFlushTimer();
     this.listenToAppState();
-    this.listenToApiErrors();
+    // NOTE: API error tracking via the Axios interceptor has been intentionally removed.
+    // When the analytics batch POST itself failed, the error interceptor would enqueue a new
+    // API_ERROR event → trigger another flush → fail again → infinite DoS loop against the server.
+    // flush() already discards silently on failure, so API_ERROR events served no recovery purpose.
   }
 
   private listenToAppState(): void {
@@ -60,12 +63,6 @@ class AnalyticsService {
       if (nextState === 'background' || nextState === 'inactive') {
         this.flush();
       }
-    });
-  }
-
-  private listenToApiErrors(): void {
-    setApiErrorListener((info: ApiErrorInfo) => {
-      this.trackApiError(info);
     });
   }
 

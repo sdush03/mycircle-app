@@ -61,9 +61,10 @@ export default function JoinEventView({ onSuccess }: JoinEventViewProps) {
 
   const mainScrollRef = useRef<ScrollView>(null);
 
-  // Load user's joined events from backend API + fallback to SecureStore
+  // Load user's joined events when focused, or when a celebration is joined
   useEffect(() => {
-    fetchEvents();
+    // FIX #10: Removed fetchEvents() on cold-boot mount.
+    // Fetch is handled on focus by useFocusEffect below when the user opens this tab.
     const unsub = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
       fetchEvents();
     });

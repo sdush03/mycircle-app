@@ -1350,16 +1350,18 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     }
 
-    // ─── Proactive Sequential Paging Trigger: Fetch next page well ahead of time ───
+    // ─── Proactive Sequential Paging Trigger ───
+    // Simple near-bottom or near-end-of-loaded check, like 1.2.0.
+    // Only one request runs at a time (isFetchingMoreRef), and we yield to on-screen priority fetcher.
     const contiguousCount = currentLoadedList.length;
     const canLoadMore = isCeremonyTab
       ? (tabHasMoreRef.current[normTab] !== false)
       : hasMorePhotos;
+    const nearBottomThreshold = currentCols >= 4 ? 12000 : 8000;
+    const isNearBottom = layoutHeight + offsetY >= contentHeight - nearBottomThreshold;
     const triggerThreshold = Math.max(30, currentCols * 14);
-    const isApproachingEndOfLoaded =
-      visibleStartIndex <= contiguousCount + 10 &&
-      visibleStartIndex + triggerThreshold >= contiguousCount;
-    if (isApproachingEndOfLoaded && canLoadMore && !isFetchingMoreRef.current && loadMorePhotosRef.current) {
+    const isNearEndOfLoaded = visibleStartIndex + triggerThreshold >= contiguousCount;
+    if ((isNearBottom || isNearEndOfLoaded) && canLoadMore && !isFetchingMoreRef.current && !isFastCatchingUpRef.current && loadMorePhotosRef.current) {
       loadMorePhotosRef.current();
     }
 
@@ -1864,9 +1866,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setAllPhotos((prev) => {
         if (prev.length > mappedPhotos.length) {
           const merged = [...mappedPhotos, ...prev.slice(mappedPhotos.length)];
-          const dedupped = merged.filter((item, index, self) =>
-            index === self.findIndex((t) => (t.id && item.id ? t.id === item.id : t.r2Url === item.r2Url))
-          );
+          const seenMerge = new Set<number | string>();
+          const dedupped = merged.filter((item) => {
+            const key = (item.id != null ? item.id : item.r2Url) ?? '';
+            if (seenMerge.has(key)) return false;
+            seenMerge.add(key);
+            return true;
+          });
           allPhotosOffsetRef.current = dedupped.length;
           setAllPhotosOffset(dedupped.length);
           return dedupped;
@@ -2083,9 +2089,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setAllPhotos((prev) => {
         if (prev.length > mappedPhotos.length) {
           const merged = [...mappedPhotos, ...prev.slice(mappedPhotos.length)];
-          const dedupped = merged.filter((item, index, self) =>
-            index === self.findIndex((t) => (t.id && item.id ? t.id === item.id : t.r2Url === item.r2Url))
-          );
+          const seenMerge2 = new Set<number | string>();
+          const dedupped = merged.filter((item) => {
+            const key = (item.id != null ? item.id : item.r2Url) ?? '';
+            if (seenMerge2.has(key)) return false;
+            seenMerge2.add(key);
+            return true;
+          });
           allPhotosOffsetRef.current = dedupped.length;
           setAllPhotosOffset(dedupped.length);
           return dedupped;
@@ -2158,30 +2168,21 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (normTab === 'ALL' && !hasMorePhotos) return;
     if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') return;
 
-    const currentCols = galleryColumnsRef.current || 2;
-    const heroHeight = Math.round(screenHeight * 0.70);
-    const relativeY = Math.max(0, currentYRef.current - heroHeight);
-    const rowH = currentCols === 1 ? 380 : (currentCols === 2 ? 220 : (currentCols === 3 ? 145 : (currentCols === 4 ? 105 : 80)));
-    const currentRow = Math.floor(relativeY / rowH);
-    const currentVisibleIndex = Math.max(0, currentRow * currentCols);
-
     const isCeremonyTab = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
+    // Stop fetching if this ceremony tab has no more photos
+    if (isCeremonyTab && tabHasMoreRef.current[normTab] === false) return;
     const currentOffset = isCeremonyTab
       ? (tabItemCountsRef.current[normTab] ?? (tabCache[normTab]?.length || 0))
       : allPhotosOffsetRef.current;
 
-    // Guard: If user is far ahead of the loaded contiguous offset, let on-screen priority fetcher handle it
-    if (currentVisibleIndex > currentOffset + 60) {
-      return;
-    }
-
+    const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(activeTab)}` : '';
+    const eventHeaders = eventHeadersRef.current;
+    const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
+    let retried401 = false;
     try {
       isFetchingMoreRef.current = true;
       setIsLoadingMore(true);
 
-      const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(activeTab)}` : '';
-      const eventHeaders = eventHeadersRef.current;
-      const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       const loadMoreStartTime = Date.now();
       console.log(`[MYCIRCLE DEBUG 📥] Pre-fetching next page for '${normTab}' -> offset=${currentOffset}, limit=${dynamicPageSize}...`);
 
@@ -2205,17 +2206,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         setSparseVersion((v) => v + 1);
 
         scheduleBatchPrefetch(mapped);
-        const urisToCache: string[] = [];
-        mapped.forEach((p) => {
-          const u = getMediaDisplayUri(p);
-          if (u && !prefetchedUrlsRef.current.has(u)) {
-            prefetchedUrlsRef.current.add(u);
-            urisToCache.push(u);
-          }
-        });
-        if (urisToCache.length > 0) {
-          Image.prefetch(urisToCache, 'memory-disk');
-        }
 
         if (isCeremonyTab) {
           const newOffset = currentOffset + mapped.length;
@@ -2223,9 +2213,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           setTabCache((prev) => {
             const existing = prev[normTab] || [];
             const combined = [...existing, ...mapped];
-            const dedupped = combined.filter((item, index, self) =>
-              index === self.findIndex((t) => (t.id && item.id ? t.id === item.id : t.r2Url === item.r2Url))
-            );
+            const seenTab = new Set<number | string>();
+            const dedupped = combined.filter((item) => {
+              const key = (item.id != null ? item.id : item.r2Url) ?? '';
+              if (seenTab.has(key)) return false;
+              seenTab.add(key);
+              return true;
+            });
             return { ...prev, [normTab]: dedupped };
           });
         } else {
@@ -2233,9 +2227,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           setAllPhotosOffset(allPhotosOffsetRef.current);
           setAllPhotos((prev) => {
             const next = [...prev, ...mapped];
-            const dedupped = next.filter((item, index, self) =>
-              index === self.findIndex((t) => (t.id && item.id ? t.id === item.id : t.r2Url === item.r2Url))
-            );
+            const seenAll = new Set<number | string>();
+            const dedupped = next.filter((item) => {
+              const key = (item.id != null ? item.id : item.r2Url) ?? '';
+              if (seenAll.has(key)) return false;
+              seenAll.add(key);
+              return true;
+            });
             const reachedTotal = totalAllPhotosCount !== null && dedupped.length >= totalAllPhotosCount;
             if (reachedTotal) {
               setHasMorePhotos(false);
@@ -2251,7 +2249,39 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         }
       }
     } catch (e: any) {
-      console.warn('[MYCIRCLE DEBUG ⚠️] loadMorePhotos error:', e);
+      // Auto-retry once on 401 with fresh headers (token may have been rotated by a concurrent /bundle call)
+      if (e?.response?.status === 401 && !retried401) {
+        retried401 = true;
+        const freshHeaders = eventHeadersRef.current;
+        if (freshHeaders?.Authorization && freshHeaders.Authorization !== eventHeaders?.Authorization) {
+          console.log('[MYCIRCLE DEBUG 🔄] 401 received, retrying with refreshed token...');
+          try {
+            const retryRes = await guestApi.get(
+              `/api/gallery/public/events/${eventSlug}/photos?limit=${dynamicPageSize}&offset=${currentOffset}${tabQuery}`,
+              { headers: freshHeaders }
+            );
+            const retryList = retryRes.data.photos || (Array.isArray(retryRes.data) ? retryRes.data : []);
+            const retryMapped = Array.isArray(retryList) ? retryList.map(mapPhotoItem) : [];
+            if (retryMapped.length > 0) {
+              scheduleBatchPrefetch(retryMapped);
+              if (isCeremonyTab) {
+                tabItemCountsRef.current[normTab] = currentOffset + retryMapped.length;
+                setTabCache((prev) => ({ ...prev, [normTab]: [...(prev[normTab] || []), ...retryMapped] }));
+              } else {
+                allPhotosOffsetRef.current += retryMapped.length;
+                setAllPhotosOffset(allPhotosOffsetRef.current);
+                setAllPhotos((prev) => [...prev, ...retryMapped]);
+              }
+            } else {
+              if (isCeremonyTab) { tabHasMoreRef.current[normTab] = false; } else { setHasMorePhotos(false); }
+            }
+          } catch (_retryErr) {
+            // Retry also failed — give up silently
+          }
+        }
+      } else {
+        console.warn('[MYCIRCLE DEBUG ⚠️] loadMorePhotos error:', e);
+      }
     } finally {
       isFetchingMoreRef.current = false;
       setIsLoadingMore(false);
@@ -2299,7 +2329,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (!hasWindow && windowLimit > 0) {
       try {
         isFastCatchingUpRef.current = true;
-        isFetchingMoreRef.current = true;
 
         console.log(`[ON-SCREEN PRIORITY 🎯] Fetching priority window for '${normTab}': offset=${windowStart}, limit=${windowLimit} (Target Photo #${targetPhotoIndex + 1})`);
         const onScreenRes = await guestApi.get(
@@ -2348,7 +2377,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         console.warn('[ON-SCREEN PRIORITY ⚠️] Error fetching priority window:', err);
       } finally {
         isFastCatchingUpRef.current = false;
-        isFetchingMoreRef.current = false;
       }
     }
   }, [eventSlug, totalAllPhotosCount, eventDetails, tabCache, scheduleBatchPrefetch]);
@@ -3830,58 +3858,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     fetchFilmstrip(activeTab);
   }, [activeTab, fetchFilmstrip]);
 
-  // Silently prefetch filmstrips for other ceremony tabs in the background
-  useEffect(() => {
-    if (!eventSlug || !eventDetails?.tabs || !Array.isArray(eventDetails.tabs)) return;
-    const activeTabNorm = (activeTab || 'ALL').trim().toUpperCase();
-    const rawTabs: string[] = ['ALL'];
-    for (const t of eventDetails.tabs) {
-      if (typeof t === 'string' && t.trim().length > 0) {
-        rawTabs.push(t.trim());
-      } else if (t && typeof (t as any).name === 'string') {
-        rawTabs.push((t as any).name.trim());
-      } else if (t && typeof (t as any).tabName === 'string') {
-        rawTabs.push((t as any).tabName.trim());
-      }
-    }
-    const tabsToPrefetch = rawTabs.filter(
-      (t) => {
-        const u = t.toUpperCase();
-        return u !== 'CINEMA' && u !== activeTabNorm;
-      }
-    );
-
-    const timer = setTimeout(() => {
-      tabsToPrefetch.forEach(async (t) => {
-        const norm = (t || '').trim().toUpperCase();
-        if (!norm || filmstripCacheRef.current[norm]) return;
-        try {
-          // Check permanent storage first
-          const stored = await getStoredFilmstrip(eventSlug, norm);
-          if (stored) {
-            filmstripCacheRef.current[norm] = stored;
-            return;
-          }
-
-          const familyToken = useAuthStore.getState().token;
-          const authHeader = eventHeadersRef.current.Authorization || (familyToken ? `Bearer ${familyToken}` : undefined);
-          const headers = authHeader ? { Authorization: authHeader } : {};
-
-          const res = await guestApi.get(
-            `/api/gallery/public/events/${eventSlug}/filmstrip?tab=${encodeURIComponent(norm)}&target=65`,
-            { headers }
-          );
-          if (res.data && Array.isArray(res.data.keyframes) && res.data.keyframes.length > 0) {
-            persistFilmstripKeyframes(eventSlug, norm, res.data).then((persistedData) => {
-              filmstripCacheRef.current[norm] = persistedData;
-            }).catch(() => {});
-          }
-        } catch (_) {}
-      });
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [eventSlug, eventDetails?.tabs, activeTab]);
+  // Fetch filmstrip only for the currently active tab.
+  // NOTE (Fix #9): The background prefetching for all other ceremony tabs has been
+  // removed. Previously it looped over every tab (Sangeet, Haldi, etc.) and downloaded
+  // 65 keyframes each, triggering 300+ resize operations. Filmstrip is now fetched on-demand
+  // when the user actually switches to that tab.
 
   // Derived loupe thumbnails: prioritize full server timeline keyframes over local batch
   const loupeThumbnails = useMemo(() => {
