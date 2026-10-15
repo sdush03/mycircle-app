@@ -135,6 +135,26 @@ api.interceptors.response.use(
   }
 );
 
+// Deduplicate concurrent in-flight GET requests to prevent cold-boot request storms
+const inFlightGetRequests = new Map<string, Promise<any>>();
+const originalApiGet = api.get.bind(api);
+
+(api as any).get = function (url: string, config?: any) {
+  const token = config?.headers?.Authorization || useAuthStore.getState().token || '';
+  const key = `${url}|${JSON.stringify(config?.params || {})}|${token}`;
+
+  if (inFlightGetRequests.has(key)) {
+    return inFlightGetRequests.get(key);
+  }
+
+  const promise = originalApiGet(url, config).finally(() => {
+    inFlightGetRequests.delete(key);
+  });
+
+  inFlightGetRequests.set(key, promise);
+  return promise;
+};
+
 export default api;
 
 // A bare axios instance with NO auth interceptors.
