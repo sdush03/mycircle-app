@@ -429,6 +429,20 @@ export default function HomeScreen() {
         ].filter(Boolean);
         covers.forEach((c) => ExpoImage.prefetch(c));
       });
+
+      // Asynchronously fetch photo matches in the background post-render without delaying gallery display
+      api.get('/api/gallery/family/events/matches')
+        .then((matchRes) => {
+          const matchMap = matchRes.data?.matches || {};
+          if (Object.keys(matchMap).length > 0) {
+            const updated = sortedEvents.map((e: any) => ({
+              ...e,
+              matchedCount: matchMap[e.id] !== undefined ? matchMap[e.id] : e.matchedCount,
+            }));
+            setEvents(updated);
+          }
+        })
+        .catch(() => {});
     } catch (err: any) {
       if (err?.response?.status === 401) {
         setEvents([]);
