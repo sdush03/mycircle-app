@@ -69,7 +69,7 @@ import { MasonryCard, clearRevealedPhotosCache } from '../home/lightbox/componen
 import { EditorialLightbox, LightboxBounds } from '../home/lightbox/EditorialLightbox';
 import { CinemaVideoModal } from '../common/CinemaVideoModal';
 import { CinemaLibraryView, formatCinemaCategoryTitleCase, formatCinemaDisplayTitle, classifyCinemaCategory } from '../cinema/CinemaLibraryView';
-import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsEligibleCinemaVideo, isVerticalVideo } from '../cinema/CinemaVideoCard';
+import { hasActualVideoFile, isVideoComingSoon, isCinemaVideoItem, isHighlightsEligibleCinemaVideo, isVerticalVideo, getValidImageThumbnail } from '../cinema/CinemaVideoCard';
 import { videoPreloadManager } from '../../services/videoPreloadManager';
 import { videoDownloadManager } from '../../services/videoDownloadManager';
 import CameraViewScreen from './CameraView';
@@ -153,7 +153,8 @@ function mapPhotoItem(p: any): Photo {
     ? (p.r2Url || p.file_url || p.fullUri || p.photoUrl || p.uri || '')
     : getFullPhotoUrl(p);
 
-  let rawThumb = p.thumbnailUrl || p.thumbUri || p.preview_url || p.coverUrl || p.cover_url || p.posterUrl || p.poster_url || p.coverPhotoUrl || p.cover_photo_url;
+  const cinemaCover = (isVideo || isCinemaVideoItem(p)) ? getValidImageThumbnail(p) : undefined;
+  let rawThumb = cinemaCover || p.thumbnailUrl || p.thumbUri || p.preview_url || p.coverUrl || p.cover_url || p.posterUrl || p.poster_url || p.coverPhotoUrl || p.cover_photo_url || p.exif?.posterUrl || p.exif?.coverUrl;
   if (typeof rawThumb === 'string' && rawThumb.startsWith('/')) {
     rawThumb = `https://mycircle.mistyvisuals.com${rawThumb}`;
   }
@@ -190,7 +191,9 @@ function mapPhotoItem(p: any): Photo {
     hasBakedCover: isBaked,
     isCoverBaked: isBaked,
     subtitle: p.subtitle || p.exif?.subtitle || (isComingSoon ? 'COMING SOON • TEASER POSTER' : undefined),
-    thumbnailUrl: validThumb || thumbUri || fullUri,
+    thumbnailUrl: validThumb || thumbUri || (isVideo ? undefined : fullUri),
+    posterUrl: validThumb || thumbUri || undefined,
+    coverUrl: validThumb || thumbUri || undefined,
     width: w || undefined,
     height: h || undefined,
     aspectRatio,
@@ -233,6 +236,101 @@ function mapPhotoItem(p: any): Photo {
     eventSlug: p.eventSlug || p.event_slug || undefined,
     raw: p,
   };
+}
+
+/**
+ * Injects curated cinema videos into photo grids (ALL and HIGHLIGHTS):
+ * 1. Director's Cut: inserted at a stable random index within top 20 items (ONLY if not coming soon)
+ * 2. Candid Diaries: inserted at a stable random index within top 30 items (ONLY if not coming soon)
+ * 3. Performance & Full Film: NEVER injected outside of Cinema (strictly only in Cinema)
+ */
+function injectCuratedCinemaVideos(
+  basePhotos: Photo[],
+  cinemaVideos: any[],
+  seedKey: string
+): Photo[] {
+  // 1. Filter pure photos (exclude any items that are already cinema videos, coming soon, or video files)
+  const isCinemaOrVideo = (p: any) => {
+    if (String(p.tabName || '').trim().toUpperCase() === 'CINEMA') return true;
+    if (hasActualVideoFile(p)) return true;
+    return false;
+  };
+  const photosOnly = (basePhotos || []).filter((p) => !isCinemaOrVideo(p) && !isVideoComingSoon(p));
+
+  if (!cinemaVideos || cinemaVideos.length === 0) {
+    return photosOnly;
+  }
+
+  // 2. Identify eligible Director's Cut and Candid Diaries (STRICTLY when NOT coming soon)
+  const directorsCutVideos: any[] = [];
+  const candidDiariesVideos: any[] = [];
+
+  cinemaVideos.forEach((v: any) => {
+    // Both Director's Cut and Candid Diaries MUST NOT be Coming Soon and MUST have actual video file
+    if (isVideoComingSoon(v) || !hasActualVideoFile(v)) return;
+
+    const cat = classifyCinemaCategory(v).toUpperCase();
+
+    // PERFORMANCE and FULL FILM: MUST ONLY BE IN CINEMA! Strictly excluded from ALL and HIGHLIGHTS.
+    if (
+      cat.includes('STAGE') ||
+      cat.includes('SPOTLIGHT') ||
+      cat.includes('PERFORMANCE') ||
+      cat.includes('DANCE') ||
+      cat.includes('EXTENDED') ||
+      cat.includes('CUTS') ||
+      cat.includes('FULL FILM') ||
+      cat.includes('CEREMONY') ||
+      cat.includes('CHAPTER')
+    ) {
+      return;
+    }
+
+    if (cat.includes('DIRECTOR')) {
+      directorsCutVideos.push(v);
+    } else if (cat.includes('CANDID') || cat.includes('DIAR') || cat.includes('REEL') || isVerticalVideo(v)) {
+      candidDiariesVideos.push(v);
+    }
+  });
+
+  const result = [...photosOnly];
+
+  // Helper for deterministic stable pseudo-random index based on video ID and seedKey
+  const getStableIndex = (id: any, maxRange: number, salt: number) => {
+    const str = `${seedKey}_${id}_${salt}`;
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash) % Math.max(1, maxRange);
+  };
+
+  const usedIndices = new Set<number>();
+
+  // 3. Director's Cut -> random position within top 20 photos
+  directorsCutVideos.forEach((v, idx) => {
+    const maxBound = Math.min(20, Math.max(1, result.length));
+    let targetIdx = getStableIndex(v.id || v.r2Url, maxBound, idx + 77);
+    while (usedIndices.has(targetIdx) && targetIdx < Math.min(20, result.length)) {
+      targetIdx++;
+    }
+    usedIndices.add(targetIdx);
+    result.splice(targetIdx, 0, v);
+  });
+
+  // 4. Candid Diaries -> random position within top 30 photos
+  candidDiariesVideos.forEach((v, idx) => {
+    const maxBound = Math.min(30, Math.max(1, result.length));
+    let targetIdx = getStableIndex(v.id || v.r2Url, maxBound, idx + 199);
+    while (usedIndices.has(targetIdx) && targetIdx < Math.min(30, result.length)) {
+      targetIdx++;
+    }
+    usedIndices.add(targetIdx);
+    result.splice(targetIdx, 0, v);
+  });
+
+  return result;
 }
 
 const loupeCardStyles = StyleSheet.create({
@@ -3173,67 +3271,18 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     } else if (currentUpper === 'ALL') {
       // In ALL (Full Access only):
-      // 1. All photos + published videos
-      // 2. Any published cinema videos from activeCinemaVideos
-      // 3. ZERO coming soon video posters anywhere outside of Cinema!
-      // 4. Strict deduplication by ID so nothing is ever shown double
-      const combined: Photo[] = [];
-      const seenIds = new Set<number | string>();
-
-      allPhotos.forEach((p: any) => {
-        if (isVideoComingSoon(p)) return;
-        const idKey = p.id ?? p.r2Url;
-        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
-          seenIds.add(idKey);
-          combined.push(p);
-        }
-      });
-
-      (activeCinemaVideos || []).forEach((v: any) => {
-        if (isVideoComingSoon(v) || !hasActualVideoFile(v)) return;
-        const idKey = v.id ?? v.r2Url;
-        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
-          seenIds.add(idKey);
-          combined.push(v);
-        }
-      });
-
-      sourceList = combined;
+      // Injects Director's Cut (random top 20, if not coming soon) and Candid Diaries (random top 30, if not coming soon).
+      // Performance and Full Film are NEVER included here (strictly only in Cinema).
+      sourceList = injectCuratedCinemaVideos(allPhotos, activeCinemaVideos, `${eventSlug || ''}_ALL`);
     } else if (currentUpper === 'HIGHLIGHTS') {
       // In HIGHLIGHTS:
-      // 1. Base highlight photos
-      // 2. Published videos of Director's Cut, Reels, and Performances (not Full Film)
-      // 3. ZERO coming soon video posters outside of Cinema!
-      // 4. Strict deduplication by ID
+      // Base highlight photos with Director's Cut (top 20) and Candid Diaries (top 30) if not coming soon.
+      // Performance and Full Film are NEVER included here (strictly only in Cinema).
       const baseHighlights = (tabCache['HIGHLIGHTS'] && tabCache['HIGHLIGHTS'].length > 0)
         ? tabCache['HIGHLIGHTS']
         : allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS');
 
-      const eligiblePublishedVideos = (activeCinemaVideos || []).filter(isHighlightsEligibleCinemaVideo);
-
-      const combined: Photo[] = [];
-      const seenIds = new Set<number | string>();
-
-      // Feature eligible published cinema videos (Director's Cut, Reels, Performances)
-      eligiblePublishedVideos.forEach((v: any) => {
-        const idKey = v.id ?? v.r2Url;
-        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
-          seenIds.add(idKey);
-          combined.push(v);
-        }
-      });
-
-      // Add highlight photos (strictly excluding coming soon posters or videos)
-      baseHighlights.forEach((p: any) => {
-        if (isVideoComingSoon(p)) return;
-        const idKey = p.id ?? p.r2Url;
-        if (idKey !== undefined && idKey !== null && !seenIds.has(idKey)) {
-          seenIds.add(idKey);
-          combined.push(p);
-        }
-      });
-
-      sourceList = combined;
+      sourceList = injectCuratedCinemaVideos(baseHighlights, activeCinemaVideos, `${eventSlug || ''}_HIGHLIGHTS`);
     } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
       sourceList = tabCache[currentUpper].filter((p: any) => !isVideoComingSoon(p));
     } else {

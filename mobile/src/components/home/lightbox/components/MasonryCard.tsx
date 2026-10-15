@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
 import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 import { getResizedImageUrl } from '../../../../utils/imageUrl';
+import { getValidImageThumbnail } from '../../../cinema/CinemaVideoCard';
 
 export interface MasonryCardProps {
   img: any;
@@ -127,8 +128,9 @@ export const MasonryCard = React.memo(function MasonryCard({
     return false;
   };
 
-  // Priority 1: Direct CDN thumbnail (rawThumb)
-  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri) : null;
+  // Priority 1: Direct CDN thumbnail or Cinema cover poster (rawThumb)
+  const cinemaCover = (typeof img === 'object' && img) ? getValidImageThumbnail(img) : null;
+  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || cinemaCover) : null;
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
   const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
 
@@ -138,9 +140,10 @@ export const MasonryCard = React.memo(function MasonryCard({
   const isResizeFailed = failedUri !== null && resizedFallback === failedUri;
 
   // Candidate selection in order of priority:
-  // 1. Direct CDN Thumbnail (600px pre-generated)
+  // 1. Direct CDN Thumbnail (600px pre-generated) or Cinema Cover
   // 2. On-the-fly resize (saves 99% user data when thumbnail is missing)
   // 3. Original high-res photo (last resort before broken placeholder)
+  // 4. Event Cover fallback (for videos that lack an individual poster)
   let candidateUri: string | null = null;
   if (validThumb && !isThumbnailFailed) {
     candidateUri = validThumb;
@@ -156,6 +159,14 @@ export const MasonryCard = React.memo(function MasonryCard({
     candidateUri = img.photoUrl;
   } else if (typeof img === 'object' && img?.url && !isVideoFile(img.url)) {
     candidateUri = img.url;
+  }
+
+  // Fallback for videos: use event cover photo if no video poster is available
+  if (!candidateUri && isVideo && typeof img === 'object' && img) {
+    const eventCover = img.eventCoverUrl || img.eventCoverPhotoUrl || img.coverPhotoMobileUrl || img.coverPhotoUrl || null;
+    if (eventCover && !isVideoFile(eventCover)) {
+      candidateUri = eventCover;
+    }
   }
 
   if (candidateUri && typeof candidateUri === 'string' && candidateUri.startsWith('/')) {
