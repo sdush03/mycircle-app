@@ -127,20 +127,12 @@ export function getThumbnailUrl(
     }
   }
 
-  // 2. Derive direct pre-generated R2 thumbnail from standard /photos/ or /videos/ path:
+  // 2. Derive direct pre-generated R2 thumbnail from standard /photos/ path:
   const rawR2 = p.r2Url || p.r2_url || p.url || p.photoUrl || p.uri || '';
-  if (rawR2 && typeof rawR2 === 'string') {
+  if (rawR2 && typeof rawR2 === 'string' && rawR2.includes('/photos/')) {
     const clean = rawR2.split('?')[0];
     const fn = clean.substring(clean.lastIndexOf('/') + 1);
-    const isVid = ['.mp4', '.mov', '.m4v', '.webm'].some((ext) => fn.toLowerCase().endsWith(ext)) || clean.includes('/videos/');
-    const baseName = fn.replace(/\.[^/.]+$/, '');
-    const thumbName = isVid ? `thumb_${baseName}.jpg` : `thumb_${fn}`;
-    if (clean.includes('/photos/')) {
-      return clean.replace('/photos/' + fn, `/thumbnails/${thumbName}`);
-    }
-    if (clean.includes('/videos/')) {
-      return clean.replace('/videos/' + fn, `/thumbnails/${thumbName}`);
-    }
+    return clean.replace('/photos/' + fn, `/thumbnails/thumb_${fn}`);
   }
 
   // 3. Fallback: On-the-fly resize (Priority 2) before high-res original (Priority 3)

@@ -227,68 +227,6 @@ export function getValidImageThumbnail(video: CinemaVideoItem): string | undefin
       }
     }
   }
-
-  // Priority 2: Derive standard pre-generated thumbnail from video URL path
-  const videoCandidates = [
-    video.videoUrl,
-    video.r2Url,
-    video.file_url,
-    video.fullUri,
-    video.photoUrl,
-    video.uri,
-    video.filename,
-    video.raw?.videoUrl,
-    video.raw?.r2Url,
-    video.raw?.file_url,
-    video.raw?.fullUri,
-    video.raw?.filename,
-  ];
-  for (const v of videoCandidates) {
-    if (typeof v === 'string' && v.trim()) {
-      let resolved = v.trim();
-      if (resolved.startsWith('/')) {
-        resolved = `https://mycircle.mistyvisuals.com${resolved}`;
-      }
-      if (resolved.startsWith('http')) {
-        const clean = resolved.split('?')[0];
-        const fn = clean.substring(clean.lastIndexOf('/') + 1);
-        const base = fn.replace(/\.[^/.]+$/, '');
-        if (clean.includes('/videos/')) {
-          return clean.replace('/videos/' + fn, `/thumbnails/thumb_${base}.jpg`);
-        }
-        if (clean.includes('/photos/')) {
-          return clean.replace('/photos/' + fn, `/thumbnails/thumb_${base}.jpg`);
-        }
-      }
-    }
-  }
-
-  // Priority 3: Fallback to event cover photo attached to video
-  const coverCandidates = [
-    video.eventCoverUrl,
-    video.eventCoverPhotoUrl,
-    video.coverPhotoMobileUrl,
-    video.coverPhotoUrl,
-    video.raw?.eventCoverUrl,
-    video.raw?.eventCoverPhotoUrl,
-    video.raw?.coverPhotoMobileUrl,
-    video.raw?.coverPhotoUrl,
-  ];
-  for (const cov of coverCandidates) {
-    if (typeof cov === 'string' && cov.trim()) {
-      let resolved = cov.trim();
-      if (resolved.startsWith('/')) {
-        resolved = `https://mycircle.mistyvisuals.com${resolved}`;
-      }
-      if (resolved.startsWith('http')) {
-        const clean = resolved.split('?')[0].toLowerCase();
-        if (!clean.endsWith('.mp4') && !clean.endsWith('.mov') && !clean.endsWith('.m4v') && !clean.endsWith('.webm')) {
-          return resolved;
-        }
-      }
-    }
-  }
-
   return undefined;
 }
 
