@@ -130,7 +130,7 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   // Priority 1: Direct CDN thumbnail or Cinema cover poster (rawThumb)
   const cinemaCover = (typeof img === 'object' && img) ? getValidImageThumbnail(img) : null;
-  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || cinemaCover) : null;
+  const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || img.posterUrl || img.coverUrl || cinemaCover) : null;
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
   const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
 
