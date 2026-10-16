@@ -143,7 +143,15 @@ const balancePhotosIntoColumns = (photosList: any[]) => {
   return { column0: cols[0], column1: cols[1] };
 };
 
-export default function ProfileScreen() {
+export interface ProfileScreenProps {
+  isActive?: boolean;
+  onScreenProtectionChange?: (shouldPrevent: boolean) => void;
+}
+
+export default function ProfileScreen({
+  isActive = true,
+  onScreenProtectionChange,
+}: ProfileScreenProps = {}) {
   const handleScroll = useScrollTabBarCollapse();
   const { profile } = useAuthStore();
 
@@ -199,14 +207,31 @@ export default function ProfileScreen() {
     transform: [{ translateX: tabTranslateX.value }],
   }));
 
-  const [eventGroups, setEventGroups] = useState<EventMatchedGroup[]>([]);
-  const [totalMatchedCount, setTotalMatchedCount] = useState<number>(0);
-  const [loadingPhotos, setLoadingPhotos] = useState<boolean>(true);
+  const cachedProfile = useAuthStore.getState().getProfileCache?.();
 
-  const [favouriteEventGroups, setFavouriteEventGroups] = useState<EventMatchedGroup[]>([]);
-  const [totalFavouriteCount, setTotalFavouriteCount] = useState<number>(0);
+  const [eventGroups, setEventGroups] = useState<EventMatchedGroup[]>(() => {
+    return cachedProfile?.eventGroups && Array.isArray(cachedProfile.eventGroups) ? cachedProfile.eventGroups : [];
+  });
+  const [totalMatchedCount, setTotalMatchedCount] = useState<number>(() => {
+    return typeof cachedProfile?.totalMatchedCount === 'number' ? cachedProfile.totalMatchedCount : 0;
+  });
+  const [loadingPhotos, setLoadingPhotos] = useState<boolean>(() => {
+    return !(cachedProfile?.eventGroups && Array.isArray(cachedProfile.eventGroups) && cachedProfile.eventGroups.length > 0);
+  });
+
+  const [favouriteEventGroups, setFavouriteEventGroups] = useState<EventMatchedGroup[]>(() => {
+    return cachedProfile?.favouriteEventGroups && Array.isArray(cachedProfile.favouriteEventGroups) ? cachedProfile.favouriteEventGroups : [];
+  });
+  const [totalFavouriteCount, setTotalFavouriteCount] = useState<number>(() => {
+    return typeof cachedProfile?.totalFavouriteCount === 'number' ? cachedProfile.totalFavouriteCount : 0;
+  });
   const [loadingSaves, setLoadingSaves] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const eventGroupsRef = useRef<EventMatchedGroup[]>(eventGroups);
+  eventGroupsRef.current = eventGroups;
+  const favouriteEventGroupsRef = useRef<EventMatchedGroup[]>(favouriteEventGroups);
+  favouriteEventGroupsRef.current = favouriteEventGroups;
+  const isSelfLikeRef = useRef<boolean>(false);
 
   const [selectedMyPhotoIdx, setSelectedMyPhotoIdx] = useState<number | null>(null);
   const [selectedMyPhotoBounds, setSelectedMyPhotoBounds] = useState<LightboxBounds | null>(null);
@@ -217,13 +242,13 @@ export default function ProfileScreen() {
   const [selectedSavedBounds, setSelectedSavedBounds] = useState<LightboxBounds | null>(null);
   const [selectedSavedList, setSelectedSavedList] = useState<any[]>([]);
   const [selectedSavedTitle, setSelectedSavedTitle] = useState<string>('CELEBRATION FAVOURITES');
-  const [selectedSavedAllowDownloads, setSelectedSavedAllowDownloads] = useState<boolean>(true);
-  const [selectedMyPhotoAllowDownloads, setSelectedMyPhotoAllowDownloads] = useState<boolean>(true);
+  const [selectedSavedAllowDownloads, setSelectedSavedAllowDownloads] = useState<boolean>(false);
+  const [selectedMyPhotoAllowDownloads, setSelectedMyPhotoAllowDownloads] = useState<boolean>(false);
 
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number; title: string } | null>(null);
 
-  const handleDownloadPhotos = useCallback(async (photosToDownload: any[], title: string = 'Celebration Photos', isAllowed: boolean = true) => {
+  const handleDownloadPhotos = useCallback(async (photosToDownload: any[], title: string = 'Celebration Photos', isAllowed: boolean = false) => {
     if (!photosToDownload || photosToDownload.length === 0 || isBatchDownloading) return;
 
     if (!isAllowed) {
@@ -414,7 +439,7 @@ export default function ProfileScreen() {
           }
         } catch (_e) {}
       }
-      return { allowDownloads: true, allowBulkDownloads: false };
+      return { allowDownloads: false, allowBulkDownloads: false };
     },
     []
   );
@@ -451,12 +476,27 @@ export default function ProfileScreen() {
 
             // Use download settings directly from family events response (no extra fetch)
             const downloadSettings = await getEventDownloadSettings(ev);
+
+            const currentFavIds = new Set<string>();
+            favouriteEventGroupsRef.current.forEach((g) => {
+              g.photos.forEach((p) => {
+                if (p.id) currentFavIds.add(String(p.id));
+                if (p.fullUri) currentFavIds.add(p.fullUri);
+                if (p.uri) currentFavIds.add(p.uri);
+              });
+            });
+
             const mappedPhotos = evPhotos
               .map((p) => {
                 const mapped = mapPhotoItem(p);
+                const isFav =
+                  currentFavIds.has(String(mapped.id)) ||
+                  (mapped.fullUri && currentFavIds.has(mapped.fullUri)) ||
+                  (mapped.uri && currentFavIds.has(mapped.uri));
                 return {
                   ...mapped,
                   eventSlug: ev.slug,
+                  isLiked: mapped.isLiked || isFav,
                   allowDownloads: downloadSettings.allowDownloads,
                   eventAllowDownloads: downloadSettings.allowDownloads,
                 };
@@ -498,6 +538,10 @@ export default function ProfileScreen() {
 
       setEventGroups(groups);
       setTotalMatchedCount(grandTotal);
+      useAuthStore.getState().setProfileCache({
+        eventGroups: groups,
+        totalMatchedCount: grandTotal,
+      });
     } catch (_err) {
       setEventGroups([]);
       setTotalMatchedCount(0);
@@ -582,6 +626,36 @@ export default function ProfileScreen() {
 
       setFavouriteEventGroups(groups);
       setTotalFavouriteCount(grandTotal);
+      useAuthStore.getState().setProfileCache({
+        favouriteEventGroups: groups,
+        totalFavouriteCount: grandTotal,
+      });
+
+      // Cross-reference with eventGroups so photos in MY PHOTOS show liked state
+      const likedIds = new Set<string>();
+      groups.forEach((g) => {
+        g.photos.forEach((p) => {
+          if (p.id) likedIds.add(String(p.id));
+          if (p.fullUri) likedIds.add(p.fullUri);
+          if (p.uri) likedIds.add(p.uri);
+        });
+      });
+
+      setEventGroups((prevGroups) =>
+        prevGroups.map((g) => ({
+          ...g,
+          photos: g.photos.map((p) => {
+            const isFav =
+              likedIds.has(String(p.id)) ||
+              (p.fullUri && likedIds.has(p.fullUri)) ||
+              (p.uri && likedIds.has(p.uri));
+            if (p.isLiked !== isFav) {
+              return { ...p, isLiked: isFav };
+            }
+            return p;
+          }),
+        }))
+      );
     } catch (_err) {
       setFavouriteEventGroups([]);
       setTotalFavouriteCount(0);
@@ -616,6 +690,10 @@ export default function ProfileScreen() {
     // Initial fetch is deferred to useFocusEffect below when the user actually navigates here.
 
     const unsubSaves = tabEvents.on(EVENT_SAVES_UPDATED, () => {
+      if (isSelfLikeRef.current) {
+        isSelfLikeRef.current = false;
+        return;
+      }
       hasStaleSavesRef.current = true;
     });
     const unsubJoined = tabEvents.on(EVENT_JOINED_CELEBRATION, () => {
@@ -644,31 +722,52 @@ export default function ProfileScreen() {
     return activeGroups.some((g) => g.allowDownloads === false);
   }, [activeSubTab, favouriteEventGroups, eventGroups]);
 
-  useFocusEffect(
-    useCallback(() => {
-      // Screen capture protection
-      if (hasBlockedPhotosInProfile) {
-        preventScreenCaptureAsync('profile_blocked_photos');
-      } else {
-        allowScreenCaptureAsync('profile_blocked_photos');
-      }
+  // Active screen protection sync: triggers whenever Profile tab is active or viewing a protected photo
+  useEffect(() => {
+    const isViewingBlockedPhoto =
+      (selectedMyPhotoIdx !== null && !selectedMyPhotoAllowDownloads) ||
+      (selectedSavedIdx !== null && !selectedSavedAllowDownloads);
 
-      // Initial load or retry if photos are not yet loaded when the user visits Profile
+    const shouldProtect = Boolean((isActive && hasBlockedPhotosInProfile) || isViewingBlockedPhoto);
+
+    onScreenProtectionChange?.(shouldProtect);
+    if (shouldProtect) {
+      preventScreenCaptureAsync('profile_blocked_photos');
+    } else {
+      allowScreenCaptureAsync('profile_blocked_photos');
+    }
+  }, [
+    isActive,
+    hasBlockedPhotosInProfile,
+    selectedMyPhotoIdx,
+    selectedSavedIdx,
+    selectedMyPhotoAllowDownloads,
+    selectedSavedAllowDownloads,
+    onScreenProtectionChange,
+  ]);
+
+  // Release screen protection on unmount
+  useEffect(() => {
+    return () => {
+      onScreenProtectionChange?.(false);
+      allowScreenCaptureAsync('profile_blocked_photos');
+    };
+  }, [onScreenProtectionChange]);
+
+  // Initial load or refresh whenever user navigates to Profile tab
+  useEffect(() => {
+    if (isActive) {
       if (!hasInitialLoadedRef.current || eventGroups.length === 0) {
         hasInitialLoadedRef.current = true;
         fetchMyCelebrationPhotos();
         fetchSavedPhotos();
       } else if (hasStaleSavesRef.current) {
-        // Flush dirty flag if likes changed while in background
         hasStaleSavesRef.current = false;
         fetchSavedPhotos();
+        fetchMyCelebrationPhotos();
       }
-
-      return () => {
-        allowScreenCaptureAsync('profile_blocked_photos');
-      };
-    }, [hasBlockedPhotosInProfile, fetchMyCelebrationPhotos, fetchSavedPhotos])
-  );
+    }
+  }, [isActive, eventGroups.length, fetchMyCelebrationPhotos, fetchSavedPhotos]);
 
   const getRoleLabel = () => {
     if (profile?.displayRole === 'BRIDE') return '👑 BRIDE';
@@ -676,31 +775,242 @@ export default function ProfileScreen() {
     return '✨ CIRCLE MEMBER';
   };
 
-  const handleUnsaveFromProfile = (item: any) => {
-    const photoId = item.id;
-    const photoUrl = item.photoUrl || item.uri || item.fullUri;
-    setFavouriteEventGroups((prevGroups) =>
-      prevGroups
-        .map((g) => ({
-          ...g,
-          photos: g.photos.filter((p) => p.id !== photoId && p.photoUrl !== photoUrl && p.uri !== photoUrl && p.fullUri !== photoUrl),
-        }))
-        .filter((g) => g.photos.length > 0)
-    );
-    setSelectedSavedList((prevList) => {
-      const nextList = prevList.filter((p) => p.id !== photoId && p.photoUrl !== photoUrl && p.uri !== photoUrl && p.fullUri !== photoUrl);
-      if (selectedSavedIdx !== null) {
-        if (nextList.length === 0) {
-          setSelectedSavedIdx(null);
-        } else {
-          const targetIdx = Math.min(selectedSavedIdx, nextList.length - 1);
-          setSelectedSavedIdx(targetIdx);
+  const handleToggleLike = useCallback(
+    async (item: any) => {
+      if (!item) return;
+      const photoId = item.id;
+      if (!photoId) return;
+
+      const photoUrl = item.fullUri || item.photoUrl || item.uri || item.r2Url;
+      const targetEventSlug =
+        item.eventSlug ||
+        item.event_slug ||
+        useAuthStore.getState().eventSlug ||
+        '';
+
+      // Find fresh item from current state
+      let freshItem: any = null;
+      for (const g of eventGroupsRef.current) {
+        const found = g.photos.find(
+          (p) => p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))
+        );
+        if (found) {
+          freshItem = found;
+          break;
         }
       }
-      return nextList;
-    });
-    fetchSavedPhotos();
-  };
+      if (!freshItem) {
+        for (const g of favouriteEventGroupsRef.current) {
+          const found = g.photos.find(
+            (p) => p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))
+          );
+          if (found) {
+            freshItem = found;
+            break;
+          }
+        }
+      }
+      if (!freshItem) {
+        freshItem = item;
+      }
+
+      const currentlyLiked = typeof freshItem?.isLiked === 'boolean' ? freshItem.isLiked : !!item.isLiked;
+      const nextLiked = !currentlyLiked;
+
+      // Update in-memory item immediately
+      item.isLiked = nextLiked;
+      if (typeof item.likeCount === 'number') {
+        item.likeCount = Math.max(0, item.likeCount + (nextLiked ? 1 : -1));
+      }
+
+      // 1. Optimistically update MY PHOTOS (eventGroups)
+      setEventGroups((prevGroups) =>
+        prevGroups.map((group) => {
+          if (targetEventSlug && group.eventSlug !== targetEventSlug) {
+            return group;
+          }
+          const hasPhoto = group.photos.some(
+            (p) => p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))
+          );
+          if (!hasPhoto) return group;
+
+          return {
+            ...group,
+            photos: group.photos.map((p) => {
+              if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
+                const currentCount = typeof p.likeCount === 'number' ? p.likeCount : 0;
+                return {
+                  ...p,
+                  isLiked: nextLiked,
+                  likeCount: Math.max(0, currentCount + (nextLiked ? 1 : -1)),
+                };
+              }
+              return p;
+            }),
+          };
+        })
+      );
+
+      // 2. Optimistically update MY CELEBRATION PHOTOS Lightbox list
+      setSelectedMyPhotoList((prevList) =>
+        prevList.map((p) => {
+          if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
+            const currentCount = typeof p.likeCount === 'number' ? p.likeCount : 0;
+            return {
+              ...p,
+              isLiked: nextLiked,
+              likeCount: Math.max(0, currentCount + (nextLiked ? 1 : -1)),
+            };
+          }
+          return p;
+        })
+      );
+
+      // 3. Optimistically update MY FAVOURITES (favouriteEventGroups) & count
+      if (nextLiked) {
+        setFavouriteEventGroups((prevGroups) => {
+          const matchedGroup = eventGroupsRef.current.find((g) => g.eventSlug === targetEventSlug);
+          const photoToAdd = {
+            ...freshItem,
+            ...item,
+            id: photoId,
+            eventSlug: targetEventSlug,
+            isLiked: true,
+            likeCount: Math.max(1, (freshItem?.likeCount || item.likeCount || 0) + 1),
+          };
+
+          const groupIndex = prevGroups.findIndex((g) => g.eventSlug === targetEventSlug);
+          if (groupIndex !== -1) {
+            const existingGroup = prevGroups[groupIndex];
+            const alreadyExists = existingGroup.photos.some(
+              (p) => p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))
+            );
+            if (alreadyExists) {
+              return prevGroups.map((g, idx) =>
+                idx === groupIndex
+                  ? {
+                      ...g,
+                      photos: g.photos.map((p) =>
+                        p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))
+                          ? { ...p, isLiked: true }
+                          : p
+                      ),
+                    }
+                  : g
+              );
+            }
+            return prevGroups.map((g, idx) =>
+              idx === groupIndex ? { ...g, photos: [photoToAdd, ...existingGroup.photos] } : g
+            );
+          } else {
+            const newGroup: EventMatchedGroup = {
+              eventSlug: targetEventSlug || 'celebration',
+              eventTitle: matchedGroup?.eventTitle || 'Celebration',
+              eventDate: matchedGroup?.eventDate,
+              coverImage: matchedGroup?.coverImage,
+              photos: [photoToAdd],
+              allowDownloads: matchedGroup?.allowDownloads ?? false,
+              allowBulkDownloads: matchedGroup?.allowBulkDownloads ?? false,
+            };
+            return [newGroup, ...prevGroups];
+          }
+        });
+        setTotalFavouriteCount((prev) => prev + 1);
+      } else {
+        setFavouriteEventGroups((prevGroups) =>
+          prevGroups
+            .map((g) => {
+              if (targetEventSlug && g.eventSlug !== targetEventSlug) return g;
+              return {
+                ...g,
+                photos: g.photos.filter(
+                  (p) => p.id !== photoId && (!photoUrl || (p.fullUri !== photoUrl && p.uri !== photoUrl))
+                ),
+              };
+            })
+            .filter((g) => g.photos.length > 0)
+        );
+        setTotalFavouriteCount((prev) => Math.max(0, prev - 1));
+      }
+
+      // 4. Optimistically update MY FAVOURITES Lightbox list
+      setSelectedSavedList((prevList) =>
+        prevList.map((p) => {
+          if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
+            return {
+              ...p,
+              isLiked: nextLiked,
+            };
+          }
+          return p;
+        })
+      );
+
+      // 5. Send API request to event gallery like endpoint
+      try {
+        const familyToken = useAuthStore.getState().token;
+        const storedEvents = useAuthStore.getState().userEvents || [];
+        const evObj =
+          storedEvents.find((e: any) => e.slug === targetEventSlug || e.id === targetEventSlug) ||
+          eventGroupsRef.current.find((g) => g.eventSlug === targetEventSlug) ||
+          favouriteEventGroupsRef.current.find((g) => g.eventSlug === targetEventSlug) ||
+          { slug: targetEventSlug };
+
+        const headers = await getEventHeaders(evObj, familyToken);
+        const res = await guestApi.post(
+          `/api/gallery/public/events/${targetEventSlug}/photos/${photoId}/like`,
+          {},
+          { headers }
+        );
+
+        if (res.data && typeof res.data.liked === 'boolean') {
+          const serverLiked = res.data.liked;
+          const serverCount = typeof res.data.likeCount === 'number' ? res.data.likeCount : undefined;
+
+          // Reconcile if server state differs from optimistic
+          if (serverLiked !== nextLiked) {
+            setEventGroups((prevGroups) =>
+              prevGroups.map((g) => ({
+                ...g,
+                photos: g.photos.map((p) => {
+                  if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
+                    return {
+                      ...p,
+                      isLiked: serverLiked,
+                      ...(typeof serverCount === 'number' ? { likeCount: serverCount } : {}),
+                    };
+                  }
+                  return p;
+                }),
+              }))
+            );
+          }
+        }
+        isSelfLikeRef.current = true;
+        tabEvents.emit(EVENT_SAVES_UPDATED);
+      } catch (err) {
+        console.warn('[PROFILE LIKE ❌] Failed to toggle photo like:', err);
+        // Revert on error
+        setEventGroups((prevGroups) =>
+          prevGroups.map((g) => ({
+            ...g,
+            photos: g.photos.map((p) => {
+              if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
+                return {
+                  ...p,
+                  isLiked: currentlyLiked,
+                  likeCount: typeof freshItem?.likeCount === 'number' ? freshItem.likeCount : p.likeCount,
+                };
+              }
+              return p;
+            }),
+          }))
+        );
+        fetchSavedPhotos();
+      }
+    },
+    [getEventHeaders, fetchSavedPhotos]
+  );
 
   const mainScrollRef = useRef<ScrollView>(null);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
@@ -792,7 +1102,7 @@ export default function ProfileScreen() {
     isSavedTab: boolean,
     photosList: any[],
     title: string,
-    allowDownloads: boolean = true
+    allowDownloads: boolean = false
   ) => {
     const targetIdx = photosList.findIndex((item) => {
       if (!item || !img) return false;
@@ -823,7 +1133,7 @@ export default function ProfileScreen() {
     photosList: any[],
     isSavedTab: boolean = false,
     title: string = '',
-    allowDownloads: boolean = true
+    allowDownloads: boolean = false
   ) => {
     const { column0, column1 } = balancePhotosIntoColumns(photosList);
 
@@ -838,6 +1148,7 @@ export default function ProfileScreen() {
                 isColumn0={true}
                 onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title, allowDownloads)}
                 onRegisterRef={registerCardRef}
+                onToggleLike={handleToggleLike}
               />
             </View>
           ))}
@@ -851,6 +1162,7 @@ export default function ProfileScreen() {
                 isColumn0={false}
                 onSelect={(bounds) => handleSelectPhoto(img, bounds, isSavedTab, photosList, title, allowDownloads)}
                 onRegisterRef={registerCardRef}
+                onToggleLike={handleToggleLike}
               />
             </View>
           ))}
@@ -1117,9 +1429,11 @@ export default function ProfileScreen() {
             setSelectedSavedIdx(null);
             setSelectedSavedBounds(null);
           }}
-          onUnsave={handleUnsaveFromProfile}
+          onToggleLike={handleToggleLike}
+          likeTargetName="My Favourites"
           enableDownload={selectedSavedAllowDownloads && (selectedSavedList[selectedSavedIdx ?? 0]?.allowDownloads !== false)}
           title={selectedSavedTitle || 'CELEBRATION FAVOURITES'}
+          subtitle="MY FAVOURITES"
         />
       )}
 
@@ -1135,8 +1449,11 @@ export default function ProfileScreen() {
             setSelectedMyPhotoIdx(null);
             setSelectedMyPhotoBounds(null);
           }}
+          onToggleLike={handleToggleLike}
+          likeTargetName="My Favourites"
           enableDownload={selectedMyPhotoAllowDownloads && (selectedMyPhotoList[selectedMyPhotoIdx ?? 0]?.allowDownloads !== false)}
           title={selectedMyPhotoTitle}
+          subtitle="MY PHOTOS"
         />
       )}
 

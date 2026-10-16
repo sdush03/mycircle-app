@@ -7,6 +7,15 @@ import { userSelfieStorage } from '../services/userSelfieStorage';
 const TOKEN_KEY = 'user_session_token';
 const PROFILE_KEY = 'user_profile_data';
 const GALLERY_CACHE_KEY = '@mycircle_gallery_cache_v1';
+const PROFILE_CACHE_KEY = '@mycircle_profile_cache_v1';
+
+export interface ProfileCacheData {
+  eventGroups: any[];
+  favouriteEventGroups: any[];
+  totalMatchedCount: number;
+  totalFavouriteCount: number;
+  timestamp: number;
+}
 
 export interface GuestProfile {
   id: number;
@@ -45,6 +54,7 @@ interface AuthState {
   openedFrom: 'home' | 'mycircle' | null;
   isTabBarCollapsed: boolean;
   galleryCache: Record<string, GalleryCacheEntry>;
+  profileCache: ProfileCacheData | null;
   pendingInvite: { slug: string; passcode: string | null; tab?: string | null } | null;
   initialTab: string | null;
   setPendingInvite: (invite: { slug: string; passcode: string | null; tab?: string | null } | null) => void;
@@ -55,6 +65,8 @@ interface AuthState {
   setGalleryCache: (eventSlug: string, data: Partial<GalleryCacheEntry>) => void;
   clearGalleryCache: (eventSlug: string) => void;
   getGalleryCache: (eventSlug: string) => GalleryCacheEntry | null;
+  setProfileCache: (data: Partial<ProfileCacheData>) => void;
+  getProfileCache: () => ProfileCacheData | null;
   
   setAuth: (token: string, profile: GuestProfile, userEvents?: any[]) => Promise<void>;
   updateToken: (token: string) => Promise<void>;
@@ -78,9 +90,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   openedFrom: null,
   isTabBarCollapsed: false,
   galleryCache: {},
+  profileCache: null,
   pendingInvite: null,
   initialTab: null,
-  
+
   setPendingInvite: (pendingInvite) => set({ pendingInvite }),
   clearInitialTab: () => set({ initialTab: null }),
   setPhoneSkipped: (skipped) => set({ isPhoneSkipped: skipped }),
@@ -117,6 +130,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return null;
     }
     return entry;
+  },
+  setProfileCache: (data) => {
+    const current = get().profileCache || { eventGroups: [], favouriteEventGroups: [], totalMatchedCount: 0, totalFavouriteCount: 0, timestamp: Date.now() };
+    const updated: ProfileCacheData = {
+      ...current,
+      ...data,
+      timestamp: Date.now(),
+    };
+    set({ profileCache: updated });
+    AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(updated)).catch(() => {});
+  },
+  getProfileCache: () => {
+    return get().profileCache;
   },
 
   setAuth: async (token, profile, userEvents = []) => {
@@ -315,6 +341,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       } catch (_) {}
 
+      let profileCache: ProfileCacheData | null = null;
+      try {
+        const cachedProfileStr = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+        if (cachedProfileStr) {
+          const parsed = JSON.parse(cachedProfileStr);
+          if (parsed && typeof parsed === 'object') {
+            profileCache = parsed;
+          }
+        }
+      } catch (_) {}
+
       // If an incoming deep link arrived while Keychain was loading, activate it immediately
       const pending = get().pendingInvite;
       if (token && pending && pending.slug) {
@@ -322,6 +359,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           token,
           profile,
           galleryCache,
+          profileCache,
           isLoading: false,
           isPhoneSkipped: false,
           pendingInvite: null,
@@ -334,7 +372,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           m.prefetchEventGalleryData(pending.slug, pending.passcode);
         }).catch(() => {});
       } else {
-        set({ token, profile, galleryCache, isLoading: false, isPhoneSkipped: false });
+        set({ token, profile, galleryCache, profileCache, isLoading: false, isPhoneSkipped: false });
       }
     } catch (e) {
       // SecureStore may fail on simulator builds without keychain entitlements — this is expected.
@@ -351,6 +389,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
       await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
       await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
+      await AsyncStorage.removeItem(PROFILE_CACHE_KEY).catch(() => {});
       await userSelfieStorage.clearLocalSelfie().catch(() => {});
 
       // Sign out of Google so the account picker is shown on next sign-in
@@ -365,6 +404,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         profile: null,
         userEvents: [],
         galleryCache: {},
+        profileCache: null,
         isLoading: false,
         eventSlug: null,
         passcode: null,
