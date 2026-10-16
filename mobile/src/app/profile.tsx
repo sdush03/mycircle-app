@@ -445,7 +445,9 @@ export default function ProfileScreen({
   );
 
   const fetchMyCelebrationPhotos = useCallback(async () => {
-    setLoadingPhotos(true);
+    if (eventGroupsRef.current.length === 0) {
+      setLoadingPhotos(true);
+    }
     try {
       const familyToken = useAuthStore.getState().token;
       const eventsList = await getCombinedEventsList();
@@ -551,7 +553,9 @@ export default function ProfileScreen({
   }, [getCombinedEventsList, getEventHeaders, getEventDownloadSettings]);
 
   const fetchSavedPhotos = useCallback(async () => {
-    setLoadingSaves(true);
+    if (favouriteEventGroupsRef.current.length === 0) {
+      setLoadingSaves(true);
+    }
     try {
       const familyToken = useAuthStore.getState().token;
       const eventsList = await getCombinedEventsList();
