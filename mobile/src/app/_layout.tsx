@@ -441,12 +441,12 @@ function RootLayoutContent() {
       }
     });
 
-    // Check every 15 seconds while app is active in foreground
+    // Check every 10 seconds while app is active in foreground
     const interval = setInterval(() => {
       if (AppState.currentState === 'active') {
         checkSession();
       }
-    }, 15000);
+    }, 10000);
 
     return () => {
       appStateSub.remove();

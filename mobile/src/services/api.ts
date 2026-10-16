@@ -70,7 +70,11 @@ api.interceptors.response.use(
     const url: string = response.config?.url || '';
     const isFamilyEndpoint = url.includes('/api/gallery/family');
     if (isFamilyEndpoint && response.data?.token && typeof response.data.token === 'string') {
-      useAuthStore.getState().updateToken(response.data.token).catch(() => {});
+      const currentToken = useAuthStore.getState().token;
+      // Only update if an existing authenticated session is active and not in the middle of auth endpoint
+      if (currentToken && !url.includes('/auth')) {
+        useAuthStore.getState().updateToken(response.data.token).catch(() => {});
+      }
     }
 
     // Fix 3: Silently rotate guest tokens — backend emits a fresh token in X-Refreshed-Token
@@ -126,9 +130,10 @@ api.interceptors.response.use(
 
     if (error.response && error.response.status === 401) {
       // Only skip logout for operations where 401 is an input error, NOT a session expiration
-      // (e.g. invalid bulk download PIN).
+      // (e.g. invalid bulk download PIN or invalid login credentials).
       const isInputPinError = url.includes('/download');
-      if (!isInputPinError) {
+      const isAuthUrl = url.includes('/auth') && !url.includes('/session-check');
+      if (!isInputPinError && !isAuthUrl) {
         console.warn('[API 401] Session token expired or invalid for URL:', url, '-> Auto-logging out to Login screen.');
         await useAuthStore.getState().logout();
       }
