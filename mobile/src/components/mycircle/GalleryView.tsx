@@ -738,6 +738,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   useAnimatedReaction(
     () => {
       'worklet';
+      // Do NOT overwrite continuousPosShared while the user is dragging the loupe —
+      // the drag handler owns those values and scroll-derived updates would snap it back.
       if (isDragging.value) return -1;
       if (!thumbnails || thumbnails.length === 0) return 0;
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
@@ -755,9 +757,13 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         );
 
       const continuousKfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
-      continuousPosShared.value = continuousKfPos;
+      // Only write to shared values when not dragging (guard re-checked here after the
+      // expensive calculations so the early-return above stays cheap on every frame)
+      if (!isDragging.value) {
+        continuousPosShared.value = continuousKfPos;
+      }
 
-      return Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
+      return isDragging.value ? -1 : Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
     },
     (nextIdx, prevIdx) => {
       'worklet';
