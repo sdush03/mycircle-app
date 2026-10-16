@@ -31,6 +31,8 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
     'X-App-Version': appVersion,
+    'x-client-type': 'app',
+    'x-device-type': 'mobile',
   },
 });
 
@@ -167,6 +169,8 @@ export const guestApi = axios.create({
     'Content-Type': 'application/json',
     'X-App-Version': appVersion,
     'x-app-version': appVersion,
+    'x-client-type': 'app',
+    'x-device-type': 'mobile',
   },
 });
 guestApi.interceptors.request.use((config) => {
