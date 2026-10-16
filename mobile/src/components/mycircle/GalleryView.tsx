@@ -670,7 +670,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   numColumns = 2,
 }) => {
   const isDragging = useSharedValue(false);
-  const isSettlingAfterDrag = useSharedValue(false); // suppresses reaction for a few frames after drag ends
+  const isLoupeLocked = useSharedValue(false); // locks loupe position after drag so it never snaps during fade-out
   const dragStartY = useSharedValue(0);
   const dragStartProgress = useSharedValue(0);
   const currentCardYShared = useSharedValue(insetsTop + 75);
@@ -689,14 +689,6 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const triggerGrabHaptic = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
-
-  const clearSettlingFlag = useCallback(() => {
-    isSettlingAfterDrag.value = false;
-  }, [isSettlingAfterDrag]);
-
-  const scheduleSettlingClear = useCallback(() => {
-    setTimeout(() => { isSettlingAfterDrag.value = false; }, 600);
-  }, [isSettlingAfterDrag]);
 
   const handleCardPressWithCoord = useCallback((tapY: number) => {
     const current = Math.round(continuousPosShared.value);
@@ -765,6 +757,10 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       if (isAwake !== prevIsAwake) {
         runOnJS(setCanInteract)(Boolean(isAwake));
       }
+      if (!isAwake) {
+        // Loupe has faded away completely — unlock so next normal scroll syncs cleanly
+        isLoupeLocked.value = false;
+      }
       if (isAwake && !prevIsAwake) {
         const dir = activeDirection.value >= 0 ? 1 : -1;
         enterDirection.value = dir;
@@ -780,13 +776,26 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     [activeDirection]
   );
 
+  // Unlock loupe lock when user manually scrolls the photo gallery directly with finger
+  useAnimatedReaction(
+    () => scrollY.value,
+    (curScrollY, prevScrollY) => {
+      'worklet';
+      if (!isDragging.value && isLoupeLocked.value && prevScrollY !== null) {
+        if (Math.abs(curScrollY - prevScrollY) > 25) {
+          isLoupeLocked.value = false;
+        }
+      }
+    },
+    [scrollY]
+  );
+
   // Sync the loupe to the gallery's actual masonry card positions.
   useAnimatedReaction(
     () => {
       'worklet';
-      // Do NOT overwrite continuousPosShared while the user is dragging the loupe —
-      // the drag handler owns those values and scroll-derived updates would snap it back.
-      if (isDragging.value || isSettlingAfterDrag.value) return -1;
+      // Do NOT overwrite continuousPosShared while the user is dragging the loupe or while loupe is locked
+      if (isDragging.value || isLoupeLocked.value) return -1;
       if (!thumbnails || thumbnails.length === 0) return 0;
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const heroHeight = Math.round(screenHeight * 0.70);
@@ -803,13 +812,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         );
 
       const continuousKfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
-      // Only write to shared values when not dragging (guard re-checked here after the
-      // expensive calculations so the early-return above stays cheap on every frame)
-      if (!isDragging.value && !isSettlingAfterDrag.value) {
+      // Only write to shared values when not dragging and not locked
+      if (!isDragging.value && !isLoupeLocked.value) {
         continuousPosShared.value = continuousKfPos;
       }
 
-      return (isDragging.value || isSettlingAfterDrag.value) ? -1 : Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
+      return (isDragging.value || isLoupeLocked.value) ? -1 : Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
     },
     (nextIdx, prevIdx) => {
       'worklet';
@@ -817,7 +825,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         currentActiveKeyframeShared.value = nextIdx;
       }
     },
-    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared, isSettlingAfterDrag]
+    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared, isLoupeLocked]
   );
 
   const panGesture = Gesture.Pan()
@@ -827,11 +835,10 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
     .onBegin((e) => {
       'worklet';
-      // Set isDragging immediately in onBegin (before onStart) so the scroll reaction
-      // cannot overwrite continuousPosShared even in the first frame of the gesture.
+      // Set isDragging and lock loupe position so scroll reaction never overwrites it
       isDragging.value = true;
       isDraggingLoupeShared.value = true;
-      isSettlingAfterDrag.value = false;
+      isLoupeLocked.value = true;
       loupeOpacity.value = withTiming(1, { duration: 80 });
       // Capture dragStartProgress here in onBegin (not onStart) to avoid race condition
       // where animatedContainerStyle is still updating currentCardYShared concurrently.
@@ -845,6 +852,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = true;
       isDraggingLoupeShared.value = true;
+      isLoupeLocked.value = true;
       loupeOpacity.value = withTiming(1, { duration: 80 });
 
       if (activeDirection.value === 1) {
@@ -908,10 +916,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
-      // Suppress scroll reaction for 600ms after drag ends so residual scrollTo()
-      // events from the drag don't snap continuousPosShared back to scroll position.
-      isSettlingAfterDrag.value = true;
-      runOnJS(scheduleSettlingClear)();
+      // Keep loupe strictly locked at release position so it never snaps during confirmation/fade-out
+      isLoupeLocked.value = true;
       peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
       peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
 
@@ -946,8 +952,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
-      isSettlingAfterDrag.value = true;
-      runOnJS(scheduleSettlingClear)();
+      isLoupeLocked.value = true;
       peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
       peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
     });
@@ -976,7 +981,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     const trackLength = Math.max(1, maxY - minY);
 
     let targetY = currentCardYShared.value;
-    if (!isDragging.value && !isSettlingAfterDrag.value) {
+    if (!isDragging.value && !isLoupeLocked.value) {
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const heroHeight = Math.round(screenHeight * 0.70);
       const curY = scrollY.value;
@@ -4498,9 +4503,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       currentYRef.current = settledScrollY;
       lastSavedScrollYRef.current = settledScrollY;
       saveResumeScrollPosition(settledScrollY);
-      pendingJumpTargetYRef.current = null;
-      pendingJumpTargetIndexRef.current = null;
-      pendingJumpTargetScopeRef.current = null;
+      // Track pending jump target so fastCatchupPhotos can re-align to the exact measured card position
+      pendingJumpTargetYRef.current = settledScrollY;
+      pendingJumpTargetIndexRef.current = resolvedTargetIndex;
+      pendingJumpTargetScopeRef.current = `${eventSlug}::${activeTab.trim().toUpperCase()}`;
 
       // Priority stream missing photos around destination
       fastCatchupPhotos(settledScrollY, activeTab, resolvedTargetIndex);
