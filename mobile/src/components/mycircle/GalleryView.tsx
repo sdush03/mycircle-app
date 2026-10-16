@@ -4070,14 +4070,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
-    // Cap targetCount so we never allocate 4000 items when user hasn't jumped far
-    let maxSparse = activePhotoList.length;
-    if (sparseMap) {
-      for (const k of sparseMap.keys()) {
-        if (k > maxSparse) maxSparse = k;
-      }
-    }
-    const targetCount = Math.min(totalCount, Math.max(maxSparse + 12, activePhotoList.length + 12));
+    // Synthesize the full timeline up to totalCount so masonry layout spans all photos across the entire height
+    const targetCount = totalCount;
     const synthesized: any[] = new Array(targetCount);
 
     for (let i = 0; i < targetCount; i++) {
