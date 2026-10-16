@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox, Dimensions } from 'react-native';
+import { Image, useColorScheme, StyleSheet, Platform, View, Pressable, Text, Modal, ActivityIndicator, StatusBar, BackHandler, LogBox, Dimensions, AppState, AppStateStatus } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -228,21 +228,31 @@ function RootLayoutContent() {
   const eventSlug = useAuthStore((state) => state.eventSlug);
 
   const [isReady, setIsReady] = useState(false);
-  const [shouldPreventCapture, setShouldPreventCapture] = useState(false);
+  const [isGalleryProtected, setIsGalleryProtected] = useState(false);
+  const [isProfileProtected, setIsProfileProtected] = useState(false);
+
+  const shouldPreventCapture = isGalleryProtected || isProfileProtected;
 
   // Stable callback reference — prevents GalleryView re-render loop
   const handleScreenProtectionChange = useCallback((shouldPrevent: boolean) => {
-    setShouldPreventCapture(shouldPrevent);
+    setIsGalleryProtected(shouldPrevent);
+  }, []);
+
+  const handleProfileScreenProtectionChange = useCallback((shouldPrevent: boolean) => {
+    setIsProfileProtected(shouldPrevent);
   }, []);
 
   // Apply/release screen capture protection at root window level
   // (must be here, NOT inside GalleryView Modal, because iOS Modal = separate UIWindow)
   useEffect(() => {
     if (shouldPreventCapture) {
-      preventScreenCaptureAsync('gallery_protection');
+      preventScreenCaptureAsync('root_window_protection');
     } else {
-      allowScreenCaptureAsync('gallery_protection');
+      allowScreenCaptureAsync('root_window_protection');
     }
+    return () => {
+      allowScreenCaptureAsync('root_window_protection');
+    };
   }, [shouldPreventCapture]);
 
   // Load persisted session once on mount & initialize push notifications
@@ -412,6 +422,38 @@ function RootLayoutContent() {
     fetchSelfie();
   }, [isAuthenticated]);
 
+  // Periodic session watchdog: check if this device was logged out by another login
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const checkSession = async () => {
+      try {
+        await api.get('/api/gallery/family/session-check');
+      } catch (err: any) {
+        // If 401, the response interceptor in api.ts will automatically call logout()
+      }
+    };
+
+    // Check immediately on app foreground
+    const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        checkSession();
+      }
+    });
+
+    // Check every 15 seconds while app is active in foreground
+    const interval = setInterval(() => {
+      if (AppState.currentState === 'active') {
+        checkSession();
+      }
+    }, 15000);
+
+    return () => {
+      appStateSub.remove();
+      clearInterval(interval);
+    };
+  }, [isAuthenticated]);
+
   const topInset = insets.top;
   const headerHeight = 52 + topInset;
 
@@ -576,7 +618,10 @@ function RootLayoutContent() {
                 <MoodboardScreen />
               </View>
               <View style={{ width, flex: 1 }}>
-                <ProfileScreen />
+                <ProfileScreen
+                  isActive={activeTabIndex === TAB_ORDER.indexOf('profile')}
+                  onScreenProtectionChange={handleProfileScreenProtectionChange}
+                />
               </View>
             </Animated.View>
           </View>
@@ -608,6 +653,7 @@ function RootLayoutContent() {
         {/* ── Global GalleryView Overlay (rendered on top of any tab when eventSlug is active) ── */}
         {eventSlug && (
           <GalleryView
+            key={eventSlug}
             onLogout={async () => {
               await useAuthStore.getState().logout();
             }}
