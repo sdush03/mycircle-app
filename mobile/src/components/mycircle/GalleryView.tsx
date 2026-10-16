@@ -82,13 +82,14 @@ import {
 
 const { width, height: screenHeight } = Dimensions.get('window');
 
-export function getEstimatedRowHeight(cols: number, screenWidth: number = width): number {
+export function getEstimatedRowHeight(cols: number, screenWidth?: number): number {
   'worklet';
+  const sw = (typeof screenWidth === 'number' && screenWidth > 0) ? screenWidth : 390;
   const safeCols = Math.max(1, Math.min(5, cols || 2));
   const colGap = safeCols === 1 ? 5 : safeCols === 2 ? 5 : safeCols === 3 ? 4 : safeCols === 4 ? 3 : 2;
   const horizontalMargin = 6;
   const totalGaps = colGap * Math.max(0, safeCols - 1);
-  const availableWidth = screenWidth - (horizontalMargin * 2) - totalGaps;
+  const availableWidth = sw - (horizontalMargin * 2) - totalGaps;
   const colWidth = Math.max(30, availableWidth / safeCols);
   const cardHeight = Math.round(colWidth / 0.75);
   return cardHeight + colGap;
@@ -103,30 +104,44 @@ function getPhotoScrollOffset(
   heroHeight: number,
 ): number {
   'worklet';
-  const maxScroll = Math.max(0, contentHeight - viewportHeight);
-  const safeIndex = Math.max(0, Math.min(Math.max(0, totalPhotos - 1), photoIndex));
-  if (safeIndex >= totalPhotos - 1 && photoOffsets.length >= totalPhotos) return maxScroll;
+  const safeTotal = typeof totalPhotos === 'number' && totalPhotos > 0 ? totalPhotos : 1;
+  const safeContent = typeof contentHeight === 'number' && contentHeight > 0 ? contentHeight : 0;
+  const safeViewport = typeof viewportHeight === 'number' && viewportHeight > 0 ? viewportHeight : 800;
+  const safeHero = typeof heroHeight === 'number' && heroHeight > 0 ? heroHeight : 560;
 
-  if (photoOffsets.length > 0) {
+  // Approximate ~260px per row as reliable fallback if contentHeight is unmeasured
+  const estimatedTotalH = safeHero + 107 + Math.ceil(safeTotal / 2) * 260 + 140;
+  const effectiveContentHeight = Math.max(safeContent, estimatedTotalH);
+  const maxScroll = Math.max(0, effectiveContentHeight - safeViewport);
+  const safeIndex = Math.max(0, Math.min(safeTotal - 1, photoIndex || 0));
+
+  if (safeIndex >= safeTotal - 1) {
+    return maxScroll;
+  }
+  if (safeIndex <= 0) {
+    return 0;
+  }
+
+  if (photoOffsets && photoOffsets.length > 0) {
     const lowerIndex = Math.floor(safeIndex);
-    const upperIndex = Math.min(photoOffsets.length - 1, Math.ceil(safeIndex));
+    const upperIndex = Math.ceil(safeIndex);
     const lowerTop = photoOffsets[lowerIndex];
     const upperTop = photoOffsets[upperIndex];
     if (lowerTop !== undefined && upperTop !== undefined) {
       const fraction = safeIndex - lowerIndex;
       const photoTop = lowerTop + (upperTop - lowerTop) * fraction;
-      return Math.min(maxScroll, Math.max(0, photoTop - viewportHeight * 0.25));
+      return Math.min(maxScroll, Math.max(0, photoTop - safeViewport * 0.25));
     }
-    if (lowerTop !== undefined) {
-      return Math.min(maxScroll, Math.max(0, lowerTop - viewportHeight * 0.25));
+    if (lowerTop !== undefined && Math.abs(lowerIndex - safeIndex) < 2) {
+      return Math.min(maxScroll, Math.max(0, lowerTop - safeViewport * 0.25));
     }
-    if (upperTop !== undefined) {
-      return Math.min(maxScroll, Math.max(0, upperTop - viewportHeight * 0.25));
+    if (upperTop !== undefined && Math.abs(upperIndex - safeIndex) < 2) {
+      return Math.min(maxScroll, Math.max(0, upperTop - safeViewport * 0.25));
     }
   }
 
-  const progress = safeIndex / Math.max(1, totalPhotos - 1);
-  return Math.min(maxScroll, Math.max(0, heroHeight + progress * Math.max(0, maxScroll - heroHeight)));
+  const progress = safeIndex / Math.max(1, safeTotal - 1);
+  return Math.min(maxScroll, Math.max(0, safeHero + progress * Math.max(0, maxScroll - safeHero)));
 }
 
 function getPhotoIndexAtScrollOffset(
@@ -138,30 +153,52 @@ function getPhotoIndexAtScrollOffset(
   heroHeight: number,
 ): number {
   'worklet';
-  const maxPhotoIndex = Math.max(0, totalPhotos - 1);
-  const targetY = scrollOffset + viewportHeight * 0.25;
-  if (photoEntries.length >= 2) {
+  const safeTotal = typeof totalPhotos === 'number' && totalPhotos > 0 ? totalPhotos : 1;
+  const maxPhotoIndex = Math.max(0, safeTotal - 1);
+  const safeContent = typeof contentHeight === 'number' && contentHeight > 0 ? contentHeight : 0;
+  const safeViewport = typeof viewportHeight === 'number' && viewportHeight > 0 ? viewportHeight : 800;
+  const safeHero = typeof heroHeight === 'number' && heroHeight > 0 ? heroHeight : 560;
+
+  const estimatedTotalH = safeHero + 107 + Math.ceil(safeTotal / 2) * 260 + 140;
+  const effectiveContentHeight = Math.max(safeContent, estimatedTotalH);
+  const maxScroll = Math.max(0, effectiveContentHeight - safeViewport);
+  const gridSpan = Math.max(1, maxScroll - safeHero);
+
+  const safeOffset = typeof scrollOffset === 'number' && !isNaN(scrollOffset) ? scrollOffset : 0;
+
+  if (safeOffset <= safeHero) {
+    return 0;
+  }
+  if (safeOffset >= maxScroll - 50) {
+    return maxPhotoIndex;
+  }
+
+  const targetY = safeOffset + safeViewport * 0.25;
+  if (photoEntries && photoEntries.length >= 2) {
     const entryCount = Math.floor(photoEntries.length / 2);
-    const lastTop = photoEntries[(entryCount - 1) * 2];
-    if (targetY <= lastTop + viewportHeight * 1.5) {
-      let lower = 0;
-      let upper = entryCount - 1;
-      while (lower < upper) {
-        const middle = Math.floor((lower + upper) / 2);
-        if (photoEntries[middle * 2] < targetY) lower = middle + 1;
-        else upper = middle;
+    let lower = 0;
+    let upper = entryCount - 1;
+    while (lower < upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      if (photoEntries[middle * 2] < targetY) lower = middle + 1;
+      else upper = middle;
+    }
+    const previous = Math.max(0, lower - 1);
+    const currentTop = photoEntries[lower * 2];
+    const previousTop = photoEntries[previous * 2];
+    const chosen = Math.abs(currentTop - targetY) < Math.abs(previousTop - targetY) ? lower : previous;
+    const chosenTop = photoEntries[chosen * 2];
+    // ONLY snap to a rendered card if it is actually within 1.5 viewport heights of targetY.
+    // If further away, targetY is in an unloaded gap, so fall through to proportional estimation!
+    if (typeof chosenTop === 'number' && Math.abs(chosenTop - targetY) <= safeViewport * 1.5) {
+      const foundIdx = photoEntries[chosen * 2 + 1];
+      if (typeof foundIdx === 'number' && !isNaN(foundIdx)) {
+        return Math.min(maxPhotoIndex, foundIdx);
       }
-      const previous = Math.max(0, lower - 1);
-      const currentTop = photoEntries[lower * 2];
-      const previousTop = photoEntries[previous * 2];
-      const chosen = Math.abs(currentTop - targetY) < Math.abs(previousTop - targetY) ? lower : previous;
-      return Math.min(maxPhotoIndex, photoEntries[chosen * 2 + 1]);
     }
   }
 
-  const maxScroll = Math.max(0, contentHeight - viewportHeight);
-  const gridSpan = Math.max(1, maxScroll - heroHeight);
-  const progress = Math.max(0, Math.min(1, (scrollOffset - heroHeight) / gridSpan));
+  const progress = Math.max(0, Math.min(1, (safeOffset - safeHero) / gridSpan));
   return progress * maxPhotoIndex;
 }
 
@@ -633,6 +670,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   numColumns = 2,
 }) => {
   const isDragging = useSharedValue(false);
+  const isSettlingAfterDrag = useSharedValue(false); // suppresses reaction for a few frames after drag ends
   const dragStartY = useSharedValue(0);
   const dragStartProgress = useSharedValue(0);
   const currentCardYShared = useSharedValue(insetsTop + 75);
@@ -651,6 +689,14 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const triggerGrabHaptic = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
+
+  const clearSettlingFlag = useCallback(() => {
+    isSettlingAfterDrag.value = false;
+  }, [isSettlingAfterDrag]);
+
+  const scheduleSettlingClear = useCallback(() => {
+    setTimeout(() => { isSettlingAfterDrag.value = false; }, 600);
+  }, [isSettlingAfterDrag]);
 
   const handleCardPressWithCoord = useCallback((tapY: number) => {
     const current = Math.round(continuousPosShared.value);
@@ -740,7 +786,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       // Do NOT overwrite continuousPosShared while the user is dragging the loupe —
       // the drag handler owns those values and scroll-derived updates would snap it back.
-      if (isDragging.value) return -1;
+      if (isDragging.value || isSettlingAfterDrag.value) return -1;
       if (!thumbnails || thumbnails.length === 0) return 0;
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const heroHeight = Math.round(screenHeight * 0.70);
@@ -759,11 +805,11 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       const continuousKfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
       // Only write to shared values when not dragging (guard re-checked here after the
       // expensive calculations so the early-return above stays cheap on every frame)
-      if (!isDragging.value) {
+      if (!isDragging.value && !isSettlingAfterDrag.value) {
         continuousPosShared.value = continuousKfPos;
       }
 
-      return isDragging.value ? -1 : Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
+      return (isDragging.value || isSettlingAfterDrag.value) ? -1 : Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
     },
     (nextIdx, prevIdx) => {
       'worklet';
@@ -771,7 +817,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         currentActiveKeyframeShared.value = nextIdx;
       }
     },
-    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared]
+    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared, isSettlingAfterDrag]
   );
 
   const panGesture = Gesture.Pan()
@@ -781,6 +827,11 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
     .onBegin((e) => {
       'worklet';
+      // Set isDragging immediately in onBegin (before onStart) so the scroll reaction
+      // cannot overwrite continuousPosShared even in the first frame of the gesture.
+      isDragging.value = true;
+      isDraggingLoupeShared.value = true;
+      isSettlingAfterDrag.value = false;
       loupeOpacity.value = withTiming(1, { duration: 80 });
       // Capture dragStartProgress here in onBegin (not onStart) to avoid race condition
       // where animatedContainerStyle is still updating currentCardYShared concurrently.
@@ -857,6 +908,10 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
+      // Suppress scroll reaction for 600ms after drag ends so residual scrollTo()
+      // events from the drag don't snap continuousPosShared back to scroll position.
+      isSettlingAfterDrag.value = true;
+      runOnJS(scheduleSettlingClear)();
       peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
       peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
 
@@ -870,6 +925,10 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
 
       const continuousPhotoIdx = finalProgress * Math.max(1, totalPhotos - 1);
       const targetPhotoIndex = Math.max(0, Math.min(totalPhotos - 1, Math.round(continuousPhotoIdx)));
+      const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+      continuousPosShared.value = kfPos;
+      currentActiveKeyframeShared.value = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
+
       const finalScrollY = getPhotoScrollOffset(
         continuousPhotoIdx,
         totalPhotos,
@@ -887,6 +946,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       isDragging.value = false;
       isDraggingLoupeShared.value = false;
+      isSettlingAfterDrag.value = true;
+      runOnJS(scheduleSettlingClear)();
       peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
       peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
     });
@@ -915,7 +976,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     const trackLength = Math.max(1, maxY - minY);
 
     let targetY = currentCardYShared.value;
-    if (!isDragging.value) {
+    if (!isDragging.value && !isSettlingAfterDrag.value) {
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const heroHeight = Math.round(screenHeight * 0.70);
       const curY = scrollY.value;
@@ -4301,6 +4362,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return [];
     }
     return activeFilmstrip.keyframes.filter((kf) =>
+      Boolean(kf && (kf.thumbnailUrl || kf.r2Url || (kf as any).localPath)) &&
       (kf.tabName || '').trim().toUpperCase() !== 'CINEMA' &&
       !kf.cinemaCategory &&
       !isVideoMedia(kf) &&
@@ -4417,7 +4479,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     (finalScrollY: number, targetPhotoIndex?: number) => {
       const heroHeight = Math.round(screenHeight * 0.70);
       const totalPhotos = Math.max(1, totalTabPhotos || 1);
-      const maxScroll = Math.max(0, galleryContentHeightShared.value - screenHeight);
+      const currentCols = galleryColumnsRef.current || 2;
+      const estimatedRowH = getEstimatedRowHeight(currentCols, width);
+      const estimatedTotalH = heroHeight + 107 + Math.ceil(totalPhotos / currentCols) * estimatedRowH + 140;
+      const effectiveContentH = Math.max(galleryContentHeightShared.value, estimatedTotalH);
+      const maxScroll = Math.max(0, effectiveContentH - screenHeight);
       const settledScrollY = Math.min(maxScroll, Math.max(0, finalScrollY));
       const resolvedTargetIndex = typeof targetPhotoIndex === 'number'
         ? targetPhotoIndex
