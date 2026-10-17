@@ -219,6 +219,14 @@ guestApi.interceptors.response.use(
       } catch (_) {}
     }
 
+    if (error.response && error.response.status === 401) {
+      const data = error.response.data;
+      if (data?.code === 'SESSION_TERMINATED' || data?.code === 'SESSION_EXPIRED') {
+        console.warn('[guestApi 401] Session terminated on server -> Auto-logging out to Login screen.');
+        useAuthStore.getState().logout().catch(() => {});
+      }
+    }
+
     return Promise.reject(error);
   }
 );
