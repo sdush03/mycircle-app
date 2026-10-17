@@ -287,7 +287,8 @@ export const MasonryCard = React.memo(function MasonryCard({
     prevProps.img?.uri === nextProps.img?.uri &&
     prevProps.img?.r2Url === nextProps.img?.r2Url &&
     prevProps.img?.isVideo === nextProps.img?.isVideo &&
-    prevProps.img?.isLiked === nextProps.img?.isLiked
+    prevProps.img?.isLiked === nextProps.img?.isLiked &&
+    prevProps.img?.likeCount === nextProps.img?.likeCount
   );
 });
 

@@ -231,6 +231,13 @@ export default function HomeScreen() {
                 ].filter(Boolean);
                 covers.forEach((c) => ExpoImage.prefetch(c));
               });
+
+              // Pre-warm gallery bundle & top photos in background for the primary celebration
+              if (sorted[0]?.slug) {
+                import('../services/galleryPrefetch').then((m) => {
+                  m.prefetchEventGalleryData(sorted[0].slug, sorted[0].passcode || null);
+                }).catch(() => {});
+              }
             }
           } catch (_) {}
         }
@@ -429,6 +436,15 @@ export default function HomeScreen() {
         ].filter(Boolean);
         covers.forEach((c) => ExpoImage.prefetch(c));
       });
+
+      // Background pre-warm gallery bundle, permissions, and top photos (top 2 celebrations)
+      import('../services/galleryPrefetch').then((m) => {
+        sortedEvents.slice(0, 2).forEach((ev: any) => {
+          if (ev.slug) {
+            m.prefetchEventGalleryData(ev.slug, ev.passcode || null);
+          }
+        });
+      }).catch(() => {});
 
       // Asynchronously fetch photo matches in the background post-render without delaying gallery display
       api.get('/api/gallery/family/events/matches')

@@ -175,7 +175,7 @@ export default function SettingsModal({
   // Handle Support & Feedback
   const handleOpenSupport = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const appVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.2';
+    const appVersion = Constants.nativeAppVersion || Constants.expoConfig?.version || '1.2.3';
     const osInfo = `${Platform.OS.toUpperCase()} ${Platform.Version}`;
     const userEmail = profile?.email || 'Guest';
     const currentSlug = useAuthStore.getState().eventSlug || 'None';

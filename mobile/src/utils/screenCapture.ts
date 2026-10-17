@@ -22,35 +22,53 @@ try {
   console.warn('[MYCIRCLE SCREEN CAPTURE ⚠️] expo-screen-capture unavailable — rebuild required:', e?.message);
 }
 
+// Track all active caller keys demanding screen capture protection.
 const activePreventedKeys = new Set<string>();
+const GLOBAL_CAPTURE_TAG = 'mycircle_global_screen_capture_tag';
+let isGloballyPrevented = false;
 
 export async function preventScreenCaptureAsync(key: string = 'default'): Promise<void> {
-  if (activePreventedKeys.has(key)) return;
   activePreventedKeys.add(key);
 
-  // In development mode, screen mirroring or QuickTime to Mac is commonly used for testing.
-  // Enabling native screen capture prevention can blank out the screen to black.
-  if (__DEV__) {
-    return;
-  }
   if (!_mod?.preventScreenCaptureAsync) {
     return;
   }
+
+  // If already natively prevented, do NOT re-invoke native swizzle/flags (prevents iOS layer corruption)
+  if (isGloballyPrevented) {
+    return;
+  }
+
   try {
-    await _mod.preventScreenCaptureAsync(key);
+    isGloballyPrevented = true;
+    await _mod.preventScreenCaptureAsync(GLOBAL_CAPTURE_TAG);
+    console.log(`[MYCIRCLE SCREEN CAPTURE 🛡️ PREVENTED] key="${key}", totalActiveKeys=${activePreventedKeys.size}`);
   } catch (err: any) {
+    isGloballyPrevented = false;
     console.error('[MYCIRCLE SCREEN CAPTURE ❌] prevent failed:', err?.message);
   }
 }
 
 export async function allowScreenCaptureAsync(key: string = 'default'): Promise<void> {
-  if (!activePreventedKeys.has(key)) return;
   activePreventedKeys.delete(key);
+
+  // If other components or views still need protection, do not release native protection
+  if (activePreventedKeys.size > 0) {
+    return;
+  }
+
+  if (!isGloballyPrevented) {
+    return;
+  }
 
   if (!_mod?.allowScreenCaptureAsync) return;
   try {
-    await _mod.allowScreenCaptureAsync(key);
-  } catch (_) {}
+    isGloballyPrevented = false;
+    await _mod.allowScreenCaptureAsync(GLOBAL_CAPTURE_TAG);
+    console.log(`[MYCIRCLE SCREEN CAPTURE 🔓 ALLOWED] key="${key}", all keys released`);
+  } catch (err: any) {
+    console.error('[MYCIRCLE SCREEN CAPTURE ❌] allow failed:', err?.message);
+  }
 }
 
 export function addScreenshotListener(callback: () => void): { remove: () => void } {

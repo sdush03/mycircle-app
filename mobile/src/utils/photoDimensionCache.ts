@@ -23,10 +23,10 @@ export function getPhotoCardAspect(
     return item.cardAspect;
   }
 
-  // 2. Cinema / Video media handling
+  // 2. Cinema / Video media handling: Video covers rendered in photo grids (e.g. ALL and HIGHLIGHTS)
+  // must be displayed in their original 3:4 portrait poster aspect ratio (0.75).
   if (item?.isVideo || (typeof item?.tabName === 'string' && item.tabName.trim().toUpperCase() === 'CINEMA')) {
-    if (item?.isVertical || item?.isReel) return 9 / 16;
-    return 16 / 9;
+    return 3 / 4;
   }
 
   // 3. Check actual dimensions to distinguish landscape vs portrait

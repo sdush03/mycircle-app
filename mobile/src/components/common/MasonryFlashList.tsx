@@ -167,6 +167,9 @@ export interface MasonryFlashListProps<T = any> {
   mainScrollRef?: any;
   contentContainerStyle?: any;
   minContentHeight?: number;
+  contentHeightShared?: SharedValue<number>;
+  photoScrollOffsetsShared?: SharedValue<number[]>;
+  photoScrollEntriesShared?: SharedValue<number[]>;
   refreshControl?: any;
   isPinchingShared?: SharedValue<boolean>;
   onMomentumScrollEnd?: (event: any) => void;
@@ -877,6 +880,9 @@ export function MasonryFlashList<T = any>({
   onEndReachedThreshold = 0.8,
   mainScrollRef,
   minContentHeight,
+  contentHeightShared,
+  photoScrollOffsetsShared,
+  photoScrollEntriesShared,
   contentContainerStyle,
   refreshControl,
   isPinchingShared,
@@ -1080,6 +1086,45 @@ export function MasonryFlashList<T = any>({
     // Invalidate layout cache — data changed, cached layouts are stale
     layoutCacheRef.current.clear();
   }, [data]);
+
+  useEffect(() => {
+    if (contentHeightShared) {
+      const footerH = ListFooterComponent ? 140 : 0;
+      contentHeightShared.value = Math.max(
+        layout.maxHeight + headerHeight + footerH,
+        containerMinHeight,
+        minContentHeight || 0,
+      );
+    }
+  }, [layout.maxHeight, headerHeight, contentHeightShared, ListFooterComponent, containerMinHeight, minContentHeight]);
+
+  useEffect(() => {
+    if (!photoScrollOffsetsShared) return;
+    const offsets: number[] = [];
+    const entries: Array<{ top: number; index: number }> = [];
+    layout.columns.forEach((column) => {
+      column.items.forEach((item) => {
+        const rawItem = item.item as any;
+        const hasExplicitPhotoIndex = typeof rawItem?.loupePhotoIndex === 'number';
+        if (!hasExplicitPhotoIndex && (
+          rawItem?.isVideo ||
+          rawItem?.videoUrl ||
+          String(rawItem?.tabName || '').trim().toUpperCase() === 'CINEMA'
+        )) {
+          return;
+        }
+        const photoIndex = hasExplicitPhotoIndex ? rawItem.loupePhotoIndex : item.originalIndex;
+        const top = item.topY + headerHeight;
+        offsets[photoIndex] = top;
+        entries.push({ top, index: photoIndex });
+      });
+    });
+    entries.sort((a, b) => a.top - b.top || a.index - b.index);
+    photoScrollOffsetsShared.value = offsets;
+    if (photoScrollEntriesShared) {
+      photoScrollEntriesShared.value = entries.flatMap((entry) => [entry.top, entry.index]);
+    }
+  }, [data.length, layout, headerHeight, photoScrollOffsetsShared, photoScrollEntriesShared]);
 
   const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRenderedYRef = useRef<number>(0);
@@ -1728,7 +1773,10 @@ export function MasonryFlashList<T = any>({
               { minHeight: Math.max(layout.maxHeight + headerHeight, containerMinHeight, minContentHeight || 0) },
               contentContainerStyle,
             ]}
-            onContentSizeChange={(_w, _h) => {
+            onContentSizeChange={(_w, h) => {
+              if (contentHeightShared && h > 0) {
+                contentHeightShared.value = h;
+              }
               // Fallback: if RAF-based restoration already cleared pendingScrollRestorationRef,
               // this no-ops. If somehow the RAF fired before native content grew (unlikely), this catches it.
               if (pendingScrollRestorationRef.current !== null) {

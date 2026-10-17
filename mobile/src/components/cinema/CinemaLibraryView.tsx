@@ -851,7 +851,7 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
 
           {/* 4. Minimalist Brand Footer */}
           <View style={styles.cinemaFooter}>
-            <Text style={styles.footerBrandText}>MISTY VISUALS CINEMA</Text>
+            <Text style={styles.footerBrandText}>MISTY VISUALS FILMS</Text>
           </View>
         </View>
       </Animated.ScrollView>

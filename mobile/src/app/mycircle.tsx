@@ -110,6 +110,7 @@ export default function MyCircleScreen() {
       {/* Gallery Overlay Modal when eventSlug is set and opened from My Circle */}
       {eventSlug && openedFrom === 'mycircle' && (!eventRequiresPasscode || passcode) && (
         <GalleryView
+          key={eventSlug}
           onLogout={handleLogout}
           onChangeEvent={handleCloseGallery}
         />
