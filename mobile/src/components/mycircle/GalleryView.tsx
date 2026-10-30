@@ -1251,7 +1251,28 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const currentYRef = useRef<number>(0);
   const isTabSwitchingRef = useRef<boolean>(false);
   const cardRefs = useRef<{ [key: string]: View | null }>({});
-  const eventHeadersRef = useRef<Record<string, string>>({});
+  const eventHeadersRef = useRef<Record<string, string>>(
+    cachedInitial?.headers?.Authorization
+      ? cachedInitial.headers
+      : (useAuthStore.getState().token ? { Authorization: `Bearer ${useAuthStore.getState().token}` } : {})
+  );
+
+  const getAuthHeaders = useCallback((): Record<string, string> => {
+    if (eventHeadersRef.current?.Authorization) {
+      return eventHeadersRef.current;
+    }
+    if (cachedInitial?.headers?.Authorization) {
+      eventHeadersRef.current = cachedInitial.headers;
+      return cachedInitial.headers;
+    }
+    const token = useAuthStore.getState().token;
+    if (token) {
+      const h = { Authorization: `Bearer ${token}` };
+      eventHeadersRef.current = h;
+      return h;
+    }
+    return eventHeadersRef.current || {};
+  }, [cachedInitial]);
   const allPhotosOffsetRef = useRef<number>(cachedInitial?.photos?.length || 0);
   const allPhotosRef = useRef<Photo[]>(allPhotos);
   useEffect(() => {
@@ -2596,7 +2617,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         setHasMoreMatchedPhotos(false);
         return;
       }
-      const eventHeaders = eventHeadersRef.current;
+      const eventHeaders = getAuthHeaders();
       const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       try {
         isFetchingMoreRef.current = true;
@@ -2654,7 +2675,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       : allPhotosOffsetRef.current;
 
     const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(activeTab)}` : '';
-    const eventHeaders = eventHeadersRef.current;
+    const eventHeaders = getAuthHeaders();
     const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
     let retried401 = false;
     try {
@@ -2786,7 +2807,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       ? (totalAllPhotosCount !== null ? totalAllPhotosCount : 10000)
       : (eventDetails?.tabCounts?.[normTab] ?? 5000);
 
-    const eventHeaders = eventHeadersRef.current;
+    const eventHeaders = getAuthHeaders();
     const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(targetTab)}` : '';
 
     // ── STEP 1: URGENT ON-SCREEN WINDOW FETCH ─────────────────────────────
@@ -2883,13 +2904,48 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             }
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.response?.status === 401) {
+          // Token expired or rotated — refresh guest token via SSO or global family token
+          try {
+            const familyToken = useAuthStore.getState().token;
+            if (familyToken && eventSlug) {
+              const ssoRes = await api.post(
+                `/api/gallery/public/events/${eventSlug}/auth-from-family`,
+                { code: passcode || undefined },
+                { headers: { Authorization: `Bearer ${familyToken}` } }
+              );
+              if (ssoRes.data?.token) {
+                const freshHeaders = { Authorization: `Bearer ${ssoRes.data.token}` };
+                eventHeadersRef.current = freshHeaders;
+                const retryRes = await guestApi.get(
+                  `/api/gallery/public/events/${eventSlug}/photos?limit=${windowLimit}&offset=${windowStart}${tabQuery}`,
+                  { headers: freshHeaders }
+                );
+                const retryList = retryRes.data.photos || (Array.isArray(retryRes.data) ? retryRes.data : []);
+                const mappedRetry = Array.isArray(retryList) ? retryList.map(mapPhotoItem) : [];
+                if (mappedRetry.length > 0) {
+                  if (!tabSparsePhotosRef.current[normTab]) {
+                    tabSparsePhotosRef.current[normTab] = new Map();
+                  }
+                  const sMap = tabSparsePhotosRef.current[normTab];
+                  mappedRetry.forEach((p, idx) => {
+                    sMap.set(windowStart + idx, p);
+                  });
+                  setSparseVersion((v) => v + 1);
+                  scheduleBatchPrefetch(mappedRetry);
+                  return;
+                }
+              }
+            }
+          } catch (_ssoErr) {}
+        }
         console.warn('[ON-SCREEN PRIORITY ⚠️] Error fetching priority window:', err);
       } finally {
         isFastCatchingUpRef.current = false;
       }
     }
-  }, [eventSlug, totalAllPhotosCount, eventDetails, tabCache, scheduleBatchPrefetch, scrollToY, photoScrollOffsetsShared, galleryContentHeightShared, screenHeight, saveResumeScrollPosition]);
+  }, [eventSlug, totalAllPhotosCount, eventDetails, tabCache, scheduleBatchPrefetch, scrollToY, photoScrollOffsetsShared, galleryContentHeightShared, screenHeight, saveResumeScrollPosition, getAuthHeaders, passcode]);
   fastCatchupPhotosRef.current = fastCatchupPhotos;
 
   useEffect(() => {
