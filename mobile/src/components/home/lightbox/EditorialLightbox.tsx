@@ -127,6 +127,13 @@ export function EditorialLightbox({
   const [savedUrls, setSavedUrls] = useState<Set<string>>(new Set());
   const [removedUrls, setRemovedUrls] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [optimisticLikes, setOptimisticLikes] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!visible) {
+      setOptimisticLikes({});
+    }
+  }, [visible]);
 
   // Auto-sync saved status with backend on open and on save events
   useEffect(() => {
@@ -429,8 +436,9 @@ export function EditorialLightbox({
         ''
     : '';
 
+  const photoKey = String(currentItem?.id || currentUrl);
   const isSaved = onToggleLike
-    ? !!currentItem?.isLiked
+    ? (optimisticLikes[photoKey] !== undefined ? optimisticLikes[photoKey] : !!currentItem?.isLiked)
     : onUnsave
       ? !removedUrls.has(currentUrl)
       : savedUrls.has(currentUrl);
@@ -471,21 +479,36 @@ export function EditorialLightbox({
     if (!currentUrl) return;
 
     if (onToggleLike && currentItem) {
-      const wasLiked = !!currentItem.isLiked;
+      const wasLiked = isSaved;
+      const nextLiked = !wasLiked;
       const targetLabel = likeTargetName || 'My Favourites';
-      if (wasLiked) {
-        try {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        } catch {}
-        showToast(`Removed from ${targetLabel}`);
-      } else {
+
+      // 1. Immediately turn red heart on or off in Lightbox with zero latency!
+      setOptimisticLikes((prev) => ({ ...prev, [photoKey]: nextLiked }));
+      currentItem.isLiked = nextLiked;
+
+      // 2. Immediate Haptics + Heart Pop animation + Toast
+      if (nextLiked) {
         try {
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         } catch {}
         triggerHeartPop();
         showToast(`Saved to ${targetLabel} ✨`);
+      } else {
+        try {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } catch {}
+        showToast(`Removed from ${targetLabel}`);
       }
-      await onToggleLike(currentItem);
+
+      // 3. Dispatch to parent handler & API
+      try {
+        await onToggleLike(currentItem);
+      } catch (err) {
+        // Rollback on failure
+        setOptimisticLikes((prev) => ({ ...prev, [photoKey]: wasLiked }));
+        currentItem.isLiked = wasLiked;
+      }
       return;
     }
 

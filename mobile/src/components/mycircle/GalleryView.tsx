@@ -3990,31 +3990,68 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const handleToggleLike = async (item: any) => {
     if (!item || !eventSlug) return;
     const photoId = item.id;
+    const photoIdStr = String(photoId);
 
-    // Read the FRESH liked state from current allPhotos/photos state to avoid
-    // stale closures from lightbox or grid passing an outdated snapshot.
-    const freshItem = allPhotos.find((p) => p.id === photoId) || photos.find((p) => p.id === photoId) || item;
-    const currentlyLiked = !!freshItem.isLiked;
+    // Read the FRESH liked state across allPhotos, photos, tabCache, sparseMaps, or item
+    let freshItem: any = allPhotos.find((p) => String(p.id) === photoIdStr) || photos.find((p) => String(p.id) === photoIdStr);
+    if (!freshItem) {
+      for (const tabList of Object.values(tabCache)) {
+        const found = tabList.find((p) => String(p.id) === photoIdStr);
+        if (found) {
+          freshItem = found;
+          break;
+        }
+      }
+    }
+    if (!freshItem) {
+      for (const sMap of Object.values(tabSparsePhotosRef.current)) {
+        if (sMap) {
+          for (const p of sMap.values()) {
+            if (String(p.id) === photoIdStr) {
+              freshItem = p;
+              break;
+            }
+          }
+        }
+        if (freshItem) break;
+      }
+    }
+    if (!freshItem) freshItem = item;
+
+    // Check if item was already flipped by caller (e.g. EditorialLightbox)
+    const currentlyLiked = typeof item.isLiked === 'boolean' && item.isLiked !== freshItem.isLiked
+      ? !item.isLiked
+      : !!freshItem.isLiked;
     const nextLiked = !currentlyLiked;
+    const currentCount = typeof freshItem.likeCount === 'number' ? freshItem.likeCount : 0;
+    const nextCount = Math.max(0, currentCount + (nextLiked ? 1 : -1));
+
+    // Immediately mutate item in memory so caller object reflects true state
+    item.isLiked = nextLiked;
+    item.likeCount = nextCount;
 
     try {
       if (nextLiked) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } else {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await Haptics.ImpactFeedbackStyle ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light) : undefined;
       }
     } catch {}
 
-    // Helper: update isLiked (and optionally likeCount) for photoId across ALL state arrays consistently
+    // Helper: update isLiked (and optionally likeCount) for photoId across ALL state arrays AND sparse maps consistently
     const applyLikeState = (liked: boolean, newLikeCount?: number) => {
       const mapper = (p: any) => {
-        if (p.id !== photoId) return p;
+        if (String(p.id) !== photoIdStr) return p;
         const updated: any = { ...p, isLiked: liked };
         if (typeof newLikeCount === 'number') updated.likeCount = newLikeCount;
         return updated;
       };
+
+      // 1. Update allPhotos & photos state
       setAllPhotos((prev) => prev.map(mapper));
       setPhotos((prev) => prev.map(mapper));
+
+      // 2. Update tabCache & MY FAVOURITES tab
       setTabCache((prev) => {
         const updatedCache: typeof prev = {};
         for (const key of Object.keys(prev)) {
@@ -4023,24 +4060,42 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         // Update 'MY FAVOURITES' tab list specifically
         const currentFavs = updatedCache['MY FAVOURITES'] || [];
         if (liked) {
-          if (!currentFavs.some((p) => p.id === photoId)) {
-            const newItem = { ...freshItem, isLiked: true };
+          if (!currentFavs.some((p) => String(p.id) === photoIdStr)) {
+            const newItem = { ...(freshItem || item), isLiked: true };
             if (typeof newLikeCount === 'number') (newItem as any).likeCount = newLikeCount;
             updatedCache['MY FAVOURITES'] = [newItem, ...currentFavs];
           }
         } else {
-          updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => p.id !== photoId);
+          updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => String(p.id) !== photoIdStr);
         }
         return updatedCache;
       });
+
+      // 3. Update tabSparsePhotosRef across ALL tabs! (This fixes photos past the top photos!)
+      for (const tabKey of Object.keys(tabSparsePhotosRef.current)) {
+        const sMap = tabSparsePhotosRef.current[tabKey];
+        if (sMap) {
+          for (const [k, p] of sMap.entries()) {
+            if (String(p.id) === photoIdStr) {
+              sMap.set(k, {
+                ...p,
+                isLiked: liked,
+                ...(typeof newLikeCount === 'number' ? { likeCount: newLikeCount } : {}),
+              });
+            }
+          }
+        }
+      }
+
+      // 4. Force displayData and MasonryFlashList to re-evaluate with the updated like state!
+      setSparseVersion((v) => v + 1);
     };
 
     // Optimistic update (adjust likeCount instantly: +1 on like, -1 on unlike)
-    const currentCount = typeof freshItem.likeCount === 'number' ? freshItem.likeCount : 0;
-    applyLikeState(nextLiked, Math.max(0, currentCount + (nextLiked ? 1 : -1)));
+    applyLikeState(nextLiked, nextCount);
 
     try {
-      const headers = eventHeadersRef.current;
+      const headers = getAuthHeaders();
       const res = await api.post(
         `/api/gallery/public/events/${eventSlug}/photos/${photoId}/like`,
         {},
@@ -4053,7 +4108,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     } catch (err) {
       console.warn('Failed to toggle photo like:', err);
-      // Revert to original state on failure (updates all 3 state arrays)
+      // Revert to original state on failure (updates all state arrays & sparse maps)
+      item.isLiked = currentlyLiked;
+      item.likeCount = currentCount;
       applyLikeState(currentlyLiked, currentCount);
     }
   };
