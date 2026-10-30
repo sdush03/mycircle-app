@@ -465,14 +465,14 @@ function injectCuratedCinemaVideos(
 const loupeCardStyles = StyleSheet.create({
   container: {
     position: 'absolute',
-    right: 4,
+    right: 2,
     top: 0,
     zIndex: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingLeft: 16,
-    paddingRight: 6,
+    paddingVertical: 8,
+    paddingLeft: 6,
+    paddingRight: 4,
   },
   stripColumn: {
     width: 62,
@@ -751,7 +751,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
 
   // Wake up 4th peek square and latch entrance direction when loupe becomes awake / visible
   useAnimatedReaction(
-    () => loupeOpacity.value > 0.05,
+    () => loupeOpacity.value > 0.35,
     (isAwake, prevIsAwake) => {
       'worklet';
       if (isAwake !== prevIsAwake) {
@@ -831,10 +831,11 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const panGesture = Gesture.Pan()
     .minPointers(1)
     .maxPointers(1)
-    .activeOffsetY([-4, 4])
-    .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
+    .activeOffsetY([-12, 12])
+    .hitSlop({ top: 15, bottom: 15, left: 8, right: 4 })
     .onBegin((e) => {
       'worklet';
+      if (loupeOpacity.value < 0.2) return;
       // Set isDragging and lock loupe position so scroll reaction never overwrites it
       isDragging.value = true;
       isDraggingLoupeShared.value = true;
@@ -958,11 +959,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     });
 
   const tapGesture = Gesture.Tap()
-    .maxDuration(500)
+    .maxDuration(400)
     .maxDistance(12)
-    .hitSlop({ top: 90, bottom: 90, left: 30, right: 15 })
+    .hitSlop({ top: 15, bottom: 15, left: 8, right: 4 })
     .onBegin(() => {
       'worklet';
+      if (loupeOpacity.value < 0.2) return;
       loupeOpacity.value = withTiming(1, { duration: 80 });
     })
     .onEnd((e, success) => {
@@ -1039,7 +1041,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       <Animated.View
         collapsable={false}
         pointerEvents={canInteract ? 'auto' : 'none'}
-        hitSlop={{ top: 90, bottom: 90, left: 30, right: 15 }}
+        hitSlop={{ top: 15, bottom: 15, left: 8, right: 4 }}
         style={[loupeCardStyles.container, animatedContainerStyle]}
       >
         <Animated.View
@@ -1859,8 +1861,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       } else {
         const now = Date.now();
 
-        // Fast scrolling threshold: deltaY > 14px per frame (balanced intent gating)
-        if (deltaY > 14) {
+        // Fast scrolling threshold: deltaY > 18px per frame (requires intentional scroll speed)
+        if (deltaY > 18) {
           if (fastScrollStartTimeShared.value === 0) {
             fastScrollStartTimeShared.value = now;
             fastScrollDistanceShared.value = deltaY;
@@ -1871,9 +1873,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           const elapsedFastTime = now - fastScrollStartTimeShared.value;
           const accumulatedDistance = fastScrollDistanceShared.value;
 
-          // Intent condition: user is scrolling intentionally (balanced middle ground)
+          // Intent condition: user is scrolling intentionally to skip (delayed by 500ms or strong fast flick)
           const isIntentionalLongScroll =
-            (elapsedFastTime >= 230 && accumulatedDistance >= 360) || accumulatedDistance >= 600;
+            (elapsedFastTime >= 500 && accumulatedDistance >= 600) || accumulatedDistance >= 1200;
 
           if (isIntentionalLongScroll && !isLoupeAwake.value) {
             isLoupeAwake.value = true;
