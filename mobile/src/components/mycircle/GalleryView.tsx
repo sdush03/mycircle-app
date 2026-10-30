@@ -2629,7 +2629,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           mapped.forEach((p, idx) => {
             tabSparsePhotosRef.current['MY PHOTOS'].set(currentOffset + idx, p);
           });
-          setSparseVersion((v) => v + 1);
           scheduleBatchPrefetch(mapped);
           setPhotos((prev) => {
             const next = [...prev, ...mapped];
@@ -2696,7 +2695,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         mapped.forEach((p, idx) => {
           tabSparsePhotosRef.current[normTab].set(currentOffset + idx, p);
         });
-        setSparseVersion((v) => v + 1);
 
         scheduleBatchPrefetch(mapped);
 
@@ -4108,8 +4106,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // Check if there are non-contiguous sparse entries (e.g. from milestone jumps/scrubbing)
     let hasFarSparse = false;
     if (sparseMap && sparseMap.size > 0) {
+      const maxContiguous = activePhotoList.length;
       for (const k of sparseMap.keys()) {
-        if (k > activePhotoList.length + 20) {
+        if (k > maxContiguous + 80) {
           hasFarSparse = true;
           break;
         }
@@ -4143,7 +4142,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           };
         }
         const photoRows = [
-          ...activePhotoList.map((photo, index) => ({ ...photo, loupePhotoIndex: index })),
+          ...activePhotoList.map((photo, index) => (photo.loupePhotoIndex === index ? photo : { ...photo, loupePhotoIndex: index })),
           ...trailingSkeletons,
         ];
         return injectCuratedCinemaVideos(
@@ -4153,7 +4152,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         );
       }
       return injectCuratedCinemaVideos(
-        activePhotoList.map((photo, index) => ({ ...photo, loupePhotoIndex: index })),
+        activePhotoList.map((photo, index) => (photo.loupePhotoIndex === index ? photo : { ...photo, loupePhotoIndex: index })),
         activeCuratedVideos,
         `${eventSlug || ''}_${normTab}`,
       );
@@ -4162,7 +4161,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // Safety guard: For tabs without keyframes (like MY PHOTOS), never allocate thousands of blank cards
     if (keyframes.length === 0) {
       return injectCuratedCinemaVideos(
-        activePhotoList.map((photo, index) => ({ ...photo, loupePhotoIndex: index })),
+        activePhotoList.map((photo, index) => (photo.loupePhotoIndex === index ? photo : { ...photo, loupePhotoIndex: index })),
         activeCuratedVideos,
         `${eventSlug || ''}_${normTab}`,
       );
@@ -4191,7 +4190,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Indices here are photo-only server indices; curated videos are added after synthesis.
       const loaded = (sparseMap && sparseMap.get(i)) || activePhotoList[i];
       if (loaded && !loaded.isSkeleton) {
-        synthesized[i] = { ...loaded, loupePhotoIndex: i };
+        synthesized[i] = loaded.loupePhotoIndex === i ? loaded : { ...loaded, loupePhotoIndex: i };
         continue;
       }
 

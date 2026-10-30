@@ -205,11 +205,6 @@ export const MasonryCard = React.memo(function MasonryCard({
             loadStartTimeRef.current = Date.now();
           }}
           onLoad={(e) => {
-            const dur = loadStartTimeRef.current ? Date.now() - loadStartTimeRef.current : 0;
-            const priorityTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
-              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
-              : 'P3 (Original Full-Res)';
-            console.log(`[PERF ⏱️ MasonryCard #${index + 1}] Loaded in ${dur}ms via ${priorityTier} | ${imageDisplayUri?.substring(0, 80)}...`);
             if (e.source?.width && e.source?.height) {
               const aspect = e.source.width / e.source.height;
               if (cardId) savePhotoAspect(cardId, aspect);
