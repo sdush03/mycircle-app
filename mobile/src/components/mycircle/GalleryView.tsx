@@ -465,14 +465,14 @@ function injectCuratedCinemaVideos(
 const loupeCardStyles = StyleSheet.create({
   container: {
     position: 'absolute',
-    right: 2,
+    right: 4,
     top: 0,
     zIndex: 50,
-    flexDirection: 'row',
+    width: 62,
+    height: 62,
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingLeft: 6,
-    paddingRight: 4,
+    justifyContent: 'center',
+    padding: 0,
   },
   stripColumn: {
     width: 62,
@@ -751,7 +751,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
 
   // Wake up 4th peek square and latch entrance direction when loupe becomes awake / visible
   useAnimatedReaction(
-    () => loupeOpacity.value > 0.35,
+    () => loupeOpacity.value > 0.5,
     (isAwake, prevIsAwake) => {
       'worklet';
       if (isAwake !== prevIsAwake) {
@@ -831,11 +831,10 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const panGesture = Gesture.Pan()
     .minPointers(1)
     .maxPointers(1)
-    .activeOffsetY([-12, 12])
-    .hitSlop({ top: 15, bottom: 15, left: 8, right: 4 })
+    .activeOffsetY([-15, 15])
     .onBegin((e) => {
       'worklet';
-      if (loupeOpacity.value < 0.2) return;
+      if (loupeOpacity.value < 0.5) return;
       // Set isDragging and lock loupe position so scroll reaction never overwrites it
       isDragging.value = true;
       isDraggingLoupeShared.value = true;
@@ -959,12 +958,11 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     });
 
   const tapGesture = Gesture.Tap()
-    .maxDuration(400)
-    .maxDistance(12)
-    .hitSlop({ top: 15, bottom: 15, left: 8, right: 4 })
+    .maxDuration(350)
+    .maxDistance(10)
     .onBegin(() => {
       'worklet';
-      if (loupeOpacity.value < 0.2) return;
+      if (loupeOpacity.value < 0.5) return;
       loupeOpacity.value = withTiming(1, { duration: 80 });
     })
     .onEnd((e, success) => {
@@ -1041,7 +1039,6 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       <Animated.View
         collapsable={false}
         pointerEvents={canInteract ? 'auto' : 'none'}
-        hitSlop={{ top: 15, bottom: 15, left: 8, right: 4 }}
         style={[loupeCardStyles.container, animatedContainerStyle]}
       >
         <Animated.View
@@ -1861,8 +1858,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       } else {
         const now = Date.now();
 
-        // Fast scrolling threshold: deltaY > 18px per frame (requires intentional scroll speed)
-        if (deltaY > 18) {
+        // Fast scrolling threshold: deltaY > 22px per frame (requires intentional high-speed scroll)
+        if (deltaY > 22) {
           if (fastScrollStartTimeShared.value === 0) {
             fastScrollStartTimeShared.value = now;
             fastScrollDistanceShared.value = deltaY;
@@ -1873,9 +1870,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           const elapsedFastTime = now - fastScrollStartTimeShared.value;
           const accumulatedDistance = fastScrollDistanceShared.value;
 
-          // Intent condition: user is scrolling intentionally to skip (delayed by 500ms or strong fast flick)
+          // Intent condition: user is scrolling intentionally to skip
+          // Requires at least 900ms of sustained fast scrolling and >1000px traveled, or an intense fast flick (>1800px)
           const isIntentionalLongScroll =
-            (elapsedFastTime >= 500 && accumulatedDistance >= 600) || accumulatedDistance >= 1200;
+            (elapsedFastTime >= 900 && accumulatedDistance >= 1000) || accumulatedDistance >= 1800;
 
           if (isIntentionalLongScroll && !isLoupeAwake.value) {
             isLoupeAwake.value = true;
@@ -1886,7 +1884,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             isFadingLoupe.value = false;
             loupeOpacity.value = withTiming(1, { duration: 140, easing: Easing.out(Easing.cubic) });
           }
-        } else if (deltaY <= 3) {
+        } else if (deltaY <= 5) {
           // Scroll slowed down or stopped
           fastScrollStartTimeShared.value = 0;
           fastScrollDistanceShared.value = 0;
