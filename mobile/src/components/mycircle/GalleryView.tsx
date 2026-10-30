@@ -3018,7 +3018,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                                   ? eventDetails.highlights_count
                                   : 0)))))));
     const inTabCache = tabCache['HIGHLIGHTS']?.length || 0;
-    const inAllPhotos = allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS').length;
+    const inAllPhotos = allPhotos.filter((p: any) => p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS')).length;
     return Math.max(rawCount, inTabCache, inAllPhotos);
   }, [allPhotos, tabCache, eventDetails]);
 
@@ -3599,7 +3599,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Performance and Full Film are NEVER included here (strictly only in Cinema).
       const baseHighlights = (tabCache['HIGHLIGHTS'] && tabCache['HIGHLIGHTS'].length > 0)
         ? tabCache['HIGHLIGHTS']
-        : allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS');
+        : allPhotos.filter((p: any) => p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS'));
 
       sourceList = injectCuratedCinemaVideos(baseHighlights, activeCinemaVideos, `${eventSlug || ''}_HIGHLIGHTS`);
     } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {

@@ -131,34 +131,38 @@ export const MasonryCard = React.memo(function MasonryCard({
   // Priority 1: Direct CDN thumbnail or Cinema cover poster (rawThumb)
   const cinemaCover = (typeof img === 'object' && img) ? getValidImageThumbnail(img) : null;
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || img.posterUrl || img.coverUrl || cinemaCover) : null;
+  const hasCdnThumb = Boolean(rawThumb && typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoFile(rawThumb));
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
   const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
 
-  // Priority 2: On-the-fly resized thumbnail if direct CDN thumbnail fails or is absent
+  // Priority 2: On-the-fly resized thumbnail ONLY if photo genuinely has NO pre-generated thumbnail on CDN
+  // NEVER fall back to droplet resizer if photo already has an R2 CDN thumbnail (to protect server from client network drops)
   const targetForResize = fallbackUri || primaryUri || (typeof img === 'object' ? (img?.r2Url || img?.photoUrl || img?.url) : '');
-  const resizedFallback = (targetForResize && !isVideoFile(targetForResize)) ? getResizedImageUrl(targetForResize, 400, 75) : null;
+  const resizedFallback = (!hasCdnThumb && targetForResize && !isVideoFile(targetForResize))
+    ? getResizedImageUrl(targetForResize, 400, 75)
+    : null;
   const isResizeFailed = failedUri !== null && resizedFallback === failedUri;
 
   // Candidate selection in order of priority:
-  // 1. Direct CDN Thumbnail (600px pre-generated) or Cinema Cover
-  // 2. On-the-fly resize (saves 99% user data when thumbnail is missing)
-  // 3. Original high-res photo (last resort before broken placeholder)
-  // 4. Event Cover fallback (for videos that lack an individual poster)
+  // 1. Direct CDN Thumbnail (600px pre-generated on R2) or Cinema Cover
+  // 2. Direct CDN fallback to high-res R2 URL on CDN (avoids droplet resizer!)
+  // 3. Fallback photo URI / photoUrl
+  // 4. On-the-fly resize (ONLY if photo has no CDN thumbnail and is unbackfilled)
   let candidateUri: string | null = null;
   if (validThumb && !isThumbnailFailed) {
     candidateUri = validThumb;
+  } else if (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url) && img.r2Url !== failedUri) {
+    candidateUri = img.r2Url;
   } else if (!isThumbnailFailed && primaryUri && !isVideoFile(primaryUri) && !primaryUri.includes('/photos/')) {
     candidateUri = primaryUri;
-  } else if (resizedFallback && !isResizeFailed) {
-    candidateUri = resizedFallback;
-  } else if (fallbackUri && !isVideoFile(fallbackUri)) {
+  } else if (fallbackUri && !isVideoFile(fallbackUri) && fallbackUri !== failedUri) {
     candidateUri = fallbackUri;
-  } else if (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url)) {
-    candidateUri = img.r2Url;
-  } else if (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl)) {
+  } else if (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl) && img.photoUrl !== failedUri) {
     candidateUri = img.photoUrl;
-  } else if (typeof img === 'object' && img?.url && !isVideoFile(img.url)) {
+  } else if (typeof img === 'object' && img?.url && !isVideoFile(img.url) && img.url !== failedUri) {
     candidateUri = img.url;
+  } else if (!hasCdnThumb && resizedFallback && !isResizeFailed) {
+    candidateUri = resizedFallback;
   }
 
   // Fallback for videos: use event cover photo if no video poster is available
