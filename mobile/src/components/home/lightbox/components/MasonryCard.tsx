@@ -131,25 +131,32 @@ export const MasonryCard = React.memo(function MasonryCard({
   // Priority 1: Direct CDN thumbnail or Cinema cover poster (rawThumb)
   const cinemaCover = (typeof img === 'object' && img) ? getValidImageThumbnail(img) : null;
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || img.posterUrl || img.coverUrl || cinemaCover) : null;
+  const hasCdnThumb = Boolean(rawThumb && typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoFile(rawThumb));
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
-  const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
+  const validThumb = (hasCdnThumb && !isThumbnailFailed) ? rawThumb : null;
 
-  // Priority 2: On-the-fly resized thumbnail if direct CDN thumbnail fails or is absent
+  // Priority 2: On-the-fly resized thumbnail ONLY if photo genuinely has NO pre-generated thumbnail on CDN
+  // NEVER fall back to droplet resizer if photo already has an R2 CDN thumbnail (to protect server from client network drops)
   const targetForResize = fallbackUri || primaryUri || (typeof img === 'object' ? (img?.r2Url || img?.photoUrl || img?.url) : '');
-  const resizedFallback = (targetForResize && !isVideoFile(targetForResize)) ? getResizedImageUrl(targetForResize, 400, 75) : null;
+  const resizedFallback = (!hasCdnThumb && targetForResize && !isVideoFile(targetForResize))
+    ? getResizedImageUrl(targetForResize, 400, 75)
+    : null;
   const isResizeFailed = failedUri !== null && resizedFallback === failedUri;
 
   // Candidate selection in order of priority:
-  // 1. Direct CDN Thumbnail (600px pre-generated) or Cinema Cover
-  // 2. On-the-fly resize (saves 99% user data when thumbnail is missing)
-  // 3. Original high-res photo (last resort before broken placeholder)
-  // 4. Event Cover fallback (for videos that lack an individual poster)
+  // 1. Direct CDN Thumbnail (600px pre-generated on R2) or Cinema Cover
+  // 2. Direct CDN Thumbnail retry (if momentary network blip, stay on CDN — never hit droplet resizer)
+  // 3. On-the-fly resize (ONLY for unbackfilled photos with NO CDN thumbnail)
+  // 4. Fallback original photo (last resort before broken placeholder)
+  // 5. Event Cover fallback (for videos that lack an individual poster)
   let candidateUri: string | null = null;
-  if (validThumb && !isThumbnailFailed) {
+  if (validThumb) {
     candidateUri = validThumb;
-  } else if (!isThumbnailFailed && primaryUri && !isVideoFile(primaryUri) && !primaryUri.includes('/photos/')) {
-    candidateUri = primaryUri;
-  } else if (resizedFallback && !isResizeFailed) {
+  } else if (hasCdnThumb && rawThumb) {
+    // CDN thumbnail had a transient network failure: stick to R2 CDN directly!
+    // Never hammer the backend droplet's /api/gallery/resize for client-side cellular packet drops.
+    candidateUri = rawThumb;
+  } else if (!hasCdnThumb && resizedFallback && !isResizeFailed) {
     candidateUri = resizedFallback;
   } else if (fallbackUri && !isVideoFile(fallbackUri)) {
     candidateUri = fallbackUri;
@@ -214,8 +221,11 @@ export const MasonryCard = React.memo(function MasonryCard({
               : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
               : 'P3 (Original Full-Res)';
             console.warn(`[PERF ⚠️ MasonryCard #${index + 1}] FAILED on ${failedTier}: ${imageDisplayUri}`);
-            if (imageDisplayUri && imageDisplayUri !== failedUri) {
-              // First failure: try the fallback URI
+            if (hasCdnThumb) {
+              // CDN thumbnail had a transient network failure — do NOT fall back to droplet resize server!
+              setIsBroken(true);
+            } else if (imageDisplayUri && imageDisplayUri !== failedUri) {
+              // First failure for unbackfilled photo without CDN thumb: try the fallback URI
               setFailedUri(imageDisplayUri);
             } else {
               // Fallback also failed: mark as permanently broken

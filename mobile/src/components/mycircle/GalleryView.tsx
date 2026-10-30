@@ -1209,6 +1209,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
     return true;
   });
+  const [hasMoreMatchedPhotos, setHasMoreMatchedPhotos] = useState<boolean>(true);
+  const [totalMatchedPhotosCount, setTotalMatchedPhotosCount] = useState<number | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isMoreDrawerOpen, setIsMoreDrawerOpen] = useState(false);
   const [isScrolledPastHero, setIsScrolledPastHero] = useState(false);
@@ -1255,6 +1257,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   useEffect(() => {
     allPhotosRef.current = allPhotos;
   }, [allPhotos]);
+  const photosRef = useRef<Photo[]>(photos);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
+  const hasMoreMatchedPhotosRef = useRef<boolean>(true);
+  useEffect(() => {
+    hasMoreMatchedPhotosRef.current = hasMoreMatchedPhotos;
+  }, [hasMoreMatchedPhotos]);
   const tabCacheRef = useRef<Record<string, Photo[]>>(tabCache);
   useEffect(() => {
     tabCacheRef.current = tabCache;
@@ -1703,7 +1713,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const normTab = (activeTab || 'ALL').trim().toUpperCase();
     const isCeremonyTab = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
     const sparseMap = tabSparsePhotosRef.current[normTab];
-    const currentLoadedList = isCeremonyTab ? (tabCache[normTab] || []) : allPhotosRef.current;
+    const currentLoadedList = isCeremonyTab
+      ? (tabCache[normTab] || [])
+      : (normTab === 'MY PHOTOS' ? photosRef.current : allPhotosRef.current);
 
     // Check if any photo on the currently visible page is missing:
     const onScreenCount = Math.max(12, currentCols * 5);
@@ -1741,7 +1753,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const contiguousCount = currentLoadedList.length;
     const canLoadMore = isCeremonyTab
       ? (tabHasMoreRef.current[normTab] !== false)
-      : hasMorePhotos;
+      : (normTab === 'MY PHOTOS' ? hasMoreMatchedPhotosRef.current : hasMorePhotos);
     const triggerThreshold = Math.max(30, currentCols * 14);
     const isApproachingEndOfLoaded =
       visibleStartIndex <= contiguousCount + 10 &&
@@ -2196,6 +2208,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const matchedList = matchedRes.data?.photos || matchedRes.data?.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
       const mappedMatched = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
       setPhotos(mappedMatched);
+      if (typeof matchedRes.data?.total === 'number') {
+        setTotalMatchedPhotosCount(matchedRes.data.total);
+        setHasMoreMatchedPhotos(mappedMatched.length < matchedRes.data.total);
+      } else {
+        setTotalMatchedPhotosCount(mappedMatched.length);
+        setHasMoreMatchedPhotos(false);
+      }
 
       const favList = favRes.data?.photos || (Array.isArray(favRes.data) ? favRes.data : []);
       const mappedFavs = Array.isArray(favList) ? favList.map(mapPhotoItem) : [];
@@ -2434,6 +2453,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const mappedCinema = Array.isArray(bundleData.cinema) ? bundleData.cinema.map(mapPhotoItem) : [];
 
       setPhotos(mappedMatched);
+      if (typeof bundleData.totalMatched === 'number') {
+        setTotalMatchedPhotosCount(bundleData.totalMatched);
+        setHasMoreMatchedPhotos(mappedMatched.length < bundleData.totalMatched);
+      } else if (typeof bundleData.event?.tabCounts?.['MY PHOTOS'] === 'number') {
+        const total = bundleData.event.tabCounts['MY PHOTOS'];
+        setTotalMatchedPhotosCount(total);
+        setHasMoreMatchedPhotos(mappedMatched.length < total);
+      } else {
+        setTotalMatchedPhotosCount(mappedMatched.length);
+        setHasMoreMatchedPhotos(false);
+      }
 
       const newTabCache: Record<string, Photo[]> = {};
       if (mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
@@ -2571,7 +2601,65 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     const normTab = activeTab.toUpperCase();
     if (normTab === 'ALL' && !hasMorePhotos) return;
-    if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') return;
+    if (normTab === 'MY FAVOURITES') return;
+
+    if (normTab === 'MY PHOTOS') {
+      if (!hasMoreMatchedPhotosRef.current) return;
+      const currentOffset = photosRef.current.length;
+      if (totalMatchedPhotosCount !== null && currentOffset >= totalMatchedPhotosCount) {
+        setHasMoreMatchedPhotos(false);
+        return;
+      }
+      const eventHeaders = eventHeadersRef.current;
+      const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
+      try {
+        isFetchingMoreRef.current = true;
+        setIsLoadingMore(true);
+        console.log(`[MYCIRCLE DEBUG 📥] Pre-fetching next page for 'MY PHOTOS' -> offset=${currentOffset}, limit=${dynamicPageSize}...`);
+        const matchedRes = await guestApi.get(
+          `/api/gallery/public/events/${eventSlug}/matched-photos?limit=${dynamicPageSize}&offset=${currentOffset}`,
+          { headers: eventHeaders }
+        );
+        const matchedList = matchedRes.data?.photos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
+        const mapped = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
+        if (mapped.length > 0) {
+          if (!tabSparsePhotosRef.current['MY PHOTOS']) {
+            tabSparsePhotosRef.current['MY PHOTOS'] = new Map();
+          }
+          mapped.forEach((p, idx) => {
+            tabSparsePhotosRef.current['MY PHOTOS'].set(currentOffset + idx, p);
+          });
+          setSparseVersion((v) => v + 1);
+          scheduleBatchPrefetch(mapped);
+          setPhotos((prev) => {
+            const next = [...prev, ...mapped];
+            const seen = new Set<number | string>();
+            return next.filter((item) => {
+              const key = (item.id != null ? item.id : item.r2Url) ?? '';
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+          });
+          if (typeof matchedRes.data?.total === 'number') {
+            setTotalMatchedPhotosCount(matchedRes.data.total);
+            if (currentOffset + mapped.length >= matchedRes.data.total) {
+              setHasMoreMatchedPhotos(false);
+            }
+          } else if (mapped.length < dynamicPageSize) {
+            setHasMoreMatchedPhotos(false);
+          }
+        } else {
+          setHasMoreMatchedPhotos(false);
+        }
+      } catch (err) {
+        console.warn('[MY PHOTOS loadMorePhotos error]:', err);
+      } finally {
+        isFetchingMoreRef.current = false;
+        setIsLoadingMore(false);
+      }
+      return;
+    }
 
     const isCeremonyTab = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
     // Stop fetching if this ceremony tab has no more photos
@@ -3631,22 +3719,26 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return lockedPhotoIds.size;
     }
     if (norm === 'MY PHOTOS') {
-      const lockedInPhotos = photos.filter((p: any) => lockedPhotoIds.has(Number(p.id))).length;
+      if (typeof totalMatchedPhotosCount === 'number') {
+        const lockedInPhotos = photos.filter((p: any) => p && lockedPhotoIds.has(Number(p.id))).length;
+        return Math.max(0, totalMatchedPhotosCount - lockedInPhotos);
+      }
+      const lockedInPhotos = photos.filter((p: any) => p && lockedPhotoIds.has(Number(p.id))).length;
       return Math.max(0, photos.length - lockedInPhotos);
     }
     if (norm === 'MY FAVOURITES') {
-      const lockedInFavs = [...allPhotos, ...photos].filter((p: any) => p.isLiked && lockedPhotoIds.has(Number(p.id))).length;
+      const lockedInFavs = [...allPhotos, ...photos].filter((p: any) => p && p.isLiked && lockedPhotoIds.has(Number(p.id))).length;
       return Math.max(0, favoritesCount - lockedInFavs);
     }
     if (norm === 'ALL') {
-      const comingSoonCount = allPhotos.filter((p: any) => isVideoComingSoon(p)).length;
+      const comingSoonCount = allPhotos.filter((p: any) => p && isVideoComingSoon(p)).length;
       const rawAll = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
       return Math.max(0, rawAll - comingSoonCount - lockedPhotoIds.size);
     }
-    const rawCount = eventDetails?.tabCounts?.[norm] ?? allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm).length;
-    const lockedInTab = allPhotos.filter((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm && lockedPhotoIds.has(Number(p.id))).length;
+    const rawCount = eventDetails?.tabCounts?.[norm] ?? allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm).length;
+    const lockedInTab = allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm && lockedPhotoIds.has(Number(p.id))).length;
     return Math.max(0, rawCount - lockedInTab);
-  }, [lockedPhotoIds, photos, favoritesCount, allPhotos, eventDetails?.tabCounts, totalAllPhotosCount]);
+  }, [lockedPhotoIds, photos, favoritesCount, allPhotos, eventDetails?.tabCounts, totalAllPhotosCount, totalMatchedPhotosCount]);
 
   const currentTabExpectedCount = useMemo(() => {
     return getTabPhotoCount(currentPhotoTab);
@@ -3930,7 +4022,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const totalTabPhotos = useMemo(() => {
     const normTab = (activeTab || '').trim().toUpperCase();
     if (normTab === 'CINEMA') return 0;
-    if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES') {
+    if (normTab === 'MY PHOTOS') {
+      return totalMatchedPhotosCount ?? activeList.length;
+    }
+    if (normTab === 'MY FAVOURITES') {
       return activeList.length;
     }
     if (activeFilmstrip?.total && activeFilmstrip.total > 0 && (activeFilmstrip.tab || '').trim().toUpperCase() === normTab) {
@@ -3943,7 +4038,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return eventDetails.tabCounts[normTab];
     }
     return tabCache[normTab]?.length || activeList.length;
-  }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length]);
+  }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length, totalMatchedPhotosCount]);
 
   useEffect(() => {
     totalPhotosShared.value = totalTabPhotos;
@@ -4025,7 +4120,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // Only append a small trailing skeleton batch — avoids allocating 4000-item array on every render.
     if (!hasFarSparse && activePhotoList.length < totalCount) {
       const isCeremony = normTab !== 'ALL' && normTab !== 'MY PHOTOS' && normTab !== 'MY FAVOURITES';
-      const canMore = isCeremony ? (tabHasMoreRef.current[normTab] !== false) : hasMorePhotos;
+      const canMore = isCeremony
+        ? (tabHasMoreRef.current[normTab] !== false)
+        : (normTab === 'MY PHOTOS' ? hasMoreMatchedPhotos : hasMorePhotos);
       if (canMore) {
         const trailingCount = Math.min(12, totalCount - activePhotoList.length);
         const trailingSkeletons: any[] = new Array(trailingCount);
@@ -4062,6 +4159,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       );
     }
 
+    // Safety guard: For tabs without keyframes (like MY PHOTOS), never allocate thousands of blank cards
+    if (keyframes.length === 0) {
+      return injectCuratedCinemaVideos(
+        activePhotoList.map((photo, index) => ({ ...photo, loupePhotoIndex: index })),
+        activeCuratedVideos,
+        `${eventSlug || ''}_${normTab}`,
+      );
+    }
+
     // Build keyframe lookup map by index
     const kfMap = new Map<number, FilmstripKeyframe>();
     keyframes.forEach((kf) => {
@@ -4070,8 +4176,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     });
 
-    // Synthesize the full timeline up to totalCount so masonry layout spans all photos across the entire height
-    const targetCount = totalCount;
+    // Cap synthesized items to only what is needed (up to the farthest loaded/jumped sparse index + buffer)
+    // Never blindly allocate all 11,247 skeleton objects into phone memory!
+    let maxSparseKey = 0;
+    if (sparseMap && sparseMap.size > 0) {
+      for (const k of sparseMap.keys()) {
+        if (k > maxSparseKey) maxSparseKey = k;
+      }
+    }
+    const targetCount = Math.min(totalCount, Math.max(activePhotoList.length + 12, maxSparseKey + 24));
     const synthesized: any[] = new Array(targetCount);
 
     for (let i = 0; i < targetCount; i++) {
@@ -4135,6 +4248,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     activeTab,
     activeFilmstrip,
     hasMorePhotos,
+    hasMoreMatchedPhotos,
     sparseVersion,
   ]);
 
