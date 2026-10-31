@@ -37,7 +37,7 @@ import { LightboxImageItem } from './components/LightboxImageItem';
 import { Image as ExpoImage } from 'expo-image';
 import { savesService } from '../../../services/savesService';
 import { analyticsService } from '../../../services/analyticsService';
-import { tabEvents, EVENT_SAVES_UPDATED } from '../../../lib/tabEvents';
+import { tabEvents, EVENT_SAVES_UPDATED, EVENT_PHOTO_LIKED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
 import { getAppShareUrl } from '../../../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../../utils/screenCapture';
@@ -155,6 +155,14 @@ export function EditorialLightbox({
           setSavedUrls(urls);
         }
       }).catch(() => {});
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = tabEvents.on(EVENT_PHOTO_LIKED, (data?: { photoId: string; isLiked: boolean }) => {
+      if (!data) return;
+      setOptimisticLikes((prev) => ({ ...prev, [data.photoId]: data.isLiked }));
     });
     return () => unsub();
   }, []);

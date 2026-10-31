@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { tabEvents, EVENT_PHOTO_LIKED } from '../../../../lib/tabEvents';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
 import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 import { getResizedImageUrl } from '../../../../utils/imageUrl';
@@ -62,6 +63,21 @@ export const MasonryCard = React.memo(function MasonryCard({
     setLocalLiked(null);
     setLocalLikeCount(null);
   }, [img?.isLiked, img?.likeCount]);
+
+  // Synchronize immediately if photo is liked/unliked from EditorialLightbox or another card
+  useEffect(() => {
+    const unsub = tabEvents.on(EVENT_PHOTO_LIKED, (data?: { photoId: string; isLiked: boolean; likeCount?: number }) => {
+      if (!data) return;
+      const myId = img?.id != null ? String(img.id) : (img?.r2Url || img?.uri || '');
+      if (myId && (myId === data.photoId || String(img?.id) === data.photoId)) {
+        setLocalLiked(data.isLiked);
+        if (typeof data.likeCount === 'number') {
+          setLocalLikeCount(data.likeCount);
+        }
+      }
+    });
+    return () => unsub();
+  }, [img?.id, img?.r2Url, img?.uri]);
 
   const isLiked = localLiked !== null ? localLiked : (typeof img === 'object' && !!img.isLiked);
   const likeCount = localLikeCount !== null ? localLikeCount : (typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0);

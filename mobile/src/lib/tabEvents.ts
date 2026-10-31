@@ -3,7 +3,7 @@
  * actions (open moodboards, open inspirations) inside index.tsx
  * without prop-drilling or adding to the auth store.
  */
-type Listener = () => void;
+type Listener = (payload?: any) => void;
 
 const listeners: Record<string, Listener[]> = {};
 
@@ -16,8 +16,8 @@ export const tabEvents = {
   off(event: string, fn: Listener) {
     listeners[event] = (listeners[event] || []).filter((l) => l !== fn);
   },
-  emit(event: string) {
-    (listeners[event] || []).forEach((fn) => fn());
+  emit(event: string, payload?: any) {
+    (listeners[event] || []).forEach((fn) => fn(payload));
   },
 };
 
@@ -30,4 +30,5 @@ export const TAB_SCROLL_TO_TOP_MOODBOARD = 'tab:scrollToTopMoodboard';
 export const TAB_SCROLL_TO_TOP_PROFILE   = 'tab:scrollToTopProfile';
 export const EVENT_SAVES_UPDATED = 'saves:updated';
 export const EVENT_JOINED_CELEBRATION = 'celebration:joined';
+export const EVENT_PHOTO_LIKED = 'photo:liked';
 

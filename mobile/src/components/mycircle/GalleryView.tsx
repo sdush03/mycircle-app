@@ -30,7 +30,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
-import { tabEvents, EVENT_SAVES_UPDATED } from '../../lib/tabEvents';
+import { tabEvents, EVENT_SAVES_UPDATED, EVENT_PHOTO_LIKED } from '../../lib/tabEvents';
 import {
   getStoredFilmstrip,
   persistFilmstripKeyframes,
@@ -4025,14 +4025,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const currentCount = typeof freshItem.likeCount === 'number' ? freshItem.likeCount : 0;
     const nextCount = Math.max(0, currentCount + (nextLiked ? 1 : -1));
 
-    // Immediately mutate item in memory so caller object reflects true state
-    item.isLiked = nextLiked;
-    item.likeCount = nextCount;
-    if (freshItem && freshItem !== item) {
-      freshItem.isLiked = nextLiked;
-      freshItem.likeCount = nextCount;
-    }
-
     try {
       if (nextLiked) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -4044,7 +4036,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // Helper: update isLiked (and optionally likeCount) for photoId across ALL state arrays AND sparse maps consistently
     const applyLikeState = (liked: boolean, newLikeCount?: number) => {
       const mapper = (p: any) => {
-        if (String(p.id) !== photoIdStr) return p;
+        const pIdStr = p.id != null ? String(p.id) : (p.r2Url || p.uri || '');
+        const targetIdStr = photoIdStr || (item.r2Url || item.uri || '');
+        if (pIdStr !== targetIdStr && String(p.id) !== photoIdStr) return p;
         const updated: any = { ...p, isLiked: liked };
         if (typeof newLikeCount === 'number') updated.likeCount = newLikeCount;
         return updated;
@@ -4063,13 +4057,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         // Update 'MY FAVOURITES' tab list specifically
         const currentFavs = updatedCache['MY FAVOURITES'] || [];
         if (liked) {
-          if (!currentFavs.some((p) => String(p.id) === photoIdStr)) {
+          if (!currentFavs.some((p) => String(p.id) === photoIdStr || (p.r2Url && p.r2Url === item.r2Url))) {
             const newItem = { ...(freshItem || item), isLiked: true };
             if (typeof newLikeCount === 'number') (newItem as any).likeCount = newLikeCount;
             updatedCache['MY FAVOURITES'] = [newItem, ...currentFavs];
           }
         } else {
-          updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => String(p.id) !== photoIdStr);
+          updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => String(p.id) !== photoIdStr && (!p.r2Url || p.r2Url !== item.r2Url));
         }
         return updatedCache;
       });
@@ -4079,7 +4073,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         const sMap = tabSparsePhotosRef.current[tabKey];
         if (sMap) {
           for (const [k, p] of sMap.entries()) {
-            if (String(p.id) === photoIdStr) {
+            const pIdStr = p.id != null ? String(p.id) : (p.r2Url || p.uri || '');
+            const targetIdStr = photoIdStr || (item.r2Url || item.uri || '');
+            if (pIdStr === targetIdStr || String(p.id) === photoIdStr) {
               sMap.set(k, {
                 ...p,
                 isLiked: liked,
@@ -4090,7 +4086,14 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         }
       }
 
-      // 4. Force displayData and MasonryFlashList to re-evaluate with the updated like state!
+      // 4. Broadcast instant photo like event to all mounted cards and lightbox!
+      tabEvents.emit(EVENT_PHOTO_LIKED, {
+        photoId: photoIdStr,
+        isLiked: liked,
+        likeCount: newLikeCount,
+      });
+
+      // 5. Force displayData and MasonryFlashList to re-evaluate with the updated like state!
       setSparseVersion((v) => v + 1);
     };
 
@@ -4099,7 +4102,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     try {
       const headers = getAuthHeaders();
-      const res = await api.post(
+      const res = await guestApi.post(
         `/api/gallery/public/events/${eventSlug}/photos/${photoId}/like`,
         {},
         { headers }
@@ -4109,15 +4112,36 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         applyLikeState(res.data.liked, typeof res.data.likeCount === 'number' ? res.data.likeCount : undefined);
         tabEvents.emit(EVENT_SAVES_UPDATED);
       }
-    } catch (err) {
+    } catch (err: any) {
+      // If 401 received, attempt auto-refresh from family session and retry once
+      if (err?.response?.status === 401) {
+        try {
+          const familyToken = useAuthStore.getState().token;
+          if (familyToken && eventSlug) {
+            const ssoRes = await api.post(
+              `/api/gallery/public/events/${eventSlug}/auth-from-family`,
+              { code: passcode || undefined },
+              { headers: { Authorization: `Bearer ${familyToken}` } }
+            );
+            if (ssoRes.data?.token) {
+              const freshHeaders = { Authorization: `Bearer ${ssoRes.data.token}` };
+              eventHeadersRef.current = freshHeaders;
+              const retryRes = await guestApi.post(
+                `/api/gallery/public/events/${eventSlug}/photos/${photoId}/like`,
+                {},
+                { headers: freshHeaders }
+              );
+              if (retryRes.data && typeof retryRes.data.liked === 'boolean') {
+                applyLikeState(retryRes.data.liked, typeof retryRes.data.likeCount === 'number' ? retryRes.data.likeCount : undefined);
+                tabEvents.emit(EVENT_SAVES_UPDATED);
+                return;
+              }
+            }
+          }
+        } catch (_ssoErr) {}
+      }
       console.warn('Failed to toggle photo like:', err);
       // Revert to original state on failure (updates all state arrays & sparse maps)
-      item.isLiked = currentlyLiked;
-      item.likeCount = currentCount;
-      if (freshItem && freshItem !== item) {
-        freshItem.isLiked = currentlyLiked;
-        freshItem.likeCount = currentCount;
-      }
       applyLikeState(currentlyLiked, currentCount);
     }
   };
