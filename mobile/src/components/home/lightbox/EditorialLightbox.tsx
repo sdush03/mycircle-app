@@ -80,7 +80,7 @@ export interface EditorialLightboxProps {
   onGetBoundsForIndex?: (index: number, callback: (bounds: LightboxBounds) => void) => void;
   onClose: () => void;
   onUnsave?: (item: any) => void;
-  onToggleLike?: (item: any) => Promise<boolean | void>;
+  onToggleLike?: (item: any, explicitLiked?: boolean) => Promise<boolean | void>;
   likeTargetName?: string;
   title?: string;
   subtitle?: string;
@@ -485,7 +485,6 @@ export function EditorialLightbox({
 
       // 1. Immediately turn red heart on or off in Lightbox with zero latency!
       setOptimisticLikes((prev) => ({ ...prev, [photoKey]: nextLiked }));
-      currentItem.isLiked = nextLiked;
 
       // 2. Immediate Haptics + Heart Pop animation + Toast
       if (nextLiked) {
@@ -503,11 +502,11 @@ export function EditorialLightbox({
 
       // 3. Dispatch to parent handler & API
       try {
-        await onToggleLike(currentItem);
+        await onToggleLike(currentItem, nextLiked);
       } catch (err) {
         // Rollback on failure
         setOptimisticLikes((prev) => ({ ...prev, [photoKey]: wasLiked }));
-        currentItem.isLiked = wasLiked;
+        if (currentItem) currentItem.isLiked = wasLiked;
       }
       return;
     }

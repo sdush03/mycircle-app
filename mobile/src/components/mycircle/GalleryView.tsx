@@ -3987,7 +3987,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     setActiveImageIndex(idx !== -1 ? idx : (photoItem.index ?? photoItem.globalIndex ?? 0));
   };
 
-  const handleToggleLike = async (item: any) => {
+  const handleToggleLike = async (item: any, explicitLiked?: boolean) => {
     if (!item || !eventSlug) return;
     const photoId = item.id;
     const photoIdStr = String(photoId);
@@ -4018,17 +4018,20 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     }
     if (!freshItem) freshItem = item;
 
-    // Check if item was already flipped by caller (e.g. EditorialLightbox)
-    const currentlyLiked = typeof item.isLiked === 'boolean' && item.isLiked !== freshItem.isLiked
-      ? !item.isLiked
-      : !!freshItem.isLiked;
-    const nextLiked = !currentlyLiked;
+    // Determine target liked state cleanly and unambiguously
+    const isCurrentlyLiked = Boolean(freshItem?.isLiked ?? item?.isLiked);
+    const nextLiked = typeof explicitLiked === 'boolean' ? explicitLiked : !isCurrentlyLiked;
+    const currentlyLiked = !nextLiked;
     const currentCount = typeof freshItem.likeCount === 'number' ? freshItem.likeCount : 0;
     const nextCount = Math.max(0, currentCount + (nextLiked ? 1 : -1));
 
     // Immediately mutate item in memory so caller object reflects true state
     item.isLiked = nextLiked;
     item.likeCount = nextCount;
+    if (freshItem && freshItem !== item) {
+      freshItem.isLiked = nextLiked;
+      freshItem.likeCount = nextCount;
+    }
 
     try {
       if (nextLiked) {
@@ -4111,6 +4114,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Revert to original state on failure (updates all state arrays & sparse maps)
       item.isLiked = currentlyLiked;
       item.likeCount = currentCount;
+      if (freshItem && freshItem !== item) {
+        freshItem.isLiked = currentlyLiked;
+        freshItem.likeCount = currentCount;
+      }
       applyLikeState(currentlyLiked, currentCount);
     }
   };

@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDimensionCache';
 import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 import { getResizedImageUrl } from '../../../../utils/imageUrl';
@@ -16,7 +17,7 @@ export interface MasonryCardProps {
   isHighPriority?: boolean;
   onSelect: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
   onRegisterRef?: (cardId: string, ref: View | null) => void;
-  onToggleLike?: (img: any) => void;
+  onToggleLike?: (img: any, explicitLiked?: boolean) => void;
 }
 
 const DEFAULT_NEUTRAL_BLURHASH = 'L6Pj0^jE.mfQ~qj[j[j[~qfQoffQ';
@@ -53,10 +54,22 @@ export const MasonryCard = React.memo(function MasonryCard({
   const colIdx = typeof columnIndex === 'number' ? columnIndex : (isColumn0 ? 0 : 1);
   const cardAspect = getPhotoCardAspect(img, index, colIdx, numColumns);
 
-  const isLiked = typeof img === 'object' && !!img.isLiked;
-  const likeCount = typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0;
+  const lastHeartPressTimeRef = useRef<number>(0);
+  const [localLiked, setLocalLiked] = useState<boolean | null>(null);
+  const [localLikeCount, setLocalLikeCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    setLocalLiked(null);
+    setLocalLikeCount(null);
+  }, [img?.isLiked, img?.likeCount]);
+
+  const isLiked = localLiked !== null ? localLiked : (typeof img === 'object' && !!img.isLiked);
+  const likeCount = localLikeCount !== null ? localLikeCount : (typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0);
 
   const handlePress = useCallback(() => {
+    if (Date.now() - lastHeartPressTimeRef.current < 400) {
+      return;
+    }
     if (cardRef.current) {
       cardRef.current.measureInWindow((x, y, width, height) => {
         if (width > 0 && height > 0) {
@@ -70,12 +83,26 @@ export const MasonryCard = React.memo(function MasonryCard({
     }
   }, [onSelect]);
 
-  const handleHeartPress = useCallback((e: any) => {
+  const handleHeartPress = useCallback(async (e: any) => {
     e?.stopPropagation?.();
+    lastHeartPressTimeRef.current = Date.now();
+    const next = !isLiked;
+    const count = Math.max(0, likeCount + (next ? 1 : -1));
+    setLocalLiked(next);
+    setLocalLikeCount(count);
+
+    try {
+      if (next) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch {}
+
     if (onToggleLike) {
-      onToggleLike(img);
+      onToggleLike(img, next);
     }
-  }, [onToggleLike, img]);
+  }, [onToggleLike, img, isLiked, likeCount]);
 
   const loadStartTimeRef = useRef<number>(0);
 
