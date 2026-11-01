@@ -187,12 +187,62 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  // Serialized mutex queue & iat/sequence token ordering to prevent rotation races
   updateToken: async (token: string) => {
     try {
-      await SecureStore.setItemAsync(TOKEN_KEY, token);
-      set({ token });
+      if (!token || typeof token !== 'string') return;
+
+      // Helper to extract JWT iat and exp
+      const getJwtMeta = (t: string) => {
+        try {
+          const parts = t.split('.');
+          if (parts.length < 2) return { iat: 0 };
+          let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          while (base64.length % 4) base64 += '=';
+          const decoded = typeof atob === 'function' ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+          const parsed = JSON.parse(decoded);
+          return { iat: parsed?.iat || 0 };
+        } catch {
+          return { iat: 0 };
+        }
+      };
+
+      if (!(global as any)._tokenUpdateChain) {
+        (global as any)._tokenUpdateChain = Promise.resolve();
+        (global as any)._lastTokenSeq = 0;
+        (global as any)._lastTokenIat = 0;
+      }
+
+      (global as any)._tokenUpdateChain = (global as any)._tokenUpdateChain.then(async () => {
+        const currentToken = get().token;
+        if (currentToken === token) return;
+
+        const incomingMeta = getJwtMeta(token);
+        const currentMeta = getJwtMeta(currentToken || '');
+
+        const nextSeq = ((global as any)._lastTokenSeq || 0) + 1;
+
+        // Token ordering rule: incoming iat must be >= current iat, and if equal, sequence must be newer
+        if (incomingMeta.iat > 0 && currentMeta.iat > 0) {
+          if (incomingMeta.iat < currentMeta.iat) {
+            console.warn('[AUTH 🛡️] Discarding obsolete token (incoming iat older than current iat)');
+            return;
+          }
+        }
+
+        // Attempt SecureStore persistence first — if this throws, we do NOT update Zustand state
+        await SecureStore.setItemAsync(TOKEN_KEY, token);
+
+        // Persistence succeeded, update in-memory state and sequence tracker
+        (global as any)._lastTokenSeq = nextSeq;
+        (global as any)._lastTokenIat = incomingMeta.iat;
+        set({ token });
+      });
+
+      await (global as any)._tokenUpdateChain;
     } catch (e) {
-      console.warn('Error updating token in storage:', e);
+      console.warn('Error updating token in storage (SecureStore failure):', e);
+      // SecureStore failed: state remains unchanged, avoiding silent divergence
     }
   },
 

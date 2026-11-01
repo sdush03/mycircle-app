@@ -147,13 +147,34 @@ api.interceptors.response.use(
     }
 
     if (error.response && error.response.status === 401) {
-      // Only skip logout for operations where 401 is an input error, NOT a session expiration
-      // (e.g. invalid bulk download PIN or invalid login credentials).
       const isInputPinError = url.includes('/download');
       const isAuthUrl = url.includes('/auth') && !url.includes('/session-check');
-      if (!isInputPinError && !isAuthUrl) {
-        console.warn('[API 401] Session token expired or invalid for URL:', url, '-> Auto-logging out to Login screen.');
+      const responseCode = error.response?.data?.code || '';
+      const errorMsgLower = (error.response?.data?.message || error.response?.data?.error || error.message || '').toLowerCase();
+
+      const isMachineCodeInvalidity = [
+        'ERR_TOKEN_EXPIRED',
+        'ERR_INVALID_TOKEN',
+        'ERR_SESSION_REVOKED',
+        'SESSION_TERMINATED',
+        'SESSION_EXPIRED',
+        'ERR_UNAUTHORIZED'
+      ].includes(responseCode);
+
+      const isExplicitTokenInvalidity =
+        isMachineCodeInvalidity ||
+        errorMsgLower.includes('token expired') ||
+        errorMsgLower.includes('invalid token') ||
+        errorMsgLower.includes('jwt expired') ||
+        errorMsgLower.includes('unauthorized token') ||
+        errorMsgLower.includes('signature');
+
+      if (!isInputPinError && !isAuthUrl && isExplicitTokenInvalidity) {
+        console.warn('[API 401] Confirmed session expiration/invalidity (code:', responseCode, ') for URL:', url, '-> Auto-logging out to Login screen.');
+        inFlightGetRequests.clear();
         await useAuthStore.getState().logout();
+      } else {
+        console.warn('[API 401] Transient or non-fatal 401 received for URL:', url, '— preserving session.');
       }
     }
     return Promise.reject(error);
