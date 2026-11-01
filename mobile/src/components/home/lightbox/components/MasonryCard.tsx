@@ -159,7 +159,7 @@ export const MasonryCard = React.memo(function MasonryCard({
   const rawThumb = typeof img === 'object' ? (img.thumbnailUrl || img.thumbUri || img.posterUrl || img.coverUrl || cinemaCover) : null;
   const hasCdnThumb = Boolean(rawThumb && typeof rawThumb === 'string' && rawThumb.startsWith('http') && !isVideoFile(rawThumb));
   const isThumbnailFailed = failedUri !== null && (rawThumb === failedUri || (typeof primaryUri === 'string' && primaryUri === failedUri));
-  const validThumb = (rawThumb && !isVideoFile(rawThumb) && !isThumbnailFailed) ? rawThumb : null;
+  const validThumb = (hasCdnThumb && !isThumbnailFailed) ? rawThumb : null;
 
   // Priority 2: On-the-fly resized thumbnail ONLY if photo genuinely has NO pre-generated thumbnail on CDN
   // NEVER fall back to droplet resizer if photo already has an R2 CDN thumbnail (to protect server from client network drops)
@@ -171,24 +171,30 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   // Candidate selection in order of priority:
   // 1. Direct CDN Thumbnail (600px pre-generated on R2) or Cinema Cover
-  // 2. Direct CDN fallback to high-res R2 URL on CDN (avoids droplet resizer!)
-  // 3. Fallback photo URI / photoUrl
-  // 4. On-the-fly resize (ONLY if photo has no CDN thumbnail and is unbackfilled)
+  // 2. Direct CDN Thumbnail retry (if momentary network blip, stay on CDN — never hit droplet resizer)
+  // 3. Direct CDN fallback to high-res R2 URL on CDN (avoids droplet resizer!)
+  // 4. On-the-fly resize (ONLY for unbackfilled photos with NO CDN thumbnail)
+  // 5. Fallback original photo (last resort before broken placeholder)
+  // 6. Event Cover fallback (for videos that lack an individual poster)
   let candidateUri: string | null = null;
-  if (validThumb && !isThumbnailFailed) {
+  if (validThumb) {
     candidateUri = validThumb;
+  } else if (hasCdnThumb && rawThumb) {
+    // CDN thumbnail had a transient network failure: stick to R2 CDN directly!
+    // Never hammer the backend droplet's /api/gallery/resize for client-side cellular packet drops.
+    candidateUri = rawThumb;
   } else if (typeof img === 'object' && img?.r2Url && !isVideoFile(img.r2Url) && img.r2Url !== failedUri) {
     candidateUri = img.r2Url;
   } else if (!isThumbnailFailed && primaryUri && !isVideoFile(primaryUri) && !primaryUri.includes('/photos/')) {
     candidateUri = primaryUri;
+  } else if (!hasCdnThumb && resizedFallback && !isResizeFailed) {
+    candidateUri = resizedFallback;
   } else if (fallbackUri && !isVideoFile(fallbackUri) && fallbackUri !== failedUri) {
     candidateUri = fallbackUri;
   } else if (typeof img === 'object' && img?.photoUrl && !isVideoFile(img.photoUrl) && img.photoUrl !== failedUri) {
     candidateUri = img.photoUrl;
   } else if (typeof img === 'object' && img?.url && !isVideoFile(img.url) && img.url !== failedUri) {
     candidateUri = img.url;
-  } else if (!hasCdnThumb && resizedFallback && !isResizeFailed) {
-    candidateUri = resizedFallback;
   }
 
   // Fallback for videos: use event cover photo if no video poster is available
@@ -235,8 +241,15 @@ export const MasonryCard = React.memo(function MasonryCard({
             }
           }}
           onError={() => {
-            if (imageDisplayUri && imageDisplayUri !== failedUri) {
-              // First failure: try the fallback URI
+            const failedTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
+              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
+              : 'P3 (Original Full-Res)';
+            console.warn(`[PERF ⚠️ MasonryCard #${index + 1}] FAILED on ${failedTier}: ${imageDisplayUri}`);
+            if (hasCdnThumb) {
+              // CDN thumbnail had a transient network failure — do NOT fall back to droplet resize server!
+              setIsBroken(true);
+            } else if (imageDisplayUri && imageDisplayUri !== failedUri) {
+              // First failure for unbackfilled photo without CDN thumb: try the fallback URI
               setFailedUri(imageDisplayUri);
             } else {
               // Fallback also failed: mark as permanently broken
