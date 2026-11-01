@@ -148,9 +148,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setAuth: async (token, profile, userEvents = []) => {
     try {
+      // Increment session epoch to invalidate any pending in-flight token updates from previous sessions
+      if (!(global as any)._sessionEpoch) {
+        (global as any)._sessionEpoch = 1;
+      } else {
+        (global as any)._sessionEpoch++;
+      }
+      const sessionEpochAtStart = (global as any)._sessionEpoch;
+
       const { selfieUrl, ...persistentProfile } = profile;
       await SecureStore.setItemAsync(TOKEN_KEY, token);
+
+      // If epoch changed while saving, abort
+      if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
+
       await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
+      if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
 
       if (selfieUrl) {
         userSelfieStorage.saveLocalSelfie(selfieUrl).then((localUri) => {
@@ -192,6 +205,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       if (!token || typeof token !== 'string') return;
 
+      const epochAtCall = (global as any)._sessionEpoch || 0;
+
       const getJwtMeta = (t: string) => {
         try {
           const parts = t.split('.');
@@ -212,6 +227,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       (global as any)._tokenUpdateChain = (global as any)._tokenUpdateChain.then(async () => {
+        // If user logged out or a new user logged in while this update was queued, discard immediately
+        if (((global as any)._sessionEpoch || 0) !== epochAtCall) {
+          return;
+        }
+
         const currentToken = get().token;
         if (currentToken === token) return;
 
@@ -235,6 +255,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         // Attempt SecureStore persistence first — if this throws, we do NOT update Zustand state
         await SecureStore.setItemAsync(TOKEN_KEY, token);
+
+        // Re-check epoch after async SecureStore write
+        if (((global as any)._sessionEpoch || 0) !== epochAtCall) {
+          return;
+        }
 
         // Persistence succeeded, update in-memory state and timestamp tracker
         (global as any)._lastTokenUpdateAt = now;
@@ -440,6 +465,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     try {
+      // Increment session epoch to immediately invalidate any pending in-flight token updates
+      if (!(global as any)._sessionEpoch) {
+        (global as any)._sessionEpoch = 1;
+      } else {
+        (global as any)._sessionEpoch++;
+      }
+
       await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
       await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => {});
       await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
