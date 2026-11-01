@@ -14,7 +14,6 @@ import PhoneView from '../components/mycircle/PhoneView';
 import CameraViewScreen from '../components/mycircle/CameraView';
 import JoinEventView from '../components/mycircle/JoinEventView';
 import PasscodeView from '../components/mycircle/PasscodeView';
-import GalleryView from '../components/mycircle/GalleryView';
 
 export default function MyCircleScreen() {
   const url = Linking.useURL();
@@ -104,15 +103,6 @@ export default function MyCircleScreen() {
         <PasscodeView
           onSuccess={() => {}}
           onBack={() => setEventDetails(null, null)}
-        />
-      )}
-
-      {/* Gallery Overlay Modal when eventSlug is set and opened from My Circle */}
-      {eventSlug && openedFrom === 'mycircle' && (!eventRequiresPasscode || passcode) && (
-        <GalleryView
-          key={eventSlug}
-          onLogout={handleLogout}
-          onChangeEvent={handleCloseGallery}
         />
       )}
     </View>

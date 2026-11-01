@@ -50,6 +50,8 @@ LogBox.ignoreLogs([
   'Unable to activate keep awake',
   'Error: Unable to activate keep awake',
   'InvocationTargetException',
+  'Sending `onUserDrivenAnimationEnded` with no listeners registered.',
+  'onUserDrivenAnimationEnded',
 ]);
 
 if (typeof global !== 'undefined' && (global as any).ErrorUtils) {

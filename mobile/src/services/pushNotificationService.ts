@@ -11,7 +11,6 @@ const PREF_PUSH_ENABLED_KEY = '@mycircle_pref_push_notifications';
 // Ensure notifications show in foreground as heads-up banners
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
     shouldShowBanner: true,

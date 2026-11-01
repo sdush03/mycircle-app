@@ -20,6 +20,7 @@ import { router, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useScrollTabBarCollapse } from '../hooks/useScrollTabBarCollapse';
 import { useAuthStore } from '../store/authStore';
+import { useLikesStore } from '../store/likesStore';
 import {
   tabEvents,
   TAB_OPEN_PROFILE_SETTINGS,
@@ -473,6 +474,7 @@ export default function ProfileScreen({
                 (Array.isArray(matchedRes.data) ? matchedRes.data : []);
               if (Array.isArray(raw) && raw.length > 0) {
                 evPhotos = raw;
+                useLikesStore.getState().setLikesBatch(raw);
               }
             } catch (_e) {}
 
@@ -579,6 +581,7 @@ export default function ProfileScreen({
                 (Array.isArray(favRes.data) ? favRes.data : []);
               if (Array.isArray(raw) && raw.length > 0) {
                 evFavs = raw.map((p) => ({ ...p, isLiked: true }));
+                useLikesStore.getState().setLikesBatch(evFavs);
               }
             } catch (_e) {}
 
@@ -780,7 +783,7 @@ export default function ProfileScreen({
   };
 
   const handleToggleLike = useCallback(
-    async (item: any) => {
+    async (item: any, explicitLiked?: boolean) => {
       if (!item) return;
       const photoId = item.id;
       if (!photoId) return;
@@ -818,8 +821,8 @@ export default function ProfileScreen({
         freshItem = item;
       }
 
-      const currentlyLiked = typeof freshItem?.isLiked === 'boolean' ? freshItem.isLiked : !!item.isLiked;
-      const nextLiked = !currentlyLiked;
+      const currentlyLiked = useLikesStore.getState().isLiked(photoId, !!(freshItem?.isLiked ?? item.isLiked));
+      const nextLiked = typeof explicitLiked === 'boolean' ? explicitLiked : !currentlyLiked;
 
       // Update in-memory item immediately
       item.isLiked = nextLiked;
@@ -961,35 +964,14 @@ export default function ProfileScreen({
           { slug: targetEventSlug };
 
         const headers = await getEventHeaders(evObj, familyToken);
-        const res = await guestApi.post(
-          `/api/gallery/public/events/${targetEventSlug}/photos/${photoId}/like`,
-          {},
-          { headers }
-        );
+        const storeRes = await useLikesStore.getState().toggleLike({
+          photoId,
+          eventSlug: targetEventSlug,
+          explicitLiked: nextLiked,
+          currentCount: typeof freshItem?.likeCount === 'number' ? freshItem.likeCount : item.likeCount,
+          authHeaders: headers,
+        });
 
-        if (res.data && typeof res.data.liked === 'boolean') {
-          const serverLiked = res.data.liked;
-          const serverCount = typeof res.data.likeCount === 'number' ? res.data.likeCount : undefined;
-
-          // Reconcile if server state differs from optimistic
-          if (serverLiked !== nextLiked) {
-            setEventGroups((prevGroups) =>
-              prevGroups.map((g) => ({
-                ...g,
-                photos: g.photos.map((p) => {
-                  if (p.id === photoId || (photoUrl && (p.fullUri === photoUrl || p.uri === photoUrl))) {
-                    return {
-                      ...p,
-                      isLiked: serverLiked,
-                      ...(typeof serverCount === 'number' ? { likeCount: serverCount } : {}),
-                    };
-                  }
-                  return p;
-                }),
-              }))
-            );
-          }
-        }
         isSelfLikeRef.current = true;
         tabEvents.emit(EVENT_SAVES_UPDATED);
       } catch (err) {

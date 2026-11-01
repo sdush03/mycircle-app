@@ -94,7 +94,6 @@ export default function HomeScreen() {
   const [websiteStories, setWebsiteStories] = useState<any[]>([]);
   const [websiteFilms, setWebsiteFilms] = useState<any[]>([]);
   const [websiteInspirations, setWebsiteInspirations] = useState<any[]>([]);
-  const [likedPhotos, setLikedPhotos] = useState<any[]>([]);
 
   // Hero seen data: tracks first-discovery time + last-seen count per event slug
   // Used for B+D combined expiry: show 7 days from first discovery OR on new photos
@@ -159,15 +158,6 @@ export default function HomeScreen() {
   // Hero fade transition — fades out to 0 then back to 1 whenever the hero type changes
   const heroFadeAnim = React.useRef(new Animated.Value(1)).current;
   const prevHeroTypeRef = React.useRef<string | null>(null);
-
-  // Load liked photos from storage
-  useEffect(() => {
-    AsyncStorage.getItem('@mycircle_liked_photos')
-      .then((stored) => {
-        if (stored) setLikedPhotos(JSON.parse(stored));
-      })
-      .catch(() => {});
-  }, []);
 
   // Filter featured films ONLY (curated website featured films)
   const featuredFilmsOnly = React.useMemo(() => {
@@ -1004,36 +994,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ── 3. My Likes (Conditional: ONLY rendered if user has liked photos) ── */}
-        {likedPhotos.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>MY LIKES</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
-              {likedPhotos.map((photo, idx) => (
-                <Pressable
-                  key={photo.id || idx}
-                  style={styles.likedCard}
-                  onPress={() => {
-                    // Open liked photo preview
-                  }}
-                >
-                  <ExpoImage
-                    source={{ uri: photo.r2Url || photo.url }}
-                    style={styles.likedImage}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                    transition={150}
-                  />
-                  <View style={styles.likedBadge}>
-                    <Text style={styles.likedBadgeText}>❤️</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* ── 4. Featured Stories ─────────────────────────────────────────── */}
+        {/* ── 3. Featured Stories ─────────────────────────────────────────── */}
         {websiteStories.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionHeader}>FEATURED STORIES</Text>
@@ -1875,34 +1836,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1.5,
     color: '#a07850',
-  },
-  likedCard: {
-    width: 130,
-    height: 170,
-    marginRight: 14,
-    position: 'relative',
-    backgroundColor: '#f9fafb',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  likedImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  likedBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(28, 26, 24, 0.65)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  likedBadgeText: {
-    fontSize: 11,
   },
   filmCard: {
     width: width * 0.84,

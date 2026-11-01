@@ -215,7 +215,7 @@ function VideoPlayerView({
         }
       }
 
-      if (typeof payload?.currentTime === 'number') setCurrentTimeSec(cur);
+      if (typeof cur === 'number' && !isNaN(cur)) setCurrentTimeSec(cur);
 
       lastTimeRef.current = cur;
 

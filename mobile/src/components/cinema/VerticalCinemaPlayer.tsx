@@ -156,7 +156,6 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
     resetControlsTimer();
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
     };
   }, [resetControlsTimer]);
 
@@ -204,6 +203,8 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
 
   useEffect(() => {
     return () => {
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
       if (zoomToastTimerRef.current) clearTimeout(zoomToastTimerRef.current);
     };
   }, []);
@@ -402,33 +403,27 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
 
   const handleScrubEnd = useCallback(
     (x: number) => {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setActiveScrubSec(null);
       const t = getTimeFromX(x);
       lastScrubTimeRef.current = t;
-      setActiveScrubSec(t);
       onSeekEnd(t);
       resetControlsTimer();
-      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
-      scrubReleaseTimerRef.current = setTimeout(() => {
-        setActiveScrubSec(null);
-      }, 400);
     },
     [getTimeFromX, onSeekEnd, resetControlsTimer]
   );
 
   const handleScrubFinalize = useCallback(() => {
     if (isScrubbingRef.current) {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setActiveScrubSec(null);
       const t = lastScrubTimeRef.current;
-      setActiveScrubSec(t);
       onSeekEnd(t);
       resetControlsTimer();
-      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
-      scrubReleaseTimerRef.current = setTimeout(() => {
-        setActiveScrubSec(null);
-      }, 400);
     }
   }, [onSeekEnd, resetControlsTimer]);
 
@@ -472,7 +467,7 @@ export const VerticalCinemaPlayer: React.FC<VerticalCinemaPlayerProps> = ({
   };
 
   // ── Progress calculations ──────────────────────────────────────────────────
-  const displayTimeSec = activeScrubSec !== null ? activeScrubSec : currentTimeSec;
+  const displayTimeSec = isScrubbing && activeScrubSec !== null ? activeScrubSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTimeSec / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
 

@@ -129,35 +129,29 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
 
   const jsOnEnd = useCallback(
     (localX: number) => {
+      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
       const w = trackWidthRef.current;
       const dur = durationRef.current;
       const t = w > 0 && dur > 0 ? (Math.max(0, Math.min(w, localX)) / w) * dur : 0;
       isDraggingRef.current = false;
       lastDragTimeRef.current = t;
       setIsDragging(false);
-      setActiveDragSec(t);
+      setActiveDragSec(null);
       onSeekEnd(t);
       onScrubEnd?.();
-      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
-      releaseTimerRef.current = setTimeout(() => {
-        setActiveDragSec(null);
-      }, 400);
     },
     [onSeekEnd, onScrubEnd],
   );
 
   const jsOnFinalize = useCallback(() => {
     if (isDraggingRef.current) {
+      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
       isDraggingRef.current = false;
       setIsDragging(false);
+      setActiveDragSec(null);
       const t = lastDragTimeRef.current;
-      setActiveDragSec(t);
       onSeekEnd(t);
       onScrubEnd?.();
-      if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);
-      releaseTimerRef.current = setTimeout(() => {
-        setActiveDragSec(null);
-      }, 400);
     }
   }, [onSeekEnd, onScrubEnd]);
 
@@ -197,7 +191,7 @@ export const CinemaScrubber: React.FC<CinemaScrubberProps> = ({
 
   const scrubGesture = buildGesture();
 
-  const displayTime = activeDragSec !== null ? activeDragSec : currentTimeSec;
+  const displayTime = isDragging && activeDragSec !== null ? activeDragSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTime / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
 

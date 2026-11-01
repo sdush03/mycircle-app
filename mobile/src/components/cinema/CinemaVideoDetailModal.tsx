@@ -56,6 +56,7 @@ import { ScreenCastButton } from './ScreenCastButton';
 import { ComingSoonDrawer } from './ComingSoonDrawer';
 import { getAppShareUrl } from '../../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../utils/screenCapture';
+import { useLikesStore } from '../../store/likesStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -80,9 +81,10 @@ interface CinemaVideoDetailModalProps {
   eventTitle?: string;
   onClose: () => void;
   onPlayVideo: (video: CinemaVideoItem, resumeTimeSec?: number) => void;
-  onToggleLike?: (video: CinemaVideoItem) => void;
+  onToggleLike?: (video: CinemaVideoItem, explicitLiked?: boolean) => void;
   isFromContinueWatching?: boolean;
   allowDownloads?: boolean;
+  eventSlug?: string;
 }
 
 function formatDuration(sec?: number): string {
@@ -563,7 +565,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   }, [isPortrait]);
   const [comingSoonDrawerVideo, setComingSoonDrawerVideo] = useState<CinemaVideoItem | null>(null);
   const [activeTab, setActiveTab] = useState<'more' | 'trailers'>('more');
-  const [isLiked, setIsLiked] = useState<boolean>(false);
+  const videoId = activeVideo?.id != null ? String(activeVideo.id) : null;
+  const storeLiked = useLikesStore((s) => (videoId ? s.likes[videoId] : undefined));
+  const isLiked = typeof storeLiked === 'boolean' ? storeLiked : Boolean(activeVideo?.isLiked);
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'downloaded'>('idle');
 
   // Screen capture protection: prevent screen recording / screenshots when video downloads are blocked
@@ -690,10 +694,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
     }
   }, [initialVideo, eventTitle]);
 
-  // Sync like & download state when activeVideo changes, and subscribe to real download completion
+  // Sync download state when activeVideo changes, and subscribe to real download completion
   useEffect(() => {
     if (!activeVideo) return;
-    setIsLiked(Boolean(activeVideo.isLiked));
 
     const vUrl = activeVideo.cleanVideoUrl;
     if (!vUrl) {
@@ -1111,9 +1114,9 @@ export const CinemaVideoDetailModal: React.FC<CinemaVideoDetailModalProps> = ({
   const handleToggleRate = () => {
     if (!activeVideo) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    setIsLiked((prev) => !prev);
+    const next = !isLiked;
     if (onToggleLike) {
-      onToggleLike(activeVideo);
+      onToggleLike(activeVideo, next);
     }
   };
 

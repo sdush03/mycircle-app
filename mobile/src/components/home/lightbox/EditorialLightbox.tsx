@@ -39,6 +39,7 @@ import { savesService } from '../../../services/savesService';
 import { analyticsService } from '../../../services/analyticsService';
 import { tabEvents, EVENT_SAVES_UPDATED, EVENT_PHOTO_LIKED } from '../../../lib/tabEvents';
 import { API_BASE_URL } from '../../../services/api';
+import { useLikesStore } from '../../../store/likesStore';
 import { getAppShareUrl } from '../../../utils/deepLink';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync } from '../../../utils/screenCapture';
 import {
@@ -93,6 +94,7 @@ export interface EditorialLightboxProps {
   storyId?: string;
   storySlug?: string;
   onPlayVideo?: (item: any) => void;
+  onLoadMore?: () => void;
 }
 
 export function EditorialLightbox({
@@ -116,6 +118,7 @@ export function EditorialLightbox({
   storyId,
   storySlug,
   onPlayVideo,
+  onLoadMore,
 }: EditorialLightboxProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -445,8 +448,12 @@ export function EditorialLightbox({
     : '';
 
   const photoKey = String(currentItem?.id || currentUrl);
+  const currentPhotoId = currentItem?.id != null ? String(currentItem.id) : null;
+  const storeLiked = useLikesStore((s) => (currentPhotoId ? s.likes[currentPhotoId] : undefined));
   const isSaved = onToggleLike
-    ? (optimisticLikes[photoKey] !== undefined ? optimisticLikes[photoKey] : !!currentItem?.isLiked)
+    ? (typeof storeLiked === 'boolean'
+        ? storeLiked
+        : (optimisticLikes[photoKey] !== undefined ? optimisticLikes[photoKey] : !!currentItem?.isLiked))
     : onUnsave
       ? !removedUrls.has(currentUrl)
       : savedUrls.has(currentUrl);
@@ -491,6 +498,10 @@ export function EditorialLightbox({
       const nextLiked = !wasLiked;
       const targetLabel = likeTargetName || 'My Favourites';
 
+      // Safe handling for unliking in Favorites view
+      const isFavouritesView = likeTargetName === 'My Favourites' || (subtitle && subtitle.includes('FAVOURITES'));
+      const isLastFavorite = !nextLiked && isFavouritesView && (images.length <= 1 || (typeof totalCount === 'number' && totalCount <= 1));
+
       // 1. Immediately turn red heart on or off in Lightbox with zero latency!
       setOptimisticLikes((prev) => ({ ...prev, [photoKey]: nextLiked }));
 
@@ -506,6 +517,11 @@ export function EditorialLightbox({
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         } catch {}
         showToast(`Removed from ${targetLabel}`);
+      }
+
+      // If unliking the sole item in favorites, close lightbox smoothly so user isn't stuck in empty black modal
+      if (isLastFavorite) {
+        handleClose();
       }
 
       // 3. Dispatch to parent handler & API
@@ -1000,6 +1016,9 @@ export function EditorialLightbox({
                   const nextIdx = Math.round(e.nativeEvent.contentOffset.x / (width + 18));
                   if (nextIdx >= 0 && nextIdx < images.length) {
                     setActiveIdx(nextIdx);
+                    if (onLoadMore && (nextIdx >= images.length - 15 || images[nextIdx]?.isSkeleton)) {
+                      onLoadMore();
+                    }
                   }
                   resetAutoHideTimer();
                 }}
@@ -1118,7 +1137,8 @@ export function EditorialLightbox({
                 <View style={{ alignItems: 'center', width: '100%' }}>
                   {/* High-Fashion Format Counter: e.g. "01 // 180" */}
                   {(() => {
-                    const displayTotal = typeof totalCount === 'number' && totalCount > 0 ? totalCount : images.length;
+                    const rawTotal = typeof totalCount === 'number' && totalCount > 0 ? totalCount : images.length;
+                    const displayTotal = Math.max(rawTotal, activeIdx + 1);
                     return (
                       <View style={styles.lightboxCounterContainer}>
                         <Text style={styles.lightboxCounterCurrent}>

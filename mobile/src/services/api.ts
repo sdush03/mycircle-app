@@ -62,6 +62,22 @@ api.interceptors.request.use(
   }
 );
 
+function decodeJwtRole(token: string): string | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4) {
+      base64 += '=';
+    }
+    const decoded = typeof atob === 'function' ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+    const parsed = JSON.parse(decoded);
+    return parsed?.role || (parsed?.roles && parsed.roles[0]) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Handle API responses — auto-refresh token if present, and auto-logout on 401 when session expires
 api.interceptors.response.use(
   (response) => {
@@ -82,10 +98,12 @@ api.interceptors.response.use(
     const refreshedToken = response.headers?.['x-refreshed-token'];
     if (refreshedToken && typeof refreshedToken === 'string') {
       const currentToken = useAuthStore.getState().token;
-      // Only overwrite if the current stored token is a guest token (not a family token)
-      // to avoid accidentally replacing a global family session with an event-scoped guest token.
+      // Guard: NEVER overwrite a global family session token with an event-scoped guest token.
       if (currentToken && currentToken !== refreshedToken) {
-        useAuthStore.getState().updateToken(refreshedToken).catch(() => {});
+        const currentRole = decodeJwtRole(currentToken);
+        if (currentRole !== 'family') {
+          useAuthStore.getState().updateToken(refreshedToken).catch(() => {});
+        }
       }
     }
 

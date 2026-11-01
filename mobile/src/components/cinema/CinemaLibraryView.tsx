@@ -75,6 +75,8 @@ interface CinemaLibraryViewProps {
   scrollY?: SharedValue<number>;
   allowDownloads?: boolean;
   hasFullAccess?: boolean;
+  eventSlug?: string;
+  onToggleLike?: (video: any, explicitLiked?: boolean) => void;
 }
 
 
@@ -300,6 +302,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
   scrollY,
   allowDownloads = true,
   hasFullAccess = true,
+  eventSlug,
+  onToggleLike,
 }) => {
   const insets = useSafeAreaInsets();
   const internalScrollY = useSharedValue(0);
@@ -939,6 +943,8 @@ export const CinemaLibraryView: React.FC<CinemaLibraryViewProps> = ({
           onSelectVideo(video, resumeTimeSec);
         }}
         allowDownloads={allowDownloads}
+        eventSlug={eventSlug}
+        onToggleLike={onToggleLike}
       />
 
       {/* 6. In-Production Teaser Bottom Drawer */}

@@ -175,10 +175,13 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   const [trackWidth, setTrackWidth] = useState(0);
 
   // ── Hide Status Bar while cinema is active ─────────────────────────────────
+  // ── Hide Status Bar while cinema is active ─────────────────────────────────
   useEffect(() => {
     StatusBar.setHidden(true, 'fade');
     return () => {
       StatusBar.setHidden(false, 'fade');
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
     };
   }, []);
 
@@ -319,33 +322,27 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
 
   const handleScrubEnd = useCallback(
     (x: number) => {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setActiveScrubSec(null);
       const t = getTimeFromX(x);
       lastScrubTimeRef.current = t;
-      setActiveScrubSec(t);
       onSeekEnd(t);
       resetControlsTimer();
-      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
-      scrubReleaseTimerRef.current = setTimeout(() => {
-        setActiveScrubSec(null);
-      }, 400);
     },
     [getTimeFromX, onSeekEnd, resetControlsTimer]
   );
 
   const handleScrubFinalize = useCallback(() => {
     if (isScrubbingRef.current) {
+      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setActiveScrubSec(null);
       const t = lastScrubTimeRef.current;
-      setActiveScrubSec(t);
       onSeekEnd(t);
       resetControlsTimer();
-      if (scrubReleaseTimerRef.current) clearTimeout(scrubReleaseTimerRef.current);
-      scrubReleaseTimerRef.current = setTimeout(() => {
-        setActiveScrubSec(null);
-      }, 400);
     }
   }, [onSeekEnd, resetControlsTimer]);
 
@@ -379,7 +376,7 @@ export const HorizontalCinemaPlayer: React.FC<HorizontalCinemaPlayerProps> = ({
   };
 
   // ── Progress calculations ──────────────────────────────────────────────────
-  const displayTimeSec = activeScrubSec !== null ? activeScrubSec : currentTimeSec;
+  const displayTimeSec = isScrubbing && activeScrubSec !== null ? activeScrubSec : currentTimeSec;
   const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, displayTimeSec / durationSec)) : 0;
   const bufferedRatio = durationSec > 0 ? Math.min(1, Math.max(0, bufferedSec / durationSec)) : 0;
 

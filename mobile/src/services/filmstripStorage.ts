@@ -105,6 +105,13 @@ export async function getStoredFilmstrip(
         return null;
       }
     }
+    const lastKf = data.keyframes[data.keyframes.length - 1];
+    if (lastKf?.thumbnailUrl?.startsWith('file:')) {
+      const checkLast = await FileSystem.getInfoAsync(lastKf.thumbnailUrl);
+      if (!checkLast.exists) {
+        return null;
+      }
+    }
 
     // Pre-warm all verified local keyframe files into expo-image memory cache immediately
     const localUris = data.keyframes.map((k) => k.thumbnailUrl).filter(Boolean);
@@ -163,8 +170,11 @@ export async function persistFilmstripKeyframes(
             thumbnailUrl: downloadRes.uri,
             localPath: downloadRes.uri,
           };
+        } else {
+          await FileSystem.deleteAsync(localPath, { idempotent: true });
         }
       } catch {
+        try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch {}
         // Fallback to remote 150px URL if download fails
       }
 

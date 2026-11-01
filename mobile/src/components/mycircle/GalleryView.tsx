@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -63,6 +63,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
+import { useLikesStore } from '../../store/likesStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import api, { guestApi } from '../../services/api';
 import { MasonryCard, clearRevealedPhotosCache } from '../home/lightbox/components/MasonryCard';
@@ -111,17 +112,15 @@ function getPhotoScrollOffset(
 
   // Approximate ~260px per row as reliable fallback if contentHeight is unmeasured
   const estimatedTotalH = safeHero + 107 + Math.ceil(safeTotal / 2) * 260 + 140;
-  const effectiveContentHeight = Math.max(safeContent, estimatedTotalH);
+  const effectiveContentHeight = safeContent > 0 ? safeContent : estimatedTotalH;
   const maxScroll = Math.max(0, effectiveContentHeight - safeViewport);
   const safeIndex = Math.max(0, Math.min(safeTotal - 1, photoIndex || 0));
 
-  if (safeIndex >= safeTotal - 1) {
-    return maxScroll;
-  }
   if (safeIndex <= 0) {
     return 0;
   }
 
+  // Prioritize actual physical card offset when available:
   if (photoOffsets && photoOffsets.length > 0) {
     const lowerIndex = Math.floor(safeIndex);
     const upperIndex = Math.ceil(safeIndex);
@@ -138,6 +137,11 @@ function getPhotoScrollOffset(
     if (upperTop !== undefined && Math.abs(upperIndex - safeIndex) < 2) {
       return Math.min(maxScroll, Math.max(0, upperTop - safeViewport * 0.25));
     }
+  }
+
+  // Fallback when actual offset is genuinely unavailable:
+  if (safeIndex >= safeTotal - 1) {
+    return maxScroll;
   }
 
   const progress = safeIndex / Math.max(1, safeTotal - 1);
@@ -160,7 +164,7 @@ function getPhotoIndexAtScrollOffset(
   const safeHero = typeof heroHeight === 'number' && heroHeight > 0 ? heroHeight : 560;
 
   const estimatedTotalH = safeHero + 107 + Math.ceil(safeTotal / 2) * 260 + 140;
-  const effectiveContentHeight = Math.max(safeContent, estimatedTotalH);
+  const effectiveContentHeight = safeContent > 0 ? safeContent : estimatedTotalH;
   const maxScroll = Math.max(0, effectiveContentHeight - safeViewport);
   const gridSpan = Math.max(1, maxScroll - safeHero);
 
@@ -190,7 +194,7 @@ function getPhotoIndexAtScrollOffset(
     const chosenTop = photoEntries[chosen * 2];
     // ONLY snap to a rendered card if it is actually within 1.5 viewport heights of targetY.
     // If further away, targetY is in an unloaded gap, so fall through to proportional estimation!
-    if (typeof chosenTop === 'number' && Math.abs(chosenTop - targetY) <= safeViewport * 1.5) {
+    if (typeof chosenTop === 'number' && !isNaN(chosenTop)) {
       const foundIdx = photoEntries[chosen * 2 + 1];
       if (typeof foundIdx === 'number' && !isNaN(foundIdx)) {
         return Math.min(maxPhotoIndex, foundIdx);
@@ -362,31 +366,93 @@ function mapPhotoItem(p: any): Photo {
 }
 
 /**
- * Injects curated cinema videos into photo grids (ALL and HIGHLIGHTS):
- * 1. Director's Cut: inserted at a stable random index within top 20 items (ONLY if not coming soon)
- * 2. Candid Diaries: inserted at a stable random index within top 30 items (ONLY if not coming soon)
- * 3. Performance & Full Film: NEVER injected outside of Cinema (strictly only in Cinema)
+ * Safely merges two photo arrays by stable identifier (id or r2Url/uri),
+ * preserving original base ordering and appending any non-duplicate incoming items.
  */
-function injectCuratedCinemaVideos(
-  basePhotos: Photo[],
-  cinemaVideos: any[],
-  seedKey: string
-): Photo[] {
-  // 1. Filter pure photos (exclude any items that are already cinema videos, coming soon, or video files)
-  const isCinemaOrVideo = (p: any) => {
-    if (String(p.tabName || '').trim().toUpperCase() === 'CINEMA') return true;
-    if (hasActualVideoFile(p)) return true;
-    return false;
-  };
-  const photosOnly = (basePhotos || []).filter((p) => !isCinemaOrVideo(p) && !isVideoComingSoon(p));
+function mergePhotoArrays(base: Photo[], incoming: Photo[]): Photo[] {
+  if (!base || base.length === 0) return incoming || [];
+  if (!incoming || incoming.length === 0) return base || [];
 
-  if (!cinemaVideos || cinemaVideos.length === 0) {
-    return photosOnly;
+  const seen = new Set<string>();
+  const result: Photo[] = [];
+
+  for (const item of base) {
+    if (!item) continue;
+    const key = String(item.id != null ? item.id : (item.r2Url || item.uri || ''));
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
   }
 
-  // 2. Identify eligible Director's Cut and Candid Diaries (STRICTLY when NOT coming soon)
+  for (const item of incoming) {
+    if (!item) continue;
+    const key = String(item.id != null ? item.id : (item.r2Url || item.uri || ''));
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Case-insensitive, whitespace-tolerant lookup for tab photo counts from backend responses.
+ * Returns the exact integer count if present, or undefined if missing/unspecified.
+ */
+function getKnownTabCount(tabCountsObj: any, tabName: string): number | undefined {
+  if (!tabCountsObj || typeof tabCountsObj !== 'object') return undefined;
+  const upper = tabName.trim().toUpperCase();
+  // 1. Direct uppercase match
+  if (typeof tabCountsObj[upper] === 'number') return tabCountsObj[upper];
+  // 2. Direct trimmed match
+  const trimmed = tabName.trim();
+  if (typeof tabCountsObj[trimmed] === 'number') return tabCountsObj[trimmed];
+  // 3. Case-insensitive key iteration
+  for (const key of Object.keys(tabCountsObj)) {
+    if (key.trim().toUpperCase() === upper && typeof tabCountsObj[key] === 'number') {
+      return tabCountsObj[key];
+    }
+  }
+  return undefined;
+}
+
+function logPaginationDiag(source: 'loadMore' | 'catchup', eventId: string, tab: string, offset: number, limit: number, received: number, nextContiguous: number) {
+  if (__DEV__) {
+    console.log(`[PAGINATION 📊 ${source}] event: ${eventId} | tab: ${tab} | req: offset=${offset}, limit=${limit} | received: ${received} | nextContiguous: ${nextContiguous}`);
+  }
+}
+
+function logNavigationDiag(source: string, navId: number, targetIdx: number, targetY: number, currentY: number, ignored: boolean) {
+  if (__DEV__) {
+    console.log(`[NAV SCROLL 📍] source: ${source} (navId: #${navId}) | targetIdx: #${targetIdx} | targetY: ${Math.round(targetY)}px | curY: ${Math.round(currentY)}px | ignored: ${ignored}`);
+  }
+}
+
+function logFilmstripDiag(action: string, kfIdx: number, details?: string) {
+  if (__DEV__) {
+    console.log(`[FILMSTRIP 🎞️] #${kfIdx} -> ${action}${details ? ` | ${details}` : ''}`);
+  }
+}
+
+/**
+ * Extracts eligible curated cinema videos (Director's Cut and Candid Diaries):
+ * - MUST have actual video file and NOT be coming soon
+ * - Performance and Full Film are STRICTLY excluded (Cinema only)
+ * - Shared across grid injection, tab badges, drawer counts, and lightbox navigation
+ */
+export function getEligibleCuratedCinemaVideos(cinemaVideos: any[]): {
+  directorsCutVideos: any[];
+  candidDiariesVideos: any[];
+  eligibleTotal: number;
+} {
   const directorsCutVideos: any[] = [];
   const candidDiariesVideos: any[] = [];
+
+  if (!cinemaVideos || cinemaVideos.length === 0) {
+    return { directorsCutVideos, candidDiariesVideos, eligibleTotal: 0 };
+  }
 
   cinemaVideos.forEach((v: any) => {
     // Both Director's Cut and Candid Diaries MUST NOT be Coming Soon and MUST have actual video file
@@ -415,6 +481,43 @@ function injectCuratedCinemaVideos(
       candidDiariesVideos.push(v);
     }
   });
+
+  return {
+    directorsCutVideos,
+    candidDiariesVideos,
+    eligibleTotal: directorsCutVideos.length + candidDiariesVideos.length,
+  };
+}
+
+/**
+ * Injects curated cinema videos into photo grids (ALL and HIGHLIGHTS):
+ * 1. Director's Cut: inserted at a stable random index within top 20 items (ONLY if not coming soon)
+ * 2. Candid Diaries: inserted at a stable random index within top 30 items (ONLY if not coming soon)
+ * 3. Performance & Full Film: NEVER injected outside of Cinema (strictly only in Cinema)
+ */
+function injectCuratedCinemaVideos(
+  basePhotos: Photo[],
+  cinemaVideos: any[],
+  seedKey: string
+): Photo[] {
+  // 1. Filter pure photos (exclude any items that are already cinema videos, coming soon, or video files)
+  const isCinemaOrVideo = (p: any) => {
+    if (String(p.tabName || '').trim().toUpperCase() === 'CINEMA') return true;
+    if (hasActualVideoFile(p)) return true;
+    return false;
+  };
+  const photosOnly = (basePhotos || []).filter((p) => !isCinemaOrVideo(p) && !isVideoComingSoon(p));
+
+  if (!cinemaVideos || cinemaVideos.length === 0) {
+    return photosOnly;
+  }
+
+  // 2. Identify eligible Director's Cut and Candid Diaries (reusing shared eligibility rules)
+  const { directorsCutVideos, candidDiariesVideos } = getEligibleCuratedCinemaVideos(cinemaVideos);
+
+  if (directorsCutVideos.length === 0 && candidDiariesVideos.length === 0) {
+    return photosOnly;
+  }
 
   const result = [...photosOnly];
 
@@ -502,13 +605,18 @@ const loupeCardStyles = StyleSheet.create({
 interface ReelSlotProps {
   targetIdx: number;
   uri: string;
+  fallbackUri?: string;
   photoIndex: number;
+  isWithinWindow?: boolean;
   continuousPos: SharedValue<number>;
   activeDirection: SharedValue<number>;
   peekTopAnim: SharedValue<number>;
   peekBottomAnim: SharedValue<number>;
   scrollY: SharedValue<number>;
   photoScrollOffsetsShared: SharedValue<number[]>;
+  photoScrollHeightsShared?: SharedValue<number[]>;
+  photoAvailabilityShared?: SharedValue<number[]>;
+  layoutHeightShared?: SharedValue<number>;
   screenHeight: number;
   numColumns: number;
 }
@@ -516,16 +624,77 @@ interface ReelSlotProps {
 const ReelSlot: React.FC<ReelSlotProps> = React.memo(({
   targetIdx,
   uri,
+  fallbackUri,
   photoIndex,
+  isWithinWindow = true,
   continuousPos,
   activeDirection,
   peekTopAnim,
   peekBottomAnim,
   scrollY,
   photoScrollOffsetsShared,
+  photoScrollHeightsShared,
+  photoAvailabilityShared,
+  layoutHeightShared,
   screenHeight,
   numColumns,
 }) => {
+  const [prevUri, setPrevUri] = useState<string>(uri);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [generation, setGeneration] = useState<number>(1);
+  const [isFailed, setIsFailed] = useState<boolean>(false);
+  const loadedTokenShared = useSharedValue<string>('');
+
+  // Derived state during render:
+  // When prop uri changes, clear failure and advance the generation token.
+  // Standard React pattern for adjusting state when props change (no effects, no SharedValue mutation).
+  if (prevUri !== uri) {
+    setPrevUri(uri);
+    setFailedUri(null);
+    setIsFailed(false);
+    setGeneration((g) => g + 1);
+  }
+
+  const isFallingBack = failedUri !== null && failedUri === uri && Boolean(fallbackUri && fallbackUri.startsWith('http'));
+  const activeUri = isFallingBack ? (fallbackUri as string) : uri;
+  const activeToken = `${targetIdx}::${activeUri}::${generation}`;
+
+  // Update current-token ref strictly after commit in useLayoutEffect, never mutating during render!
+  const currentTokenRef = useRef<string>(activeToken);
+  useLayoutEffect(() => {
+    currentTokenRef.current = activeToken;
+  }, [activeToken]);
+
+  const hasMountedRef = useRef(isWithinWindow);
+  if (isWithinWindow && !hasMountedRef.current) {
+    hasMountedRef.current = true;
+  }
+  const shouldRenderImage = isWithinWindow || hasMountedRef.current;
+
+  const handleImageLoad = useCallback(() => {
+    // Stale load guard: ignore if callback originated from an obsolete image instance
+    if (currentTokenRef.current !== activeToken) {
+      return;
+    }
+    setIsFailed(false);
+    loadedTokenShared.value = activeToken;
+  }, [activeToken, loadedTokenShared]);
+
+  const handleImageError = useCallback(() => {
+    // Stale error guard: ignore if callback originated from an obsolete image instance
+    if (currentTokenRef.current !== activeToken) {
+      return;
+    }
+    loadedTokenShared.value = '';
+    // If local file failed or 150px resizer failed, try fallback remote CDN thumbnail
+    if (fallbackUri && activeUri !== fallbackUri && fallbackUri.startsWith('http')) {
+      setFailedUri(activeUri);
+      setGeneration((g) => g + 1);
+    } else {
+      setIsFailed(true);
+    }
+  }, [activeToken, fallbackUri, activeUri, loadedTokenShared]);
+
   const animatedStyle = useAnimatedStyle(() => {
     'worklet';
     const rawPos = continuousPos.value;
@@ -534,17 +703,11 @@ const ReelSlot: React.FC<ReelSlotProps> = React.memo(({
     const u = isNaN(rawU) ? 0 : rawU;
     const dist = Math.abs(u);
 
-    // If outside visible range (|u| >= 2.5), collapse and hide
+    // If outside visible range (|u| >= 2.5), collapse and hide immediately
     if (dist >= 2.5) {
       return {
+        display: 'none',
         opacity: 0,
-        borderWidth: 0,
-        borderColor: 'transparent',
-        transform: [
-          { translateY: u > 0 ? 122 : -122 },
-          { scale: 0.01 },
-          { translateX: 0 },
-        ],
       };
     }
 
@@ -591,22 +754,45 @@ const ReelSlot: React.FC<ReelSlotProps> = React.memo(({
       op = op * interpolate(dirFactor, [0, 1], [0, 1], 'clamp');
     }
 
-    const offsets = photoScrollOffsetsShared.value;
-    const photoTop = (photoIndex >= 0 && photoIndex < offsets.length)
-      ? offsets[photoIndex]
-      : Number.NaN;
-    const cardH = getEstimatedRowHeight(numColumns, width);
-    const viewTop = scrollY.value;
-    const viewBottom = viewTop + screenHeight;
-    const isOnScreen = typeof photoTop === 'number' && !isNaN(photoTop)
-      && photoTop < viewBottom
-      && (photoTop + cardH) > viewTop;
+    const isCenter = dist < 0.5;
+
+    // Center outline condition:
+    // 1. Slot is at the center position (dist < 0.5)
+    // 2. Keyframe thumbnail itself has actually loaded successfully (isImageLoaded.value === true)
+    // 3. Corresponding photo in the gallery is present, available (not skeleton), and intersects visible viewport
+    let isPhotoOnScreen = false;
+    if (isCenter && photoIndex >= 0) {
+      const offsets = photoScrollOffsetsShared.value;
+      if (offsets && photoIndex < offsets.length) {
+        const photoTop = offsets[photoIndex];
+        if (typeof photoTop === 'number' && !isNaN(photoTop) && photoTop >= 0) {
+          const heights = photoScrollHeightsShared?.value;
+          const photoH = (heights && typeof heights[photoIndex] === 'number')
+            ? heights[photoIndex]
+            : getEstimatedRowHeight(numColumns, width);
+          const photoBottom = photoTop + photoH;
+          const viewTop = scrollY.value;
+          const viewH = (layoutHeightShared && layoutHeightShared.value > 0) ? layoutHeightShared.value : screenHeight;
+          const viewBottom = viewTop + viewH;
+          const isIntersecting = (photoTop < viewBottom) && (photoBottom > viewTop);
+          const avail = photoAvailabilityShared?.value;
+          // Fail-closed: missing bitmap, incomplete bitmap, or out-of-range index is strictly unavailable
+          const isAvailable = Boolean(avail && photoIndex < avail.length && avail[photoIndex] === 1);
+          isPhotoOnScreen = isIntersecting && isAvailable;
+        }
+      }
+    }
+
+    const isValidThumbnail = !isFailed && Boolean(activeUri) && !activeUri.startsWith('placeholder-');
+    const isThumbnailRendered = isValidThumbnail && (loadedTokenShared.value === activeToken);
+    const showHighlight = isCenter && isThumbnailRendered && isPhotoOnScreen;
 
     return {
+      display: 'flex',
       opacity: op,
       zIndex: Math.round(10 - dist * 3),
-      borderColor: isOnScreen ? '#d4af37' : 'transparent',
-      borderWidth: isOnScreen ? 1.5 : 0,
+      borderColor: showHighlight ? '#d4af37' : 'transparent',
+      borderWidth: showHighlight ? 1.5 : 0,
       transform: [
         { translateY },
         { scale: Math.max(0.01, finalScale) },
@@ -617,27 +803,61 @@ const ReelSlot: React.FC<ReelSlotProps> = React.memo(({
 
   return (
     <Animated.View style={[loupeCardStyles.squareCard, animatedStyle]}>
-      <Image
-        source={{ uri }}
-        style={StyleSheet.absoluteFillObject}
-        contentFit="cover"
-        cachePolicy="memory-disk"
-        priority="high"
-        recyclingKey={uri}
-        transition={0}
-      />
+      {(!shouldRenderImage || activeUri.startsWith('placeholder-') || isFailed) ? (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#18181b', justifyContent: 'center', alignItems: 'center' }]}>
+          {isFailed ? (
+            <Ionicons name="image-outline" size={14} color="rgba(255,255,255,0.2)" />
+          ) : null}
+        </View>
+      ) : (
+        <Image
+          key={activeToken}
+          source={{ uri: activeUri }}
+          style={StyleSheet.absoluteFillObject}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          priority="high"
+          recyclingKey={activeToken}
+          transition={0}
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+        />
+      )}
     </Animated.View>
+  );
+}, (prev, next) => {
+  return (
+    prev.targetIdx === next.targetIdx &&
+    prev.uri === next.uri &&
+    prev.fallbackUri === next.fallbackUri &&
+    prev.photoIndex === next.photoIndex &&
+    prev.isWithinWindow === next.isWithinWindow &&
+    prev.numColumns === next.numColumns &&
+    prev.screenHeight === next.screenHeight &&
+    prev.continuousPos === next.continuousPos &&
+    prev.activeDirection === next.activeDirection &&
+    prev.peekTopAnim === next.peekTopAnim &&
+    prev.peekBottomAnim === next.peekBottomAnim &&
+    prev.scrollY === next.scrollY &&
+    prev.photoScrollOffsetsShared === next.photoScrollOffsetsShared &&
+    prev.photoScrollHeightsShared === next.photoScrollHeightsShared &&
+    prev.photoAvailabilityShared === next.photoAvailabilityShared &&
+    prev.layoutHeightShared === next.layoutHeightShared
   );
 });
 
 interface SpatialFilmLoupeCardProps {
   thumbnails: string[];
+  fallbackThumbnails?: string[];
   keyframeIndices?: number[];
   scrollY: SharedValue<number>;
   totalPhotosShared: SharedValue<number>;
   contentHeightShared?: SharedValue<number>;
   photoScrollOffsetsShared: SharedValue<number[]>;
+  photoScrollHeightsShared?: SharedValue<number[]>;
+  photoAvailabilityShared?: SharedValue<number[]>;
   photoScrollEntriesShared: SharedValue<number[]>;
+  layoutHeightShared?: SharedValue<number>;
   loupeOpacity: SharedValue<number>;
   isDraggingLoupeShared: SharedValue<boolean>;
   scrollDirectionShared?: SharedValue<number>;
@@ -647,17 +867,22 @@ interface SpatialFilmLoupeCardProps {
   screenHeight: number;
   onPressCard?: (index: number) => void;
   onDragEnd?: (finalScrollY: number, targetPhotoIndex?: number) => void;
+  onScrubStart?: () => void;
   numColumns?: number;
 }
 
 const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   thumbnails,
+  fallbackThumbnails,
   keyframeIndices,
   scrollY,
   totalPhotosShared,
   contentHeightShared,
   photoScrollOffsetsShared,
+  photoScrollHeightsShared,
+  photoAvailabilityShared,
   photoScrollEntriesShared,
+  layoutHeightShared,
   loupeOpacity,
   isDraggingLoupeShared,
   scrollDirectionShared,
@@ -667,6 +892,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   screenHeight,
   onPressCard,
   onDragEnd,
+  onScrubStart,
   numColumns = 2,
 }) => {
   const isDragging = useSharedValue(false);
@@ -677,6 +903,16 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   const currentActiveKeyframeShared = useSharedValue(0);
   const continuousPosShared = useSharedValue(0);
   const [canInteract, setCanInteract] = useState(false);
+  const [activeCenterIdx, setActiveCenterIdx] = useState<number>(0);
+  const lastActiveCenterRef = useRef<number>(0);
+
+  const updateActiveCenter = useCallback((idx: number) => {
+    if (Math.abs(idx - lastActiveCenterRef.current) >= 2 || idx === 0 || idx >= (thumbnails.length - 1)) {
+      lastActiveCenterRef.current = idx;
+      setActiveCenterIdx(idx);
+      logFilmstripDiag('window_shift', idx, `window=[${Math.max(0, idx - 3)}..${Math.min(thumbnails.length - 1, idx + 3)}]`);
+    }
+  }, [thumbnails.length]);
 
   // Direction & Peek animation shared values for 4th square (1 = down, -1 = up)
   const internalScrollDir = useSharedValue(1);
@@ -714,8 +950,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     if (!thumbnails || thumbnails.length === 0) return 0;
     if (keyframeIndices && keyframeIndices.length > 1) {
       const lastKfIdx = keyframeIndices.length - 1;
-      if (typeof keyframeIndices[0] === 'number' && photoIdx <= keyframeIndices[0]) return 0;
-      if (typeof keyframeIndices[lastKfIdx] === 'number' && photoIdx >= keyframeIndices[lastKfIdx]) return lastKfIdx;
+      const firstKfPhotoIdx = typeof keyframeIndices[0] === 'number' ? keyframeIndices[0] : 0;
+      const lastKfPhotoIdx = typeof keyframeIndices[lastKfIdx] === 'number' ? keyframeIndices[lastKfIdx] : Math.max(1, totalPhotos - 1);
+
+      if (photoIdx <= firstKfPhotoIdx) return 0;
+      if (photoIdx >= lastKfPhotoIdx) return lastKfIdx;
+
       for (let i = 0; i < lastKfIdx; i++) {
         const kfStart = keyframeIndices[i];
         const kfEnd = keyframeIndices[i + 1];
@@ -725,7 +965,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
           return isNaN(result) ? 0 : result;
         }
       }
-      return 0;
+      return lastKfIdx;
     }
     const safeTotal = Math.max(1, (typeof totalPhotos === 'number' && !isNaN(totalPhotos) ? totalPhotos : 1) - 1);
     const normProgress = Math.max(0, Math.min(1, photoIdx / safeTotal));
@@ -762,6 +1002,26 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
         isLoupeLocked.value = false;
       }
       if (isAwake && !prevIsAwake) {
+        // Immediate sync upon wake-up so the loupe is positioned right at the current photo
+        const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+        const heroHeight = Math.round(screenHeight * 0.70);
+        const curY = scrollY.value;
+        const continuousPhotoIdx = curY <= heroHeight
+          ? 0
+          : getPhotoIndexAtScrollOffset(
+            curY,
+            totalPhotos,
+            photoScrollEntriesShared.value,
+            contentHeightShared?.value || 0,
+            screenHeight,
+            heroHeight,
+          );
+        const continuousKfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+        continuousPosShared.value = continuousKfPos;
+        const initialKfIdx = Math.min(thumbnails.length - 1, Math.max(0, Math.round(continuousKfPos)));
+        currentActiveKeyframeShared.value = initialKfIdx;
+        runOnJS(updateActiveCenter)(initialKfIdx);
+
         const dir = activeDirection.value >= 0 ? 1 : -1;
         enterDirection.value = dir;
         if (dir === 1) {
@@ -794,6 +1054,8 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   useAnimatedReaction(
     () => {
       'worklet';
+      // If loupe is asleep/hidden, don't run worklet tracking!
+      if (loupeOpacity.value <= 0.01) return -1;
       // Do NOT overwrite continuousPosShared while the user is dragging the loupe or while loupe is locked
       if (isDragging.value || isLoupeLocked.value) return -1;
       if (!thumbnails || thumbnails.length === 0) return 0;
@@ -823,156 +1085,181 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
       'worklet';
       if (!isDragging.value && nextIdx >= 0 && prevIdx !== null && nextIdx !== prevIdx) {
         currentActiveKeyframeShared.value = nextIdx;
+        runOnJS(updateActiveCenter)(nextIdx);
       }
     },
-    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared, isLoupeLocked]
+    [thumbnails, keyframeIndices, calcContinuousKfPos, screenHeight, totalPhotosShared, scrollY, contentHeightShared, photoScrollEntriesShared, isLoupeLocked, updateActiveCenter]
   );
 
-  const panGesture = Gesture.Pan()
-    .minPointers(1)
-    .maxPointers(1)
-    .activeOffsetY([-15, 15])
-    .onBegin((e) => {
-      'worklet';
-      if (loupeOpacity.value < 0.5) return;
-      // Set isDragging and lock loupe position so scroll reaction never overwrites it
-      isDragging.value = true;
-      isDraggingLoupeShared.value = true;
-      isLoupeLocked.value = true;
-      loupeOpacity.value = withTiming(1, { duration: 80 });
-      // Capture dragStartProgress here in onBegin (not onStart) to avoid race condition
-      // where animatedContainerStyle is still updating currentCardYShared concurrently.
-      const minY = insetsTop + 75;
-      const maxY = screenHeight - insetsBottom - 145;
-      const trackLength = Math.max(1, maxY - minY);
-      dragStartProgress.value = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
-      dragStartY.value = e.absoluteY;
-    })
-    .onStart((e) => {
-      'worklet';
-      isDragging.value = true;
-      isDraggingLoupeShared.value = true;
-      isLoupeLocked.value = true;
-      loupeOpacity.value = withTiming(1, { duration: 80 });
+  const panGesture = useMemo(() => {
+    return Gesture.Pan()
+      .minPointers(1)
+      .maxPointers(1)
+      .activeOffsetY([-12, 12])
+      .hitSlop({ top: 30, bottom: 30, left: 24, right: 12 })
+      .onBegin((e) => {
+        'worklet';
+        if (onScrubStart) {
+          runOnJS(onScrubStart)();
+        }
+        if (loupeOpacity.value < 0.2) return;
+        // Set isDragging and lock loupe position so scroll reaction never overwrites it
+        isDragging.value = true;
+        isDraggingLoupeShared.value = true;
+        isLoupeLocked.value = true;
+        loupeOpacity.value = withTiming(1, { duration: 80 });
+        // Capture dragStartProgress here in onBegin (not onStart) to avoid race condition
+        // where animatedContainerStyle is still updating currentCardYShared concurrently.
+        const minY = insetsTop + 75;
+        const maxY = screenHeight - insetsBottom - 145;
+        const trackLength = Math.max(1, maxY - minY);
+        dragStartProgress.value = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
+        dragStartY.value = e.absoluteY;
+      })
+      .onStart((e) => {
+        'worklet';
+        if (onScrubStart) {
+          runOnJS(onScrubStart)();
+        }
+        isDragging.value = true;
+        isDraggingLoupeShared.value = true;
+        isLoupeLocked.value = true;
+        loupeOpacity.value = withTiming(1, { duration: 80 });
 
-      if (activeDirection.value === 1) {
-        peekBottomAnim.value = withTiming(1, { duration: 150 });
-      } else {
-        peekTopAnim.value = withTiming(1, { duration: 150 });
-      }
+        if (activeDirection.value === 1) {
+          peekBottomAnim.value = withTiming(1, { duration: 150 });
+        } else {
+          peekTopAnim.value = withTiming(1, { duration: 150 });
+        }
 
-      lastDragYShared.value = e.absoluteY;
+        lastDragYShared.value = e.absoluteY;
 
-      runOnJS(triggerGrabHaptic)();
-    })
-    .onUpdate((e) => {
-      'worklet';
-      if (!isDragging.value) return;
+        runOnJS(triggerGrabHaptic)();
+      })
+      .onUpdate((e) => {
+        'worklet';
+        if (!isDragging.value) return;
 
-      const minY = insetsTop + 75;
-      const maxY = screenHeight - insetsBottom - 145;
-      const trackLength = Math.max(1, maxY - minY);
+        const minY = insetsTop + 75;
+        const maxY = screenHeight - insetsBottom - 145;
+        const trackLength = Math.max(1, maxY - minY);
 
-      const deltaY = e.absoluteY - dragStartY.value;
-      const deltaProgress = deltaY / trackLength;
-      const newProgress = Math.max(0, Math.min(1, dragStartProgress.value + deltaProgress));
+        const deltaY = e.absoluteY - dragStartY.value;
+        const deltaProgress = deltaY / trackLength;
+        const newProgress = Math.max(0, Math.min(1, dragStartProgress.value + deltaProgress));
 
-      currentCardYShared.value = minY + newProgress * trackLength;
+        currentCardYShared.value = minY + newProgress * trackLength;
 
-      // Track drag direction for the 4th peek square
-      const dragDelta = e.absoluteY - lastDragYShared.value;
-      lastDragYShared.value = e.absoluteY;
-      if (dragDelta > 1) {
-        activeDirection.value = 1;
-      } else if (dragDelta < -1) {
-        activeDirection.value = -1;
-      }
+        // Track drag direction for the 4th peek square
+        const dragDelta = e.absoluteY - lastDragYShared.value;
+        lastDragYShared.value = e.absoluteY;
+        if (dragDelta > 1) {
+          activeDirection.value = 1;
+        } else if (dragDelta < -1) {
+          activeDirection.value = -1;
+        }
 
-      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
-      const heroHeight = Math.round(screenHeight * 0.70);
-      const continuousPhotoIdx = newProgress * Math.max(1, totalPhotos - 1);
-      const targetScrollY = getPhotoScrollOffset(
-        continuousPhotoIdx,
-        totalPhotos,
-        photoScrollOffsetsShared.value,
-        contentHeightShared?.value || 0,
-        screenHeight,
-        heroHeight,
-      );
+        const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+        const heroHeight = Math.round(screenHeight * 0.70);
+        const continuousPhotoIdx = newProgress * Math.max(1, totalPhotos - 1);
+        const targetScrollY = getPhotoScrollOffset(
+          continuousPhotoIdx,
+          totalPhotos,
+          photoScrollOffsetsShared.value,
+          contentHeightShared?.value || 0,
+          screenHeight,
+          heroHeight,
+        );
 
-      scrollTo(mainScrollRef, 0, targetScrollY, false);
-      scrollY.value = targetScrollY;
+        scrollTo(mainScrollRef, 0, targetScrollY, false);
+        scrollY.value = targetScrollY;
 
-      // Continuous keyframe position
-      const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
-      continuousPosShared.value = kfPos;
+        // Continuous keyframe position
+        const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+        continuousPosShared.value = kfPos;
 
-      const nextIdx = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
-      if (nextIdx !== currentActiveKeyframeShared.value) {
-        currentActiveKeyframeShared.value = nextIdx;
-      }
-    })
-    .onEnd(() => {
-      'worklet';
-      isDragging.value = false;
-      isDraggingLoupeShared.value = false;
-      // Keep loupe strictly locked at release position so it never snaps during confirmation/fade-out
-      isLoupeLocked.value = true;
-      peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
-      peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+        const nextIdx = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
+        if (nextIdx !== currentActiveKeyframeShared.value) {
+          currentActiveKeyframeShared.value = nextIdx;
+          runOnJS(updateActiveCenter)(nextIdx);
+        }
+      })
+      .onEnd(() => {
+        'worklet';
+        isDragging.value = false;
+        isDraggingLoupeShared.value = false;
+        peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+        peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
 
-      const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
-      const heroHeight = Math.round(screenHeight * 0.70);
+        const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
+        const heroHeight = Math.round(screenHeight * 0.70);
 
-      const minY = insetsTop + 75;
-      const maxY = screenHeight - insetsBottom - 145;
-      const trackLength = Math.max(1, maxY - minY);
-      const finalProgress = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
+        const minY = insetsTop + 75;
+        const maxY = screenHeight - insetsBottom - 145;
+        const trackLength = Math.max(1, maxY - minY);
+        const finalProgress = Math.max(0, Math.min(1, (currentCardYShared.value - minY) / trackLength));
 
-      const continuousPhotoIdx = finalProgress * Math.max(1, totalPhotos - 1);
-      const targetPhotoIndex = Math.max(0, Math.min(totalPhotos - 1, Math.round(continuousPhotoIdx)));
-      const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
-      continuousPosShared.value = kfPos;
-      currentActiveKeyframeShared.value = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
+        const continuousPhotoIdx = finalProgress * Math.max(1, totalPhotos - 1);
+        const targetPhotoIndex = Math.max(0, Math.min(totalPhotos - 1, Math.round(continuousPhotoIdx)));
+        const kfPos = calcContinuousKfPos(continuousPhotoIdx, totalPhotos);
+        continuousPosShared.value = kfPos;
+        const finalKf = Math.min(thumbnails.length - 1, Math.max(0, Math.round(kfPos)));
+        currentActiveKeyframeShared.value = finalKf;
+        runOnJS(updateActiveCenter)(finalKf);
 
-      const finalScrollY = getPhotoScrollOffset(
-        continuousPhotoIdx,
-        totalPhotos,
-        photoScrollOffsetsShared.value,
-        contentHeightShared?.value || 0,
-        screenHeight,
-        heroHeight,
-      );
+        const finalScrollY = getPhotoScrollOffset(
+          continuousPhotoIdx,
+          totalPhotos,
+          photoScrollOffsetsShared.value,
+          contentHeightShared?.value || 0,
+          screenHeight,
+          heroHeight,
+        );
 
-      if (onDragEnd) {
-        runOnJS(onDragEnd)(finalScrollY, targetPhotoIndex);
-      }
-    })
-    .onFinalize(() => {
-      'worklet';
-      isDragging.value = false;
-      isDraggingLoupeShared.value = false;
-      isLoupeLocked.value = true;
-      peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
-      peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
-    });
+        if (onDragEnd) {
+          runOnJS(onDragEnd)(finalScrollY, targetPhotoIndex);
+        }
 
-  const tapGesture = Gesture.Tap()
-    .maxDuration(350)
-    .maxDistance(10)
-    .onBegin(() => {
-      'worklet';
-      if (loupeOpacity.value < 0.5) return;
-      loupeOpacity.value = withTiming(1, { duration: 80 });
-    })
-    .onEnd((e, success) => {
-      'worklet';
-      if (success) {
-        runOnJS(handleCardPressWithCoord)(e.y);
-      }
-    });
+        // Schedule guaranteed worklet fade-out
+        loupeOpacity.value = withDelay(
+          1200,
+          withTiming(0, { duration: 350 }, (finished) => {
+            if (finished) {
+              isLoupeLocked.value = false;
+            }
+          })
+        );
+      })
+      .onFinalize(() => {
+        'worklet';
+        isDragging.value = false;
+        isDraggingLoupeShared.value = false;
+        peekTopAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+        peekBottomAnim.value = withDelay(350, withTiming(0, { duration: 220, easing: Easing.inOut(Easing.quad) }));
+      });
+  }, [insetsTop, screenHeight, insetsBottom, activeDirection, peekBottomAnim, peekTopAnim, lastDragYShared, triggerGrabHaptic, totalPhotosShared, photoScrollOffsetsShared, contentHeightShared, mainScrollRef, scrollY, calcContinuousKfPos, continuousPosShared, thumbnails.length, currentActiveKeyframeShared, onDragEnd, onScrubStart, updateActiveCenter, loupeOpacity, isLoupeLocked, isDragging, isDraggingLoupeShared, dragStartProgress, dragStartY, currentCardYShared]);
 
-  const composedGesture = Gesture.Exclusive(panGesture, tapGesture);
+  const tapGesture = useMemo(() => {
+    return Gesture.Tap()
+      .maxDuration(400)
+      .maxDistance(12)
+      .hitSlop({ top: 30, bottom: 30, left: 24, right: 12 })
+      .onBegin(() => {
+        'worklet';
+        if (loupeOpacity.value < 0.2) return;
+        loupeOpacity.value = withTiming(1, { duration: 80 });
+      })
+      .onEnd((e, success) => {
+        'worklet';
+        if (success) {
+          runOnJS(handleCardPressWithCoord)(e.y);
+        }
+      });
+  }, [loupeOpacity, handleCardPressWithCoord]);
+
+  const composedGesture = useMemo(() => {
+    return Gesture.Exclusive(panGesture, tapGesture);
+  }, [panGesture, tapGesture]);
 
   const animatedContainerStyle = useAnimatedStyle(() => {
     'worklet';
@@ -982,6 +1269,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
 
     let targetY = currentCardYShared.value;
     if (!isDragging.value && !isLoupeLocked.value) {
+      if (loupeOpacity.value <= 0.01) {
+        return {
+          opacity: 0,
+          transform: [{ translateY: targetY }],
+        };
+      }
       const totalPhotos = Math.max(1, totalPhotosShared.value || 1);
       const heroHeight = Math.round(screenHeight * 0.70);
       const curY = scrollY.value;
@@ -1015,6 +1308,12 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
   // Entire strip column blossoms out from the right edge with a directional swoop along the scroll vector
   const stripAnimatedStyle = useAnimatedStyle(() => {
     'worklet';
+    if (loupeOpacity.value <= 0.01) {
+      return {
+        display: 'none',
+        opacity: 0,
+      };
+    }
     const enterScale = interpolate(loupeOpacity.value, [0, 1], [0.35, 1], 'clamp');
     const shiftX = (1 - enterScale) * 31; // Center card half-width (62 / 2)
 
@@ -1025,6 +1324,7 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
     const enterTranslateY = interpolate(loupeOpacity.value, [0, 1], [startOffsetY, 0], 'clamp');
 
     return {
+      display: 'flex',
       opacity: loupeOpacity.value,
       transform: [
         { translateY: enterTranslateY },
@@ -1050,13 +1350,18 @@ const SpatialFilmLoupeCard: React.FC<SpatialFilmLoupeCardProps> = React.memo(({
               key={`reel-${idx}`}
               targetIdx={idx}
               uri={uri}
-              photoIndex={typeof keyframeIndices?.[idx] === 'number' ? keyframeIndices[idx] : -1}
+              fallbackUri={fallbackThumbnails?.[idx]}
+              photoIndex={keyframeIndices?.[idx] ?? -1}
+              isWithinWindow={Math.abs(idx - activeCenterIdx) <= 5}
               continuousPos={continuousPosShared}
               activeDirection={activeDirection}
               peekTopAnim={peekTopAnim}
               peekBottomAnim={peekBottomAnim}
               scrollY={scrollY}
               photoScrollOffsetsShared={photoScrollOffsetsShared}
+              photoScrollHeightsShared={photoScrollHeightsShared}
+              photoAvailabilityShared={photoAvailabilityShared}
+              layoutHeightShared={layoutHeightShared}
               screenHeight={screenHeight}
               numColumns={numColumns}
             />
@@ -1325,6 +1630,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const columnsShared = useSharedValue(2);
   const galleryContentHeightShared = useSharedValue(0);
   const scheduleBatchPrefetchRef = useRef<((mappedList: Photo[], cols?: number) => void) | null>(null);
+  const forceUpdateSlotsFnRef = useRef<((y: number, force: boolean) => void) | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem('mycircle_gallery_columns').then((val) => {
@@ -1338,6 +1644,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     }).catch(() => {});
   }, [columnsShared]);
+
+  const fetchFilmstripRef = useRef<any>(null);
 
   const handleGalleryColumnsChange = useCallback((newCols: number) => {
     setGalleryColumns(newCols);
@@ -1370,6 +1678,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const backToTopOpacity = useSharedValue(0);
   const scrollY = useSharedValue(0);
   const photoScrollOffsetsShared = useSharedValue<number[]>([]);
+  const photoScrollHeightsShared = useSharedValue<number[]>([]);
+  const photoAvailabilityShared = useSharedValue<number[]>([]);
   const photoScrollEntriesShared = useSharedValue<number[]>([]);
   const lastScrollDispatchTimeShared = useSharedValue(0);
   const scrollTargetY = useSharedValue(0);
@@ -1406,7 +1716,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     activeFilmstripEntry.tab === (activeTab || 'ALL').trim().toUpperCase()
     ? activeFilmstripEntry.data
     : null;
-  const fetchFilmstripRef = useRef<((tabName: string, forceRefresh?: boolean) => Promise<void>) | null>(null);
+  const scrollStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Viewport catch-up request state engine:
+  // Key format: `${eventSlug}::${normTab}_${pageOffset}` -> 'in_flight' | 'loaded' | 'failed'
+  const pageStatesRef = useRef<Map<string, 'in_flight' | 'loaded' | 'failed'>>(new Map());
+  const pendingCatchupRef = useRef<{
+    targetY: number;
+    targetTab: string;
+    explicitTargetIdx?: number;
+  } | null>(null);
+  const inFlightTabsRef = useRef<Set<string>>(new Set());
+  const navRequestIdRef = useRef<number>(0);
+
+  const fadeOutLoupe = useCallback(() => {
+    isLoupeAwake.value = false;
+    isFadingLoupe.value = false;
+    loupeOpacity.value = withTiming(0, { duration: 300 });
+  }, [loupeOpacity, isLoupeAwake, isFadingLoupe]);
 
   const publishFilmstrip = useCallback((data: FilmstripData | null, slug: string, tab: string) => {
     if (
@@ -1683,6 +2009,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
     }
 
+    if (scrollStopTimerRef.current) {
+      clearTimeout(scrollStopTimerRef.current);
+    }
+    scrollStopTimerRef.current = setTimeout(() => {
+      if (!isDraggingLoupe.value && loupeOpacity.value > 0) {
+        fadeOutLoupe();
+      }
+    }, 1200);
+
     // ─── Debounced Scroll Position Persistence (For seamless user testing) ───
     if (offsetY > 150 && Math.abs(offsetY - lastSavedScrollYRef.current) > 150 && !isResumingScrollRef.current && !isTabSwitchingRef.current) {
       if (saveDebounceTimerRef.current) {
@@ -1737,48 +2072,52 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       ? (tabCache[normTab] || [])
       : (normTab === 'MY PHOTOS' ? photosRef.current : allPhotosRef.current);
 
-    // Check if any photo on the currently visible page is missing:
+    // Check if any photo on the currently visible page or immediate lookahead is missing:
     const onScreenCount = Math.max(12, currentCols * 5);
+    const lookaheadCount = onScreenCount + 10;
     let hasMissingOnScreen = false;
-    for (let c = visibleStartIndex; c < visibleStartIndex + onScreenCount; c++) {
+    let firstMissingIndex = -1;
+    for (let c = visibleStartIndex; c < visibleStartIndex + lookaheadCount; c++) {
       if (totalTabPhotosRef.current > 0 && c >= totalTabPhotosRef.current) break;
       const loaded = (sparseMap && sparseMap.has(c)) || (currentLoadedList[c] && !currentLoadedList[c].isSkeleton);
       if (!loaded) {
         hasMissingOnScreen = true;
+        firstMissingIndex = c;
         break;
       }
     }
 
-    if (hasMissingOnScreen) {
-      const timeSinceCatchup = now - lastCatchupTriggerTimeRef.current;
-      if (timeSinceCatchup > 250 && !isFastCatchingUpRef.current && fastCatchupPhotosRef.current) {
-        lastCatchupTriggerTimeRef.current = now;
-        fastCatchupPhotosRef.current(offsetY, activeTab, visibleStartIndex);
-      } else {
-        if (priorityCatchupTimerRef.current) {
-          clearTimeout(priorityCatchupTimerRef.current);
-        }
-        priorityCatchupTimerRef.current = setTimeout(() => {
-          if (!isFastCatchingUpRef.current && fastCatchupPhotosRef.current) {
-            lastCatchupTriggerTimeRef.current = Date.now();
-            fastCatchupPhotosRef.current(offsetY, activeTab, visibleStartIndex);
-          }
-        }, 75);
+    if (hasMissingOnScreen && firstMissingIndex !== -1) {
+      const pageOffset = Math.floor(firstMissingIndex / 60) * 60;
+      const pageKey = `${eventSlug}::${normTab}_${pageOffset}`;
+      const pageState = pageStatesRef.current.get(pageKey);
+      const currentSequentialOffset = isCeremonyTab
+        ? (tabItemCountsRef.current[normTab] ?? (tabCache[normTab]?.length || 0))
+        : allPhotosOffsetRef.current;
+      const isSequentialFetchingThis = isFetchingMoreRef.current && (pageOffset === Math.floor(currentSequentialOffset / 60) * 60);
+      if (pageState !== 'loaded' && pageState !== 'in_flight' && !isSequentialFetchingThis) {
+        fastCatchupPhotosRef.current?.(offsetY, activeTab, firstMissingIndex);
       }
     }
 
-    // ─── Proactive Sequential Paging Trigger ───
-    // Only trigger when the user is approaching the end of already-loaded photos.
-    // Avoids aggressive double-trigger (isNearBottom) which caused endless refresh at end of strip.
+    // ─── Proactive Sequential Paging Trigger (from top) ───
     const contiguousCount = currentLoadedList.length;
     const canLoadMore = isCeremonyTab
       ? (tabHasMoreRef.current[normTab] !== false)
       : (normTab === 'MY PHOTOS' ? hasMoreMatchedPhotosRef.current : hasMorePhotos);
     const triggerThreshold = Math.max(30, currentCols * 14);
-    const isApproachingEndOfLoaded =
-      visibleStartIndex <= contiguousCount + 10 &&
-      visibleStartIndex + triggerThreshold >= contiguousCount;
-    if (isApproachingEndOfLoaded && canLoadMore && !isFetchingMoreRef.current && !isFastCatchingUpRef.current && loadMorePhotosRef.current) {
+    const isApproachingEndOfContiguous =
+      normTab === 'MY PHOTOS'
+        ? (visibleStartIndex + triggerThreshold >= contiguousCount)
+        : (visibleStartIndex <= contiguousCount + 60 && visibleStartIndex + triggerThreshold >= contiguousCount);
+
+    const nextContiguousOffset = isCeremonyTab
+      ? (tabItemCountsRef.current[normTab] ?? (tabCache[normTab]?.length || 0))
+      : allPhotosOffsetRef.current;
+    const nextContiguousPageKey = `${eventSlug}::${normTab}_${Math.floor(nextContiguousOffset / 60) * 60}`;
+    const isCatchupFetchingNext = pageStatesRef.current.get(nextContiguousPageKey) === 'in_flight';
+
+    if (isApproachingEndOfContiguous && canLoadMore && !isFetchingMoreRef.current && !isCatchupFetchingNext && loadMorePhotosRef.current) {
       loadMorePhotosRef.current();
     }
 
@@ -1832,6 +2171,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         fastScrollDistanceShared.value = 0;
         return;
       }
+
       const rawDeltaY = currentY - lastScrollYShared.value;
       const deltaY = Math.abs(rawDeltaY);
       lastScrollYShared.value = currentY;
@@ -1842,8 +2182,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         loupeScrollDirection.value = -1;
       }
 
-      // Do not trigger loupe when viewing the hero cover image at the very top
-      if (currentY < heroCoverHeight * 0.4) {
+      // Do not trigger loupe during pull-to-refresh overscroll at the very top
+      if (currentY <= 0) {
         fastScrollStartTimeShared.value = 0;
         fastScrollDistanceShared.value = 0;
         if (isLoupeAwake.value && !isFadingLoupe.value) {
@@ -1858,8 +2198,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       } else {
         const now = Date.now();
 
-        // Fast scrolling threshold: deltaY > 22px per frame (requires intentional high-speed scroll)
-        if (deltaY > 22) {
+        // Fast scrolling threshold: deltaY > 14px per frame (balanced intent gating)
+        if (deltaY > 14) {
           if (fastScrollStartTimeShared.value === 0) {
             fastScrollStartTimeShared.value = now;
             fastScrollDistanceShared.value = deltaY;
@@ -1870,10 +2210,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           const elapsedFastTime = now - fastScrollStartTimeShared.value;
           const accumulatedDistance = fastScrollDistanceShared.value;
 
-          // Intent condition: user is scrolling intentionally to skip
-          // Requires at least 900ms of sustained fast scrolling and >1000px traveled, or an intense fast flick (>1800px)
+          // Intent condition: user is scrolling intentionally (balanced middle ground)
           const isIntentionalLongScroll =
-            (elapsedFastTime >= 900 && accumulatedDistance >= 1000) || accumulatedDistance >= 1800;
+            (elapsedFastTime >= 230 && accumulatedDistance >= 360) || accumulatedDistance >= 600;
 
           if (isIntentionalLongScroll && !isLoupeAwake.value) {
             isLoupeAwake.value = true;
@@ -2287,29 +2626,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       console.log(`🎬 CINEMA VIDEOS: ${mappedCinema.length}`);
       console.log(`========================================================================\n`);
 
+      // Synchronize batch likes with centralized likesStore
+      useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
+
       setTotalAllPhotosCount(total);
-      setAllPhotos((prev) => {
-        if (prev.length > mappedPhotos.length) {
-          const merged = [...mappedPhotos, ...prev.slice(mappedPhotos.length)];
-          const seenMerge = new Set<number | string>();
-          const dedupped = merged.filter((item) => {
-            const key = (item.id != null ? item.id : item.r2Url) ?? '';
-            if (seenMerge.has(key)) return false;
-            seenMerge.add(key);
-            return true;
-          });
-          allPhotosOffsetRef.current = dedupped.length;
-          setAllPhotosOffset(dedupped.length);
-          return dedupped;
-        }
-        if (prev.length > 0 && prev.length === mappedPhotos.length && prev[0]?.id === mappedPhotos[0]?.id && prev[prev.length - 1]?.id === mappedPhotos[mappedPhotos.length - 1]?.id) {
-          return prev;
-        }
-        allPhotosOffsetRef.current = mappedPhotos.length;
-        setAllPhotosOffset(mappedPhotos.length);
-        return mappedPhotos;
-      });
-      setHasMorePhotos(allPhotosOffsetRef.current < total);
+      const prevAllFallback = allPhotosRef.current;
+      const deduppedFallback = prevAllFallback.length > mappedPhotos.length
+        ? mergePhotoArrays(mappedPhotos, prevAllFallback.slice(mappedPhotos.length))
+        : mappedPhotos;
+      const nextOffsetFallback = deduppedFallback.length;
+      allPhotosOffsetRef.current = nextOffsetFallback;
+      setAllPhotosOffset(nextOffsetFallback);
+      setAllPhotos(deduppedFallback);
+      setHasMorePhotos(nextOffsetFallback < total);
 
       // Save to cache
       useAuthStore.getState().setGalleryCache(eventSlug, {
@@ -2518,29 +2847,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       console.log(`📑 TAB COUNTS:`, bundleData?.event?.tabCounts || 'none');
       console.log(`======================================================================\n`);
 
+      // Synchronize batch likes with centralized likesStore
+      useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
+
       setTotalAllPhotosCount(total);
-      setAllPhotos((prev) => {
-        if (prev.length > mappedPhotos.length) {
-          const merged = [...mappedPhotos, ...prev.slice(mappedPhotos.length)];
-          const seenMerge2 = new Set<number | string>();
-          const dedupped = merged.filter((item) => {
-            const key = (item.id != null ? item.id : item.r2Url) ?? '';
-            if (seenMerge2.has(key)) return false;
-            seenMerge2.add(key);
-            return true;
-          });
-          allPhotosOffsetRef.current = dedupped.length;
-          setAllPhotosOffset(dedupped.length);
-          return dedupped;
-        }
-        if (prev.length > 0 && prev.length === mappedPhotos.length && prev[0]?.id === mappedPhotos[0]?.id && prev[prev.length - 1]?.id === mappedPhotos[mappedPhotos.length - 1]?.id) {
-          return prev; // Reference stability! ZERO re-render flicker!
-        }
-        allPhotosOffsetRef.current = mappedPhotos.length;
-        setAllPhotosOffset(mappedPhotos.length);
-        return mappedPhotos;
-      });
-      setHasMorePhotos(allPhotosOffsetRef.current < total);
+      const prevAllBundle = allPhotosRef.current;
+      const deduppedBundle = prevAllBundle.length > mappedPhotos.length
+        ? mergePhotoArrays(mappedPhotos, prevAllBundle.slice(mappedPhotos.length))
+        : mappedPhotos;
+      const nextOffsetBundle = deduppedBundle.length;
+      allPhotosOffsetRef.current = nextOffsetBundle;
+      setAllPhotosOffset(nextOffsetBundle);
+      setAllPhotos(deduppedBundle);
+      setHasMorePhotos(nextOffsetBundle < total);
 
       // Persist to disk/memory cache for future 0ms instant opens
       useAuthStore.getState().setGalleryCache(eventSlug, {
@@ -2592,6 +2911,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     try {
       clearRevealedPhotosCache();
       filmstripCacheRef.current = {};
+      pageStatesRef.current.clear();
+      pendingCatchupRef.current = null;
+      inFlightTabsRef.current.clear();
       await Promise.all([
         fetchPhotos(),
         fetchFilmstripRef.current ? fetchFilmstripRef.current(activeTab, true) : Promise.resolve(),
@@ -2619,6 +2941,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
       const eventHeaders = getAuthHeaders();
       const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
+      const currentSlug = eventSlug;
+      const pageOffset = Math.floor(currentOffset / 60) * 60;
+      const pageKey = `${eventSlug}::MY_PHOTOS_${pageOffset}`;
+      if (pageStatesRef.current.get(pageKey) === 'in_flight') return;
+      pageStatesRef.current.set(pageKey, 'in_flight');
+
       try {
         isFetchingMoreRef.current = true;
         setIsLoadingMore(true);
@@ -2627,9 +2955,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           `/api/gallery/public/events/${eventSlug}/matched-photos?limit=${dynamicPageSize}&offset=${currentOffset}`,
           { headers: eventHeaders }
         );
+        if (eventSlugRef.current !== currentSlug) return;
         const matchedList = matchedRes.data?.photos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
         const mapped = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
         if (mapped.length > 0) {
+          pageStatesRef.current.set(pageKey, 'loaded');
+          useLikesStore.getState().setLikesBatch(mapped);
           if (!tabSparsePhotosRef.current['MY PHOTOS']) {
             tabSparsePhotosRef.current['MY PHOTOS'] = new Map();
           }
@@ -2637,28 +2968,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             tabSparsePhotosRef.current['MY PHOTOS'].set(currentOffset + idx, p);
           });
           scheduleBatchPrefetch(mapped);
-          setPhotos((prev) => {
-            const next = [...prev, ...mapped];
-            const seen = new Set<number | string>();
-            return next.filter((item) => {
-              const key = (item.id != null ? item.id : item.r2Url) ?? '';
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-          });
+          const currentPhotos = photosRef.current;
+          const nextPhotos = mergePhotoArrays(currentPhotos, mapped);
           if (typeof matchedRes.data?.total === 'number') {
             setTotalMatchedPhotosCount(matchedRes.data.total);
-            if (currentOffset + mapped.length >= matchedRes.data.total) {
+            if (nextPhotos.length >= matchedRes.data.total) {
               setHasMoreMatchedPhotos(false);
             }
           } else if (mapped.length < dynamicPageSize) {
             setHasMoreMatchedPhotos(false);
           }
+          setPhotos(nextPhotos);
         } else {
+          pageStatesRef.current.set(pageKey, 'loaded');
           setHasMoreMatchedPhotos(false);
         }
       } catch (err) {
+        pageStatesRef.current.set(pageKey, 'failed');
         console.warn('[MY PHOTOS loadMorePhotos error]:', err);
       } finally {
         isFetchingMoreRef.current = false;
@@ -2674,9 +3000,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       ? (tabItemCountsRef.current[normTab] ?? (tabCache[normTab]?.length || 0))
       : allPhotosOffsetRef.current;
 
+    const pageOffset = Math.floor(currentOffset / 60) * 60;
+    const pageKey = `${eventSlug}::${normTab}_${pageOffset}`;
+    if (pageStatesRef.current.get(pageKey) === 'in_flight') return;
+    pageStatesRef.current.set(pageKey, 'in_flight');
+
     const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(activeTab)}` : '';
     const eventHeaders = getAuthHeaders();
     const dynamicPageSize = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
+    const currentSlug = eventSlug;
     let retried401 = false;
     try {
       isFetchingMoreRef.current = true;
@@ -2689,13 +3021,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         `/api/gallery/public/events/${eventSlug}/photos?limit=${dynamicPageSize}&offset=${currentOffset}${tabQuery}`,
         { headers: eventHeaders }
       );
-      const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
 
+      if (eventSlugRef.current !== currentSlug) return;
+
+      const allList = allRes.data.photos || (Array.isArray(allRes.data) ? allRes.data : []);
       const mapped = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
       const loadMoreDuration = Date.now() - loadMoreStartTime;
-      console.log(`[PERF ⏱️ GalleryView] Page Fetch Done in ${loadMoreDuration}ms | Received ${mapped.length} new photos for '${normTab}' | New Offset: ${currentOffset + mapped.length}`);
+      console.log(`[PERF ⏱️ GalleryView] Page Fetch Done in ${loadMoreDuration}ms | Received ${mapped.length} new photos for '${normTab}' | Offset was: ${currentOffset}`);
 
       if (mapped.length > 0) {
+        pageStatesRef.current.set(pageKey, 'loaded');
+        useLikesStore.getState().setLikesBatch(mapped);
         if (!tabSparsePhotosRef.current[normTab]) {
           tabSparsePhotosRef.current[normTab] = new Map();
         }
@@ -2705,42 +3041,26 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         setSparseVersion((v) => v + 1);
 
         scheduleBatchPrefetch(mapped);
+        logPaginationDiag('loadMore', eventSlug, normTab, currentOffset, dynamicPageSize, mapped.length, isCeremonyTab ? ((tabItemCountsRef.current[normTab] || 0) + mapped.length) : allPhotosOffsetRef.current);
 
         if (isCeremonyTab) {
-          const newOffset = currentOffset + mapped.length;
-          tabItemCountsRef.current[normTab] = newOffset;
-          setTabCache((prev) => {
-            const existing = prev[normTab] || [];
-            const combined = [...existing, ...mapped];
-            const seenTab = new Set<number | string>();
-            const dedupped = combined.filter((item) => {
-              const key = (item.id != null ? item.id : item.r2Url) ?? '';
-              if (seenTab.has(key)) return false;
-              seenTab.add(key);
-              return true;
-            });
-            return { ...prev, [normTab]: dedupped };
-          });
+          const existing = tabCacheRef.current[normTab] || [];
+          const dedupped = mergePhotoArrays(existing, mapped);
+          tabItemCountsRef.current[normTab] = dedupped.length;
+          setTabCache((prev) => ({ ...prev, [normTab]: dedupped }));
         } else {
-          allPhotosOffsetRef.current += mapped.length;
-          setAllPhotosOffset(allPhotosOffsetRef.current);
-          setAllPhotos((prev) => {
-            const next = [...prev, ...mapped];
-            const seenAll = new Set<number | string>();
-            const dedupped = next.filter((item) => {
-              const key = (item.id != null ? item.id : item.r2Url) ?? '';
-              if (seenAll.has(key)) return false;
-              seenAll.add(key);
-              return true;
-            });
-            const reachedTotal = totalAllPhotosCount !== null && dedupped.length >= totalAllPhotosCount;
-            if (reachedTotal) {
-              setHasMorePhotos(false);
-            }
-            return dedupped;
-          });
+          const currentAll = allPhotosRef.current;
+          const dedupped = mergePhotoArrays(currentAll, mapped);
+          const nextOffset = dedupped.length;
+          allPhotosOffsetRef.current = nextOffset;
+          setAllPhotosOffset(nextOffset);
+          if (totalAllPhotosCount !== null && nextOffset >= totalAllPhotosCount) {
+            setHasMorePhotos(false);
+          }
+          setAllPhotos(dedupped);
         }
       } else {
+        pageStatesRef.current.set(pageKey, 'loaded');
         if (!isCeremonyTab) {
           setHasMorePhotos(false);
         } else {
@@ -2759,26 +3079,37 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               `/api/gallery/public/events/${eventSlug}/photos?limit=${dynamicPageSize}&offset=${currentOffset}${tabQuery}`,
               { headers: freshHeaders }
             );
+            if (eventSlugRef.current !== currentSlug) return;
             const retryList = retryRes.data.photos || (Array.isArray(retryRes.data) ? retryRes.data : []);
             const retryMapped = Array.isArray(retryList) ? retryList.map(mapPhotoItem) : [];
             if (retryMapped.length > 0) {
+              pageStatesRef.current.set(pageKey, 'loaded');
               scheduleBatchPrefetch(retryMapped);
               if (isCeremonyTab) {
-                tabItemCountsRef.current[normTab] = currentOffset + retryMapped.length;
-                setTabCache((prev) => ({ ...prev, [normTab]: [...(prev[normTab] || []), ...retryMapped] }));
+                const existing = tabCacheRef.current[normTab] || [];
+                const dedupped = mergePhotoArrays(existing, retryMapped);
+                tabItemCountsRef.current[normTab] = dedupped.length;
+                setTabCache((prev) => ({ ...prev, [normTab]: dedupped }));
               } else {
-                allPhotosOffsetRef.current += retryMapped.length;
-                setAllPhotosOffset(allPhotosOffsetRef.current);
-                setAllPhotos((prev) => [...prev, ...retryMapped]);
+                const currentAll = allPhotosRef.current;
+                const dedupped = mergePhotoArrays(currentAll, retryMapped);
+                const nextOffset = dedupped.length;
+                allPhotosOffsetRef.current = nextOffset;
+                setAllPhotosOffset(nextOffset);
+                setAllPhotos(dedupped);
               }
             } else {
+              pageStatesRef.current.set(pageKey, 'loaded');
               if (isCeremonyTab) { tabHasMoreRef.current[normTab] = false; } else { setHasMorePhotos(false); }
             }
           } catch (_retryErr) {
-            // Retry also failed — give up silently
+            pageStatesRef.current.set(pageKey, 'failed');
           }
+        } else {
+          pageStatesRef.current.set(pageKey, 'failed');
         }
       } else {
+        pageStatesRef.current.set(pageKey, 'failed');
         console.warn('[MYCIRCLE DEBUG ⚠️] loadMorePhotos error:', e);
       }
     } finally {
@@ -2789,9 +3120,17 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   loadMorePhotosRef.current = loadMorePhotos;
 
   const fastCatchupPhotos = useCallback(async (targetY: number, targetTab: string, explicitTargetIdx?: number) => {
-    if (!eventSlug || isFastCatchingUpRef.current) return;
+    if (!eventSlug) return;
     const normTab = targetTab.trim().toUpperCase();
     if (normTab === 'MY PHOTOS' || normTab === 'MY FAVOURITES' || normTab === 'CINEMA') return;
+
+    // Coalescing queue: if another catch-up is already running over the network,
+    // record this newest target as pending. When the active request finishes,
+    // it will automatically service this pending target!
+    if (isFastCatchingUpRef.current) {
+      pendingCatchupRef.current = { targetY, targetTab, explicitTargetIdx };
+      return;
+    }
 
     const isCeremonyTab = normTab !== 'ALL';
     const currentCols = galleryColumnsRef.current || 2;
@@ -2811,144 +3150,152 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const tabQuery = isCeremonyTab ? `&tab=${encodeURIComponent(targetTab)}` : '';
 
     // ── STEP 1: URGENT ON-SCREEN WINDOW FETCH ─────────────────────────────
-    // Fetch the 50 photos directly in and around the viewport first!
-    const windowStart = Math.max(0, targetPhotoIndex - 10);
-    const windowLimit = Math.min(60, Math.max(1, maxKnown - windowStart));
+    // Fetch 120 photos (2 consecutive pages) to fully cover the mobile viewport and lookahead buffer!
+    const pageOffset = Math.floor(targetPhotoIndex / 60) * 60;
+    const windowStart = pageOffset;
+    const windowLimit = Math.min(120, Math.max(1, maxKnown - windowStart));
+    const pageKey = `${eventSlug}::${normTab}_${pageOffset}`;
 
     // Check if we already have this window in sparse cache
     const currentSparse = tabSparsePhotosRef.current[normTab];
     let hasWindow = true;
-    for (let checkIdx = windowStart; checkIdx < windowStart + Math.min(20, windowLimit); checkIdx++) {
+    for (let checkIdx = windowStart; checkIdx < windowStart + Math.min(120, windowLimit); checkIdx++) {
+      if (checkIdx >= maxKnown) break;
       if (!currentSparse?.has(checkIdx) && !activeListRef.current[checkIdx]) {
         hasWindow = false;
         break;
       }
     }
 
-    if (!hasWindow && windowLimit > 0) {
-      try {
-        isFastCatchingUpRef.current = true;
-
-        console.log(`[ON-SCREEN PRIORITY 🎯] Fetching priority window for '${normTab}': offset=${windowStart}, limit=${windowLimit} (Target Photo #${targetPhotoIndex + 1})`);
-        const onScreenRes = await guestApi.get(
-          `/api/gallery/public/events/${eventSlug}/photos?limit=${windowLimit}&offset=${windowStart}${tabQuery}`,
-          { headers: eventHeaders }
-        );
-        const onScreenList = onScreenRes.data.photos || (Array.isArray(onScreenRes.data) ? onScreenRes.data : []);
-        const mappedOnScreen = Array.isArray(onScreenList) ? onScreenList.map(mapPhotoItem) : [];
-
-        if (mappedOnScreen.length > 0) {
-          if (!tabSparsePhotosRef.current[normTab]) {
-            tabSparsePhotosRef.current[normTab] = new Map();
+    if (hasWindow || windowLimit <= 0) {
+      pageStatesRef.current.set(pageKey, 'loaded');
+      // Drain any pending target requested while user was moving
+      if (pendingCatchupRef.current) {
+        const next = pendingCatchupRef.current;
+        pendingCatchupRef.current = null;
+        setTimeout(() => {
+          if (eventSlugRef.current === eventSlug) {
+            fastCatchupPhotosRef.current?.(next.targetY, next.targetTab, next.explicitTargetIdx);
           }
-          const sMap = tabSparsePhotosRef.current[normTab];
-          mappedOnScreen.forEach((p, idx) => {
-            sMap.set(windowStart + idx, p);
-          });
+        }, 16);
+      }
+      return;
+    }
 
-          // Trigger immediate UI refresh so on-screen photos upgrade to full quality
-          setSparseVersion((v) => v + 1);
+    const currentSlug = eventSlug;
+    pageStatesRef.current.set(pageKey, 'in_flight');
+    isFastCatchingUpRef.current = true;
 
-          // If we had a pending jump and scroll was clamped before content expansion, re-align
-          if (
-            pendingJumpTargetIndexRef.current !== null &&
-            pendingJumpTargetScopeRef.current === `${eventSlug}::${normTab}`
-          ) {
-            setTimeout(() => {
-              const targetIndex = pendingJumpTargetIndexRef.current;
-              if (
-                targetIndex === null ||
-                eventSlugRef.current !== eventSlug ||
-                (activeTabRef.current || 'ALL').trim().toUpperCase() !== normTab
-              ) {
+    try {
+      console.log(`[ON-SCREEN PRIORITY 🎯] Fetching priority window for '${normTab}': offset=${windowStart}, limit=${windowLimit} (Target Photo #${targetPhotoIndex + 1})`);
+      const onScreenRes = await guestApi.get(
+        `/api/gallery/public/events/${eventSlug}/photos?limit=${windowLimit}&offset=${windowStart}${tabQuery}`,
+        { headers: eventHeaders }
+      );
+
+      if (eventSlugRef.current !== currentSlug) return;
+
+      const onScreenList = onScreenRes.data.photos || (Array.isArray(onScreenRes.data) ? onScreenRes.data : []);
+      const mappedOnScreen = Array.isArray(onScreenList) ? onScreenList.map(mapPhotoItem) : [];
+
+      if (mappedOnScreen.length > 0) {
+        pageStatesRef.current.set(pageKey, 'loaded');
+        useLikesStore.getState().setLikesBatch(mappedOnScreen);
+        if (!tabSparsePhotosRef.current[normTab]) {
+          tabSparsePhotosRef.current[normTab] = new Map();
+        }
+        const sMap = tabSparsePhotosRef.current[normTab];
+        mappedOnScreen.forEach((p, idx) => {
+          sMap.set(windowStart + idx, p);
+        });
+
+        // Trigger immediate UI refresh so on-screen photos upgrade to full quality
+        setSparseVersion((v) => v + 1);
+        logPaginationDiag('catchup', eventSlug, normTab, windowStart, windowLimit, mappedOnScreen.length, windowStart + mappedOnScreen.length);
+
+        // Prefetch immediate on-screen image files into native cache
+        scheduleBatchPrefetch(mappedOnScreen);
+
+        // If this chunk connects with the start, merge into contiguous allPhotos/tabCache
+        const currentCount = isCeremonyTab ? (tabCacheRef.current[normTab]?.length || 0) : allPhotosRef.current.length;
+        if (windowStart <= currentCount) {
+          if (isCeremonyTab) {
+            const existing = tabCacheRef.current[normTab] || [];
+            const merged = mergePhotoArrays(existing, mappedOnScreen);
+            tabItemCountsRef.current[normTab] = merged.length;
+            setTabCache((prev) => ({ ...prev, [normTab]: merged }));
+          } else {
+            const currentAll = allPhotosRef.current;
+            const merged = mergePhotoArrays(currentAll, mappedOnScreen);
+            const nextOffset = merged.length;
+            allPhotosOffsetRef.current = nextOffset;
+            setAllPhotosOffset(nextOffset);
+            setAllPhotos(merged);
+          }
+        }
+      } else {
+        pageStatesRef.current.set(pageKey, 'loaded');
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        // Token expired or rotated — refresh guest token via SSO or global family token
+        try {
+          const familyToken = useAuthStore.getState().token;
+          if (familyToken && eventSlug) {
+            const ssoRes = await api.post(
+              `/api/gallery/public/events/${eventSlug}/auth-from-family`,
+              { code: passcode || undefined },
+              { headers: { Authorization: `Bearer ${familyToken}` } }
+            );
+            if (ssoRes.data?.token) {
+              const freshHeaders = { Authorization: `Bearer ${ssoRes.data.token}` };
+              eventHeadersRef.current = freshHeaders;
+              const retryRes = await guestApi.get(
+                `/api/gallery/public/events/${eventSlug}/photos?limit=${windowLimit}&offset=${windowStart}${tabQuery}`,
+                { headers: freshHeaders }
+              );
+              const retryList = retryRes.data.photos || (Array.isArray(retryRes.data) ? retryRes.data : []);
+              const mappedRetry = Array.isArray(retryList) ? retryList.map(mapPhotoItem) : [];
+              if (mappedRetry.length > 0) {
+                pageStatesRef.current.set(pageKey, 'loaded');
+                if (!tabSparsePhotosRef.current[normTab]) {
+                  tabSparsePhotosRef.current[normTab] = new Map();
+                }
+                const sMap = tabSparsePhotosRef.current[normTab];
+                mappedRetry.forEach((p, idx) => {
+                  sMap.set(windowStart + idx, p);
+                });
+                setSparseVersion((v) => v + 1);
+                scheduleBatchPrefetch(mappedRetry);
                 return;
               }
-              const reScrollY = getPhotoScrollOffset(
-                targetIndex,
-                totalTabPhotosRef.current,
-                photoScrollOffsetsShared.value,
-                galleryContentHeightShared.value,
-                screenHeight,
-                Math.round(screenHeight * 0.70),
-              );
-              scrollToY(reScrollY, true);
-              currentYRef.current = reScrollY;
-              lastSavedScrollYRef.current = reScrollY;
-              saveResumeScrollPosition(reScrollY);
-              pendingJumpTargetYRef.current = null;
-              pendingJumpTargetIndexRef.current = null;
-              pendingJumpTargetScopeRef.current = null;
-            }, 30);
-          }
-
-          // Prefetch immediate on-screen image files into native cache
-          scheduleBatchPrefetch(mappedOnScreen);
-
-          // If this chunk connects with the start, merge into contiguous allPhotos/tabCache
-          const currentCount = isCeremonyTab ? (tabCache[normTab]?.length || 0) : allPhotosRef.current.length;
-          if (windowStart <= currentCount) {
-            if (isCeremonyTab) {
-              setTabCache((prev) => {
-                const existing = prev[normTab] || [];
-                const merged = [...existing];
-                mappedOnScreen.forEach((p, i) => { merged[windowStart + i] = p; });
-                return { ...prev, [normTab]: merged };
-              });
-            } else {
-              setAllPhotos((prev) => {
-                const merged = [...prev];
-                mappedOnScreen.forEach((p, i) => { merged[windowStart + i] = p; });
-                allPhotosOffsetRef.current = Math.max(allPhotosOffsetRef.current, windowStart + mappedOnScreen.length);
-                return merged;
-              });
             }
           }
-        }
-      } catch (err: any) {
-        if (err?.response?.status === 401) {
-          // Token expired or rotated — refresh guest token via SSO or global family token
-          try {
-            const familyToken = useAuthStore.getState().token;
-            if (familyToken && eventSlug) {
-              const ssoRes = await api.post(
-                `/api/gallery/public/events/${eventSlug}/auth-from-family`,
-                { code: passcode || undefined },
-                { headers: { Authorization: `Bearer ${familyToken}` } }
-              );
-              if (ssoRes.data?.token) {
-                const freshHeaders = { Authorization: `Bearer ${ssoRes.data.token}` };
-                eventHeadersRef.current = freshHeaders;
-                const retryRes = await guestApi.get(
-                  `/api/gallery/public/events/${eventSlug}/photos?limit=${windowLimit}&offset=${windowStart}${tabQuery}`,
-                  { headers: freshHeaders }
-                );
-                const retryList = retryRes.data.photos || (Array.isArray(retryRes.data) ? retryRes.data : []);
-                const mappedRetry = Array.isArray(retryList) ? retryList.map(mapPhotoItem) : [];
-                if (mappedRetry.length > 0) {
-                  if (!tabSparsePhotosRef.current[normTab]) {
-                    tabSparsePhotosRef.current[normTab] = new Map();
-                  }
-                  const sMap = tabSparsePhotosRef.current[normTab];
-                  mappedRetry.forEach((p, idx) => {
-                    sMap.set(windowStart + idx, p);
-                  });
-                  setSparseVersion((v) => v + 1);
-                  scheduleBatchPrefetch(mappedRetry);
-                  return;
-                }
-              }
-            }
-          } catch (_ssoErr) {}
-        }
-        console.warn('[ON-SCREEN PRIORITY ⚠️] Error fetching priority window:', err);
-      } finally {
-        isFastCatchingUpRef.current = false;
+        } catch (_ssoErr) {}
+      }
+      console.warn('[ON-SCREEN PRIORITY ⚠️] Error fetching priority window:', err);
+      // Mark as failed so future scrolls to this viewport can retry cleanly
+      pageStatesRef.current.set(pageKey, 'failed');
+    } finally {
+      isFastCatchingUpRef.current = false;
+      // Drain any pending catch-up target requested while this fetch was active
+      if (pendingCatchupRef.current) {
+        const next = pendingCatchupRef.current;
+        pendingCatchupRef.current = null;
+        setTimeout(() => {
+          if (eventSlugRef.current === currentSlug) {
+            fastCatchupPhotosRef.current?.(next.targetY, next.targetTab, next.explicitTargetIdx);
+          }
+        }, 16);
       }
     }
-  }, [eventSlug, totalAllPhotosCount, eventDetails, tabCache, scheduleBatchPrefetch, scrollToY, photoScrollOffsetsShared, galleryContentHeightShared, screenHeight, saveResumeScrollPosition, getAuthHeaders, passcode]);
+  }, [eventSlug, totalAllPhotosCount, eventDetails, scheduleBatchPrefetch, scrollToY, photoScrollOffsetsShared, galleryContentHeightShared, screenHeight, saveResumeScrollPosition, getAuthHeaders, passcode]);
   fastCatchupPhotosRef.current = fastCatchupPhotos;
 
   useEffect(() => {
+    pageStatesRef.current.clear();
+    pendingCatchupRef.current = null;
+    inFlightTabsRef.current.clear();
     fetchPhotos();
   }, [eventSlug]);
 
@@ -3122,11 +3469,38 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   // tabCache and isTabLoading are declared above the sync effects that reference them
 
   const favoritesCount = React.useMemo(() => {
-    if (tabCache['MY FAVOURITES']) {
+    if (tabCache['MY FAVOURITES'] && Array.isArray(tabCache['MY FAVOURITES'])) {
       return tabCache['MY FAVOURITES'].length;
     }
-    return allPhotos.filter((p: any) => p.isLiked).length;
-  }, [allPhotos, tabCache]);
+    const seenIds = new Set<number | string>();
+    let count = 0;
+    const allGalleryPhotos = [...allPhotos, ...photos, ...Object.values(tabCache).flat()];
+    for (const p of allGalleryPhotos) {
+      if (!p || p.id == null) continue;
+      const key = String(p.id);
+      if (!seenIds.has(key)) {
+        seenIds.add(key);
+        if (useLikesStore.getState().isLiked(p.id, p.isLiked)) {
+          count++;
+        }
+      }
+    }
+    for (const sMap of Object.values(tabSparsePhotosRef.current)) {
+      if (sMap) {
+        for (const p of sMap.values()) {
+          if (!p || p.id == null) continue;
+          const key = String(p.id);
+          if (!seenIds.has(key)) {
+            seenIds.add(key);
+            if (useLikesStore.getState().isLiked(p.id, p.isLiked)) {
+              count++;
+            }
+          }
+        }
+      }
+    }
+    return count;
+  }, [allPhotos, photos, tabCache, sparseVersion]);
 
   const highlightsCount = React.useMemo(() => {
     const rawCount = typeof eventDetails?.tabCounts?.['HIGHLIGHTS'] === 'number'
@@ -3151,22 +3525,59 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return Math.max(rawCount, inTabCache, inAllPhotos);
   }, [allPhotos, tabCache, eventDetails]);
 
-  // Per-tab server loader (matching web 1:1)
+  // Per-tab server loader (matching web 1:1, with Stale-While-Revalidate and All-tab cache reuse)
   const fetchTabPhotos = useCallback(async (tabName: string) => {
     const norm = tabName.trim().toUpperCase();
-    if (norm === 'ALL' || norm === 'MY PHOTOS' || norm === 'MY FAVOURITES') return;
-    if (tabCache[norm]) return; // Already cached
+    if (norm === 'ALL' || norm === 'MY PHOTOS' || norm === 'MY FAVOURITES' || norm === 'CINEMA') return;
+    if (!eventSlug) return;
 
-    // Check if eventDetails already reports 0 photos for this tab
-    const knownTabCount = eventDetails?.tabCounts?.[norm];
-    if (typeof knownTabCount === 'number' && knownTabCount === 0) {
-      setTabCache((prev) => ({ ...prev, [norm]: [] }));
+    // 1. In-flight guard: prevent duplicate concurrent requests for the exact same ceremony tab
+    if (inFlightTabsRef.current.has(norm)) {
       return;
     }
 
-    const hasAnyInAll = allPhotos.some((p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm);
+    // 2. All -> Ceremony Tab Reuse:
+    // Extract any photos already loaded in allPhotos for this ceremony!
+    const photosFromAll = allPhotosRef.current.filter(
+      (p: any) => p.tabName && p.tabName.trim().toUpperCase() === norm && !isVideoComingSoon(p)
+    );
+    const existingTabPhotos = tabCacheRef.current[norm] || [];
+    const mergedInitial = mergePhotoArrays(photosFromAll, existingTabPhotos);
+
+    // Seed tabCache immediately if we have photos from allPhotos
+    if (mergedInitial.length > existingTabPhotos.length) {
+      setTabCache((prev) => ({ ...prev, [norm]: mergedInitial }));
+      tabItemCountsRef.current[norm] = mergedInitial.length;
+      if (!tabSparsePhotosRef.current[norm]) {
+        tabSparsePhotosRef.current[norm] = new Map();
+      }
+      mergedInitial.forEach((p, idx) => {
+        tabSparsePhotosRef.current[norm].set(idx, p);
+      });
+      setSparseVersion((v) => v + 1);
+    }
+
+    // 3. Check if all photos for this ceremony are already satisfied from in-memory cache
+    const currentCount = Math.max(mergedInitial.length, existingTabPhotos.length);
+    const tabCountsSource = eventDetails?.tabCounts || eventDetails?.tab_counts;
+    const knownTabCount = getKnownTabCount(tabCountsSource, tabName);
+
+    if (typeof knownTabCount === 'number') {
+      if (knownTabCount === 0) {
+        setTabCache((prev) => ({ ...prev, [norm]: [] }));
+        return;
+      }
+      if (currentCount >= knownTabCount && currentCount > 0) {
+        console.log(`[TAB REUSE ⚡] Ceremony tab '${norm}' fully satisfied from in-memory cache (${currentCount}/${knownTabCount} photos). Skipping network fetch.`);
+        return;
+      }
+    }
+
+    const currentSlug = eventSlug;
+    inFlightTabsRef.current.add(norm);
+
     try {
-      if (!hasAnyInAll) {
+      if (currentCount === 0) {
         setIsTabLoading(true);
       }
       const familyToken = useAuthStore.getState().token;
@@ -3177,27 +3588,41 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         `/api/gallery/public/events/${eventSlug}/photos?limit=60&tab=${encodeURIComponent(tabName)}`,
         { headers: eventHeaders }
       );
+
+      if (eventSlugRef.current !== currentSlug) return;
+
       const rawList = res.data.photos || (Array.isArray(res.data) ? res.data : []);
       const mapped = Array.isArray(rawList) ? rawList.map(mapPhotoItem) : [];
 
-      if (!tabSparsePhotosRef.current[norm]) {
-        tabSparsePhotosRef.current[norm] = new Map();
+      if (mapped.length > 0) {
+        useLikesStore.getState().setLikesBatch(mapped);
+
+        // Deduplicate and merge newly fetched items with already-loaded items:
+        // NEVER replace a larger existing collection with a smaller partial API response!
+        const prevList = tabCacheRef.current[norm] || [];
+        const base = prevList.length > 0 ? prevList : photosFromAll;
+        const merged = mergePhotoArrays(base, mapped);
+        tabItemCountsRef.current[norm] = merged.length;
+        setTabCache((prev) => ({ ...prev, [norm]: merged }));
+
+        if (!tabSparsePhotosRef.current[norm]) {
+          tabSparsePhotosRef.current[norm] = new Map();
+        }
+        mapped.forEach((p, idx) => {
+          tabSparsePhotosRef.current[norm].set(idx, p);
+        });
+        setSparseVersion((v) => v + 1);
+
+        // Smooth chunked background prefetch of tab thumbnails into native cache
+        scheduleBatchPrefetch(mapped);
       }
-      mapped.forEach((p, idx) => {
-        tabSparsePhotosRef.current[norm].set(idx, p);
-      });
-      setSparseVersion((v) => v + 1);
-
-      // Smooth chunked background prefetch of tab thumbnails into native cache
-      scheduleBatchPrefetch(mapped);
-
-      setTabCache((prev) => ({ ...prev, [norm]: mapped }));
     } catch (err) {
       console.warn(`Failed to fetch photos for tab ${tabName}:`, err);
     } finally {
+      inFlightTabsRef.current.delete(norm);
       setIsTabLoading(false);
     }
-  }, [eventSlug, tabCache, allPhotos, eventDetails?.tabCounts]);
+  }, [eventSlug, eventDetails?.tabCounts, scheduleBatchPrefetch]);
 
   useEffect(() => {
     if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES') {
@@ -3331,7 +3756,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       tabOffsetsRef.current[currentNorm] = currentYRef.current;
     }
 
-    // 3. Switch tab
+    // 3. Switch tab and invalidate any pending navigation target/scope from the previous tab
+    navRequestIdRef.current += 1;
+    pendingJumpTargetIndexRef.current = null;
+    pendingJumpTargetYRef.current = null;
+    pendingJumpTargetScopeRef.current = null;
+
     setActiveTab(newTab);
     fetchTabPhotos(newTab);
 
@@ -3381,6 +3811,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         isTabSwitchingRef.current = false;
         lastSavedScrollYRef.current = targetY;
         saveResumeScrollPosition(targetY);
+        resumeTargetYRef.current = null;
+        resumeTargetTabRef.current = null;
       }, 500);
     };
 
@@ -3401,6 +3833,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (prevTabRef.current !== activeTab) {
       const prevTab = prevTabRef.current;
       prevTabRef.current = activeTab;
+
+      // Invalidate any pending navigation target/scope from the previous tab
+      navRequestIdRef.current += 1;
+      pendingJumpTargetIndexRef.current = null;
+      pendingJumpTargetYRef.current = null;
+      pendingJumpTargetScopeRef.current = null;
 
       // On initial load / mount, establish activeTab ref without executing a scroll reset
       if (prevTab === null) {
@@ -3731,13 +4169,18 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         : allPhotos.filter((p: any) => p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS'));
 
       sourceList = injectCuratedCinemaVideos(baseHighlights, activeCinemaVideos, `${eventSlug || ''}_HIGHLIGHTS`);
-    } else if (tabCache[currentUpper] && tabCache[currentUpper].length > 0) {
-      sourceList = tabCache[currentUpper].filter((p: any) => !isVideoComingSoon(p));
     } else {
-      sourceList = allPhotos.filter((p: any) => {
+      // Ceremony tab (e.g. Sangeet, Haldi, etc.)
+      const fromTabCache = (tabCache[currentUpper] || []).filter((p: any) => !isVideoComingSoon(p));
+      const fromAll = allPhotos.filter((p: any) => {
         if (!p.tabName) return false;
         return p.tabName.trim().toUpperCase() === currentUpper && !isVideoComingSoon(p);
       });
+      if (fromAll.length > fromTabCache.length) {
+        sourceList = mergePhotoArrays(fromAll, fromTabCache);
+      } else {
+        sourceList = mergePhotoArrays(fromTabCache, fromAll);
+      }
     }
 
     return sourceList.filter((p) => !isPhotoLocked(p) && !isVideoComingSoon(p));
@@ -3771,19 +4214,56 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const lockedInFavs = [...allPhotos, ...photos].filter((p: any) => p && p.isLiked && lockedPhotoIds.has(Number(p.id))).length;
       return Math.max(0, favoritesCount - lockedInFavs);
     }
+    const tabCountsSource = eventDetails?.tabCounts || eventDetails?.tab_counts;
     if (norm === 'ALL') {
       const comingSoonCount = allPhotos.filter((p: any) => p && isVideoComingSoon(p)).length;
-      const rawAll = eventDetails?.tabCounts?.['ALL'] ?? (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
+      const allCount = getKnownTabCount(tabCountsSource, 'ALL');
+      const rawAll = typeof allCount === 'number' ? allCount : (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
       return Math.max(0, rawAll - comingSoonCount - lockedPhotoIds.size);
     }
-    const rawCount = eventDetails?.tabCounts?.[norm] ?? allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm).length;
+    const tabCountVal = getKnownTabCount(tabCountsSource, norm);
+    const rawCount = typeof tabCountVal === 'number' ? tabCountVal : allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm).length;
     const lockedInTab = allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm && lockedPhotoIds.has(Number(p.id))).length;
     return Math.max(0, rawCount - lockedInTab);
   }, [lockedPhotoIds, photos, favoritesCount, allPhotos, eventDetails?.tabCounts, totalAllPhotosCount, totalMatchedPhotosCount]);
 
+  // Canonical Expected Browseable Media Count for UI display (header badge, drawer count, lightbox denominator)
+  const getTabBrowseableMediaCount = useCallback((tabName: string): number | null => {
+    const norm = tabName.trim().toUpperCase();
+
+    // 1. CINEMA Tab: contains valid cinema videos (not coming soon, with actual video file)
+    if (norm === 'CINEMA') {
+      const validCinema = activeCinemaVideos.filter((v: any) => !isVideoComingSoon(v) && hasActualVideoFile(v));
+      return validCinema.length;
+    }
+
+    // 2. Base Photo Count (strictly photographs)
+    const photoCount = getTabPhotoCount(tabName);
+
+    // 3. In ALL and HIGHLIGHTS, curated cinema videos are injected into the grid
+    if (norm === 'ALL' || norm === 'HIGHLIGHTS') {
+      const { eligibleTotal } = getEligibleCuratedCinemaVideos(activeCinemaVideos);
+      const baseCount = typeof photoCount === 'number' ? photoCount : 0;
+      return baseCount + eligibleTotal;
+    }
+
+    // 4. For other tabs, if photoCount is valid and > 0, return it
+    if (typeof photoCount === 'number' && photoCount > 0) {
+      return photoCount;
+    }
+
+    // 5. If a tab contains zero photos but has actual browseable videos, include those videos
+    const cachedTabVideos = (tabCache[norm] || []).filter((p: any) => (isVideoMedia(p) || isCinemaVideoItem(p)) && !isVideoComingSoon(p) && hasActualVideoFile(p));
+    if (cachedTabVideos.length > 0) {
+      return (photoCount || 0) + cachedTabVideos.length;
+    }
+
+    return photoCount;
+  }, [getTabPhotoCount, activeCinemaVideos, tabCache]);
+
   const currentTabExpectedCount = useMemo(() => {
-    return getTabPhotoCount(currentPhotoTab);
-  }, [getTabPhotoCount, currentPhotoTab]);
+    return getTabBrowseableMediaCount(currentPhotoTab);
+  }, [getTabBrowseableMediaCount, currentPhotoTab]);
 
   // Predictive Instagram-style Video Pre-Buffering:
   // Pre-warms native player instances for the upcoming videos in the background
@@ -3891,34 +4371,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   // Immediate full render limit: prevents staggered height jumps that trigger native scroll resets
   const renderLimit = Infinity;
-
-  const isEndOfTabReached = useMemo(() => {
-    if (renderLimit !== (Infinity as any) || isLoading || isTabLoading || activePhotoList.length === 0) {
-      return false;
-    }
-    if (isLoadingMore) {
-      return false;
-    }
-
-    const norm = activeTab.toUpperCase();
-
-    if (norm === 'ALL') {
-      return !hasMorePhotos;
-    }
-
-    if (norm === 'MY PHOTOS' || norm === 'MY FAVOURITES') {
-      return true;
-    }
-
-    // For ceremony / category tabs (e.g. COCKTAIL, HALDI, MEHNDI, HIGHLIGHTS)
-    const expectedCount = eventDetails?.tabCounts?.[norm];
-    if (typeof expectedCount === 'number' && expectedCount > 0) {
-      return activePhotoList.length >= expectedCount;
-    }
-
-    // Fallback if tabCounts is not present: check tabHasMore state
-    return tabHasMoreRef.current[norm] === false;
-  }, [renderLimit, isLoading, isTabLoading, isLoadingMore, activePhotoList, activeTab, hasMorePhotos, eventDetails?.tabCounts]);
 
   const masonryColWidth = Math.floor((width - 16 - 6) / 2);
 
@@ -4049,6 +4501,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       setPhotos((prev) => prev.map(mapper));
 
       // 2. Update tabCache & MY FAVOURITES tab
+      let updatedFavs: Photo[] = [];
       setTabCache((prev) => {
         const updatedCache: typeof prev = {};
         for (const key of Object.keys(prev)) {
@@ -4065,8 +4518,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         } else {
           updatedCache['MY FAVOURITES'] = currentFavs.filter((p) => String(p.id) !== photoIdStr && (!p.r2Url || p.r2Url !== item.r2Url));
         }
+        updatedFavs = updatedCache['MY FAVOURITES'] || [];
         return updatedCache;
       });
+
+      // Persist to authStore.galleryCache asynchronously outside React's state transition cycle
+      setTimeout(() => {
+        const existingEntry = useAuthStore.getState().getGalleryCache(eventSlug);
+        if (existingEntry) {
+          useAuthStore.getState().setGalleryCache(eventSlug, {
+            favorites: updatedFavs,
+            tabCache: {
+              ...(existingEntry.tabCache || {}),
+              'MY FAVOURITES': updatedFavs,
+            },
+          });
+        }
+      }, 0);
 
       // 3. Update tabSparsePhotosRef across ALL tabs! (This fixes photos past the top photos!)
       for (const tabKey of Object.keys(tabSparsePhotosRef.current)) {
@@ -4086,14 +4554,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         }
       }
 
-      // 4. Broadcast instant photo like event to all mounted cards and lightbox!
-      tabEvents.emit(EVENT_PHOTO_LIKED, {
-        photoId: photoIdStr,
-        isLiked: liked,
-        likeCount: newLikeCount,
-      });
-
-      // 5. Force displayData and MasonryFlashList to re-evaluate with the updated like state!
+      // 4. Force displayData and MasonryFlashList to re-evaluate with the updated like state!
       setSparseVersion((v) => v + 1);
     };
 
@@ -4102,16 +4563,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     try {
       const headers = getAuthHeaders();
-      const res = await guestApi.post(
-        `/api/gallery/public/events/${eventSlug}/photos/${photoId}/like`,
-        {},
-        { headers }
-      );
-      if (res.data && typeof res.data.liked === 'boolean') {
-        // Reconcile with server truth (updates all 3 state arrays including likeCount)
-        applyLikeState(res.data.liked, typeof res.data.likeCount === 'number' ? res.data.likeCount : undefined);
-        tabEvents.emit(EVENT_SAVES_UPDATED);
-      }
+      const storeRes = await useLikesStore.getState().toggleLike({
+        photoId,
+        eventSlug,
+        explicitLiked: nextLiked,
+        currentCount,
+        authHeaders: headers,
+      });
+
+      applyLikeState(storeRes.liked, storeRes.likeCount);
     } catch (err: any) {
       // If 401 received, attempt auto-refresh from family session and retry once
       if (err?.response?.status === 401) {
@@ -4126,16 +4586,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             if (ssoRes.data?.token) {
               const freshHeaders = { Authorization: `Bearer ${ssoRes.data.token}` };
               eventHeadersRef.current = freshHeaders;
-              const retryRes = await guestApi.post(
-                `/api/gallery/public/events/${eventSlug}/photos/${photoId}/like`,
-                {},
-                { headers: freshHeaders }
-              );
-              if (retryRes.data && typeof retryRes.data.liked === 'boolean') {
-                applyLikeState(retryRes.data.liked, typeof retryRes.data.likeCount === 'number' ? retryRes.data.likeCount : undefined);
-                tabEvents.emit(EVENT_SAVES_UPDATED);
-                return;
-              }
+              const retryRes = await useLikesStore.getState().toggleLike({
+                photoId,
+                eventSlug,
+                explicitLiked: nextLiked,
+                currentCount,
+                authHeaders: freshHeaders,
+              });
+              applyLikeState(retryRes.liked, retryRes.likeCount);
+              return;
             }
           }
         } catch (_ssoErr) {}
@@ -4151,6 +4610,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const totalTabPhotos = useMemo(() => {
     const normTab = (activeTab || '').trim().toUpperCase();
     if (normTab === 'CINEMA') return 0;
+    if (normTab.includes('LOCKED')) {
+      return lockedPhotoIds.size;
+    }
     if (normTab === 'MY PHOTOS') {
       return totalMatchedPhotosCount ?? activeList.length;
     }
@@ -4158,16 +4620,24 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       return activeList.length;
     }
     if (activeFilmstrip?.total && activeFilmstrip.total > 0 && (activeFilmstrip.tab || '').trim().toUpperCase() === normTab) {
-      return activeFilmstrip.total;
+      const lockedInActiveTab = normTab === 'ALL'
+        ? lockedPhotoIds.size
+        : allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === normTab && lockedPhotoIds.has(Number(p.id))).length;
+      return Math.max(0, activeFilmstrip.total - lockedInActiveTab);
     }
     if (normTab === 'ALL') {
+      const knownCount = getTabPhotoCount('ALL');
+      if (typeof knownCount === 'number') return knownCount;
       return totalAllPhotosCount ?? allPhotos.length;
     }
-    if (eventDetails?.tabCounts?.[normTab] && typeof eventDetails.tabCounts[normTab] === 'number') {
-      return eventDetails.tabCounts[normTab];
+    const tabCountsSource = eventDetails?.tabCounts || eventDetails?.tab_counts;
+    const ceremonyCount = getKnownTabCount(tabCountsSource, normTab);
+    if (typeof ceremonyCount === 'number') {
+      const lockedInTab = allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === normTab && lockedPhotoIds.has(Number(p.id))).length;
+      return Math.max(0, ceremonyCount - lockedInTab);
     }
     return tabCache[normTab]?.length || activeList.length;
-  }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos.length, eventDetails?.tabCounts, tabCache, activeList.length, totalMatchedPhotosCount]);
+  }, [activeTab, activeFilmstrip, totalAllPhotosCount, allPhotos, eventDetails?.tabCounts, tabCache, activeList.length, totalMatchedPhotosCount, lockedPhotoIds.size, getTabPhotoCount]);
 
   useEffect(() => {
     totalPhotosShared.value = totalTabPhotos;
@@ -4321,6 +4791,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const kf = kfMap.get(i);
       if (kf) {
         const localOrRemote = kf.localPath || kf.thumbnailUrl || kf.r2Url;
+        const isKfLiked = kf.id != null ? useLikesStore.getState().isLiked(kf.id) : false;
+        const kfLikeCount = kf.id != null ? useLikesStore.getState().getLikeCount(kf.id, 0) : 0;
         synthesized[i] = {
           id: kf.id,
           index: i,
@@ -4334,6 +4806,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           height: kf.height || 960,
           aspectRatio: (kf.width && kf.height) ? kf.width / kf.height : 0.75,
           isMilestone: true,
+          isLiked: isKfLiked,
+          likeCount: kfLikeCount,
         };
         continue;
       }
@@ -4374,10 +4848,83 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     sparseVersion,
   ]);
 
+  const isTimelineSynthesized = useMemo(() => {
+    const totalExpectedMedia = totalTabPhotos + activeCuratedVideos.length;
+    return totalTabPhotos > 0 && displayData.length >= totalExpectedMedia;
+  }, [totalTabPhotos, activeCuratedVideos.length, displayData.length]);
+
+  const isEndOfTabReached = useMemo(() => {
+    if (renderLimit !== (Infinity as any) || isLoading || isTabLoading || activePhotoList.length === 0) {
+      return false;
+    }
+    if (isLoadingMore) {
+      return false;
+    }
+
+    const norm = activeTab.toUpperCase();
+
+    // 1. LOCKED Tab: completeness is established when activePhotoList has gathered all known locked items
+    if (norm.includes('LOCKED')) {
+      const expectedLocked = lockedPhotoIds.size;
+      return expectedLocked > 0 && activePhotoList.length >= expectedLocked;
+    }
+
+    // 2. Personal tabs with complete in-memory sets
+    if (norm === 'MY PHOTOS') {
+      if (typeof totalMatchedPhotosCount === 'number' && totalMatchedPhotosCount > 0) {
+        return activePhotoList.length >= (getTabPhotoCount('MY PHOTOS') ?? totalMatchedPhotosCount);
+      }
+      return !hasMoreMatchedPhotos;
+    }
+
+    if (norm === 'MY FAVOURITES') {
+      return true;
+    }
+
+    // 3. Logical timeline completeness: when displayData spans the full media collection
+    if (isTimelineSynthesized) {
+      return true;
+    }
+
+    // 4. Full photo collection loaded into contiguous memory or final photo in sparse map
+    const expectedCount = totalTabPhotos;
+    if (typeof expectedCount === 'number' && expectedCount > 0) {
+      if (activePhotoList.length >= expectedCount) {
+        return true;
+      }
+      const sparseMap = tabSparsePhotosRef.current[norm];
+      if (sparseMap && sparseMap.has(expectedCount - 1)) {
+        return true;
+      }
+    }
+
+    // 5. Fallback check for sequential paging exhaustion
+    if (norm === 'ALL') {
+      return !hasMorePhotos;
+    }
+
+    return tabHasMoreRef.current[norm] === false;
+  }, [
+    renderLimit,
+    isLoading,
+    isTabLoading,
+    isLoadingMore,
+    activePhotoList.length,
+    activeTab,
+    hasMorePhotos,
+    hasMoreMatchedPhotos,
+    totalMatchedPhotosCount,
+    totalTabPhotos,
+    isTimelineSynthesized,
+    lockedPhotoIds.size,
+    getTabPhotoCount,
+    sparseVersion,
+  ]);
+
   // Scaled container height so scrollview can physically scroll across all photos without clamping
   const estimatedTotalContentHeight = useMemo(() => {
     if (totalTabPhotos <= 0) return 0;
-    if (activePhotoList.length >= totalTabPhotos || isEndOfTabReached) return 0;
+    if (activePhotoList.length >= totalTabPhotos || isEndOfTabReached || isTimelineSynthesized) return 0;
 
     const currentCols = galleryColumnsRef.current || galleryColumns || 2;
     const heroHeight = Math.round(screenHeight * 0.70);
@@ -4400,7 +4947,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     const totalGridItems = totalTabPhotos + activeCuratedVideos.length;
     const totalRows = Math.ceil(totalGridItems / currentCols);
     return heroHeight + stickyHeight + totalRows * (averageCardHeight + colGap) + 160;
-  }, [totalTabPhotos, galleryColumns, screenHeight, activePhotoList, activeCuratedVideos, isEndOfTabReached, width]);
+  }, [totalTabPhotos, galleryColumns, screenHeight, activePhotoList, activeCuratedVideos, isEndOfTabReached, isTimelineSynthesized, width]);
 
   // ─── Spatial Film Loupe: Sample photos fallback (when offline or personal tabs) ───
   const loupeSampleInfo = useMemo(() => {
@@ -4596,15 +5143,27 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     ) {
       return [];
     }
-    return activeFilmstrip.keyframes.filter((kf) =>
+    const filtered = activeFilmstrip.keyframes.filter((kf) =>
       Boolean(kf && (kf.thumbnailUrl || kf.r2Url || (kf as any).localPath)) &&
       (kf.tabName || '').trim().toUpperCase() !== 'CINEMA' &&
       !kf.cinemaCategory &&
       !isVideoMedia(kf) &&
       !isCinemaVideoItem(kf) &&
-      !isVideoComingSoon(kf),
+      !isVideoComingSoon(kf) &&
+      (totalTabPhotos <= 0 || typeof kf.index !== 'number' || kf.index < totalTabPhotos),
     );
-  }, [activeFilmstrip, activeTab]);
+    if (filtered.length <= 40) return filtered;
+    const step = Math.ceil(filtered.length / 40);
+    const sampled: FilmstripKeyframe[] = [];
+    for (let i = 0; i < filtered.length; i += step) {
+      sampled.push(filtered[i]);
+    }
+    const last = filtered[filtered.length - 1];
+    if (last && sampled[sampled.length - 1] !== last) {
+      sampled.push(last);
+    }
+    return sampled;
+  }, [activeFilmstrip, activeTab, totalTabPhotos]);
 
   const loupeThumbnails = useMemo(() => {
     if (visibleFilmstripKeyframes.length > 0) {
@@ -4617,6 +5176,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       });
     }
     return loupeSampleInfo.thumbnails;
+  }, [visibleFilmstripKeyframes, loupeSampleInfo]);
+
+  // Fallback direct CDN thumbnails if local file or 150px resizer fails (prevents black thumbnails)
+  const loupeFallbackThumbnails = useMemo(() => {
+    if (visibleFilmstripKeyframes.length > 0) {
+      return visibleFilmstripKeyframes.map((kf) => {
+        // ALWAYS resolve to a remote HTTP URL for fallback, never a local file:// path
+        const candidate = (kf.r2Url && typeof kf.r2Url === 'string' && kf.r2Url.startsWith('http'))
+          ? kf.r2Url
+          : (kf.thumbnailUrl && typeof kf.thumbnailUrl === 'string' && kf.thumbnailUrl.startsWith('http') ? kf.thumbnailUrl : '');
+        return getKeyframe150pxUrl(candidate);
+      });
+    }
+    if (loupeSampleInfo.sampledItems && loupeSampleInfo.sampledItems.length > 0) {
+      return loupeSampleInfo.sampledItems.map((item) => item.url);
+    }
+    return [];
   }, [visibleFilmstripKeyframes, loupeSampleInfo]);
 
   // Derived keyframe photo indices corresponding 1:1 with loupeThumbnails
@@ -4660,7 +5236,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-      console.log(`[FILM LOUPE 🚀 JUMP] User tapped keyframe #${safeKfIdx + 1} -> Jumping to photo index #${safeTargetIndex} (Target Y: ${targetY}px) in tab "${activeTab}"`);
+      navRequestIdRef.current += 1;
+      const thisNavId = navRequestIdRef.current;
+      logNavigationDiag('keyframe_jump', thisNavId, safeTargetIndex, targetY, currentYRef.current, false);
+
+      console.log(`[FILM LOUPE 🚀 JUMP] User tapped keyframe #${safeKfIdx + 1} -> Jumping to photo index #${safeTargetIndex} (Target Y: ${targetY}px, NavId: ${thisNavId}) in tab "${activeTab}"`);
 
       // Awaken loupe briefly for visual confirmation, then schedule fade-out
       loupeOpacity.value = withTiming(1, { duration: 100 });
@@ -4671,10 +5251,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         }
       }));
 
-      // Record pending jump target to re-verify if layout expands asynchronously
+      // Record pending jump target with authoritative navigation ID
       pendingJumpTargetYRef.current = targetY;
       pendingJumpTargetIndexRef.current = safeTargetIndex;
-      pendingJumpTargetScopeRef.current = `${eventSlug}::${activeTab.trim().toUpperCase()}`;
+      pendingJumpTargetScopeRef.current = `${eventSlug}::${activeTab.trim().toUpperCase()}::${thisNavId}`;
 
       // Priority stream missing photos around target milestone into memory
       fastCatchupPhotos(targetY, activeTab, safeTargetIndex);
@@ -4684,30 +5264,65 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       currentYRef.current = targetY;
       lastSavedScrollYRef.current = targetY;
       saveResumeScrollPosition(targetY);
-
-      // Recompute after priority-fetch and layout updates settle.
-      setTimeout(() => {
-        if (pendingJumpTargetYRef.current === targetY) {
-          const finalTargetY = getPhotoScrollOffset(
-            safeTargetIndex,
-            totalPhotos,
-            photoScrollOffsetsShared.value,
-            galleryContentHeightShared.value,
-            screenHeight,
-            heroHeight,
-          );
-          scrollToY(finalTargetY, false);
-          currentYRef.current = finalTargetY;
-          lastSavedScrollYRef.current = finalTargetY;
-          saveResumeScrollPosition(finalTargetY);
-          pendingJumpTargetYRef.current = null;
-          pendingJumpTargetIndexRef.current = null;
-          pendingJumpTargetScopeRef.current = null;
-        }
-      }, 350);
     },
     [loupeKeyframeIndices, activeTab, eventSlug, fastCatchupPhotos, scrollToY, screenHeight, saveResumeScrollPosition, loupeOpacity, isLoupeAwake, isFadingLoupe, totalTabPhotos, photoScrollOffsetsShared, galleryContentHeightShared]
   );
+
+  // Authoritative event-driven layout acknowledgment: called only when MasonryFlashList
+  // physically commits fresh offsets for all items (zero race conditions, zero arbitrary timers)
+  const handleOffsetsCalculated = useCallback((freshOffsets: number[]) => {
+    if (!freshOffsets || freshOffsets.length === 0) return;
+    if (pendingJumpTargetIndexRef.current === null) return;
+    if (isDraggingLoupe.value) {
+      pendingJumpTargetIndexRef.current = null;
+      pendingJumpTargetYRef.current = null;
+      pendingJumpTargetScopeRef.current = null;
+      return;
+    }
+
+    const targetIndex = pendingJumpTargetIndexRef.current;
+    const targetScope = pendingJumpTargetScopeRef.current;
+    const currentNavId = navRequestIdRef.current;
+
+    // Verify scope matches current event, tab, and navigation request ID
+    const expectedScope = `${eventSlug}::${(activeTab || 'ALL').trim().toUpperCase()}::${currentNavId}`;
+    if (targetScope !== expectedScope) {
+      return;
+    }
+
+    // Verify that targetIndex actually has a fresh, valid offset in the newly calculated array
+    const photoTop = freshOffsets[targetIndex];
+    if (typeof photoTop !== 'number' || isNaN(photoTop) || photoTop < 0) {
+      // The target offset is not yet present in this layout pass — keep pending until matching update arrives
+      return;
+    }
+
+    // Acknowledge and consume the pending navigation target
+    pendingJumpTargetIndexRef.current = null;
+    pendingJumpTargetYRef.current = null;
+    pendingJumpTargetScopeRef.current = null;
+
+    const maxScroll = Math.max(0, galleryContentHeightShared.value - screenHeight);
+    const reScrollY = Math.min(maxScroll, Math.max(0, photoTop - screenHeight * 0.25));
+
+    // Only re-align if actual position differs by > 40px (prevents micro-flicker if already settled)
+    if (Math.abs(currentYRef.current - reScrollY) > 40) {
+      logNavigationDiag('layout_ack_realign', currentNavId, targetIndex, reScrollY, currentYRef.current, false);
+      scrollToY(reScrollY, true);
+      currentYRef.current = reScrollY;
+      lastSavedScrollYRef.current = reScrollY;
+      saveResumeScrollPosition(reScrollY);
+      setTimeout(() => {
+        if (navRequestIdRef.current === currentNavId) {
+          forceUpdateSlotsFnRef.current?.(reScrollY, true);
+          handleViewportScroll(reScrollY, screenHeight, galleryContentHeightShared.value);
+        }
+      }, 420);
+    } else {
+      forceUpdateSlotsFnRef.current?.(reScrollY, true);
+      handleViewportScroll(reScrollY, screenHeight, galleryContentHeightShared.value);
+    }
+  }, [eventSlug, activeTab, screenHeight, scrollToY, saveResumeScrollPosition, galleryContentHeightShared, isDraggingLoupe]);
 
   // Dragging the Film Loupe card: user released after scrubbing
   const handleLoupeDragEnd = useCallback(
@@ -4717,7 +5332,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const currentCols = galleryColumnsRef.current || 2;
       const estimatedRowH = getEstimatedRowHeight(currentCols, width);
       const estimatedTotalH = heroHeight + 107 + Math.ceil(totalPhotos / currentCols) * estimatedRowH + 140;
-      const effectiveContentH = Math.max(galleryContentHeightShared.value, estimatedTotalH);
+      const effectiveContentH = galleryContentHeightShared.value > 0 ? galleryContentHeightShared.value : estimatedTotalH;
       const maxScroll = Math.max(0, effectiveContentH - screenHeight);
       const settledScrollY = Math.min(maxScroll, Math.max(0, finalScrollY));
       const resolvedTargetIndex = typeof targetPhotoIndex === 'number'
@@ -4730,19 +5345,26 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           screenHeight,
           heroHeight,
         ))));
+
+      navRequestIdRef.current += 1;
+      logNavigationDiag('loupe_drag_end', navRequestIdRef.current, resolvedTargetIndex, settledScrollY, currentYRef.current, false);
       currentYRef.current = settledScrollY;
       lastSavedScrollYRef.current = settledScrollY;
       saveResumeScrollPosition(settledScrollY);
-      // Track pending jump target so fastCatchupPhotos can re-align to the exact measured card position
-      pendingJumpTargetYRef.current = settledScrollY;
-      pendingJumpTargetIndexRef.current = resolvedTargetIndex;
-      pendingJumpTargetScopeRef.current = `${eventSlug}::${activeTab.trim().toUpperCase()}`;
+
+      // Clear programmatic jump targets: user has manually positioned the view here via drag
+      pendingJumpTargetYRef.current = null;
+      pendingJumpTargetIndexRef.current = null;
+      pendingJumpTargetScopeRef.current = null;
 
       // Priority stream missing photos around destination
       fastCatchupPhotos(settledScrollY, activeTab, resolvedTargetIndex);
 
       // Keep the exact worklet-computed release offset; do not snap to a rounded photo index.
       scrollToY(settledScrollY, false);
+      setTimeout(() => {
+        handleViewportScroll(settledScrollY, screenHeight, galleryContentHeightShared.value);
+      }, 250);
 
       // Awaken loupe briefly for confirmation, then schedule fade-out
       loupeOpacity.value = withDelay(
@@ -5055,13 +5677,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 numColumns={galleryColumns}
                 onNumColumnsChange={handleGalleryColumnsChange}
                 minContentHeight={
-                  (!isEndOfTabReached && activePhotoList.length < totalTabPhotos)
+                  (!isEndOfTabReached && activePhotoList.length < totalTabPhotos && !isTimelineSynthesized)
                     ? estimatedTotalContentHeight
-                    : (resumeTargetYRef.current ? resumeTargetYRef.current + screenHeight + 200 : 0)
+                    : 0
                 }
                 contentHeightShared={galleryContentHeightShared}
                 photoScrollOffsetsShared={photoScrollOffsetsShared}
+                photoScrollHeightsShared={photoScrollHeightsShared}
+                photoAvailabilityShared={photoAvailabilityShared}
                 photoScrollEntriesShared={photoScrollEntriesShared}
+                isDraggingLoupeShared={isDraggingLoupe}
                 enablePinchToZoom={!isCinema && activeImageIndex === null && activeVideoItem === null && !isMoreDrawerOpen}
                 isPinchingShared={isPinching}
                 minColumns={1}
@@ -5086,6 +5711,8 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                 onScrollEndDrag={(e) => {
                   handleViewportScroll(e.nativeEvent.contentOffset.y, e.nativeEvent.layoutMeasurement.height, e.nativeEvent.contentSize.height);
                 }}
+                onOffsetsCalculated={handleOffsetsCalculated}
+                onMountForceUpdate={(fn) => { forceUpdateSlotsFnRef.current = fn; }}
               />
 
               {/* Floating Sticky Tab Header (Takes over smoothly when scrolled past hero cover, outside ScrollView to ensure 100% touch responsiveness) */}
@@ -5128,12 +5755,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               {!isCinema && loupeThumbnails.length > 0 && (
                 <SpatialFilmLoupeCard
                   thumbnails={loupeThumbnails}
+                  fallbackThumbnails={loupeFallbackThumbnails}
                   keyframeIndices={loupeKeyframeIndices}
                   scrollY={scrollY}
                   totalPhotosShared={totalPhotosShared}
                   contentHeightShared={galleryContentHeightShared}
                   photoScrollOffsetsShared={photoScrollOffsetsShared}
+                  photoScrollHeightsShared={photoScrollHeightsShared}
+                  photoAvailabilityShared={photoAvailabilityShared}
                   photoScrollEntriesShared={photoScrollEntriesShared}
+                  layoutHeightShared={layoutHeightShared}
                   loupeOpacity={loupeOpacity}
                   isDraggingLoupeShared={isDraggingLoupe}
                   scrollDirectionShared={loupeScrollDirection}
@@ -5143,6 +5774,12 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                   screenHeight={screenHeight}
                   onPressCard={handleJumpToKeyframe}
                   onDragEnd={handleLoupeDragEnd}
+                  onScrubStart={() => {
+                    navRequestIdRef.current += 1;
+                    pendingJumpTargetIndexRef.current = null;
+                    pendingJumpTargetYRef.current = null;
+                    pendingJumpTargetScopeRef.current = null;
+                  }}
                   numColumns={galleryColumns}
                 />
               )}
@@ -5272,7 +5909,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             >
               {availableTabs.map((tabName, tabIdx) => {
                 const isActive = activeTab.toUpperCase() === tabName.toUpperCase();
-                const tabCount = getTabPhotoCount(tabName);
+                const tabCount = getTabBrowseableMediaCount(tabName);
 
                 return (
                   <TouchableOpacity
@@ -5305,9 +5942,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
         {/* ── 4. Universal Editorial Lightbox Component ── */}
         {activeImageIndex !== null && (() => {
-          let activeTabTotalCount = getTabPhotoCount(activeTab) ?? activeList.length;
-          if (!activeTabTotalCount || activeTabTotalCount <= 0) {
-            activeTabTotalCount = activeList.length;
+          let activeTabTotalCount = getTabBrowseableMediaCount(activeTab);
+          if (typeof activeTabTotalCount !== 'number' || activeTabTotalCount <= 0) {
+            const actualMediaCount = displayData.filter((item: any) => !item.isSkeleton).length;
+            activeTabTotalCount = actualMediaCount > 0 ? actualMediaCount : activeList.length;
           }
 
           return (
@@ -5325,6 +5963,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               onDeletePhoto={handleDeletePhoto}
               enableLock={isBrideOrGroom}
               onToggleLockPhoto={handleToggleLockPhoto}
+              onLoadMore={() => {
+                if (loadMorePhotosRef.current) {
+                  loadMorePhotosRef.current();
+                }
+              }}
               onClose={() => {
                 setActiveImageIndex(null);
                 setSelectedBounds(null);

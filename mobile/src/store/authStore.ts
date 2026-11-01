@@ -159,7 +159,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
         }).catch(() => {});
       }
-      
+
+      import('./likesStore').then((m) => m.useLikesStore.getState().initForUser(profile.id)).catch(() => {});
+
       const pending = get().pendingInvite;
       if (pending && pending.slug) {
         set({ 
@@ -353,6 +355,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } catch (_) {}
 
       // If an incoming deep link arrived while Keychain was loading, activate it immediately
+      import('./likesStore').then((m) => m.useLikesStore.getState().initForUser(profile?.id || null)).catch(() => {});
+
       const pending = get().pendingInvite;
       if (token && pending && pending.slug) {
         set({
@@ -391,6 +395,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
       await AsyncStorage.removeItem(PROFILE_CACHE_KEY).catch(() => {});
       await userSelfieStorage.clearLocalSelfie().catch(() => {});
+      import('./likesStore').then((m) => m.useLikesStore.getState().clearLikes()).catch(() => {});
 
       // Sign out of Google so the account picker is shown on next sign-in
       try {

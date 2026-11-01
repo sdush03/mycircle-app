@@ -71,6 +71,19 @@ export const getPoolSizeForCols = (cols: number): number => {
   }
 };
 
+const dataIdentityMap = new WeakMap<object, number>();
+let nextDataId = 1;
+
+function getDataIdentity(arr: any): number {
+  if (!arr || typeof arr !== 'object') return 0;
+  let id = dataIdentityMap.get(arr);
+  if (!id) {
+    id = nextDataId++;
+    dataIdentityMap.set(arr, id);
+  }
+  return id;
+}
+
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
 export interface ColumnItem<T> {
@@ -102,6 +115,7 @@ interface SlotState {
   height: number;
   itemId?: string;
   isOnScreen?: boolean;
+  priority?: 'high' | 'normal' | 'low';
 }
 
 function getItemId<T>(item: ColumnItem<T> | undefined): string | undefined {
@@ -153,6 +167,7 @@ export interface MasonryFlashListProps<T = any> {
     numColumns?: number;
     isOnScreen?: boolean;
     isHighPriority?: boolean;
+    priority?: 'high' | 'normal' | 'low';
   }) => React.ReactElement;
   keyExtractor?: (item: T, index: number) => string;
   renderHeroCover?: () => React.ReactElement | null;
@@ -169,11 +184,16 @@ export interface MasonryFlashListProps<T = any> {
   minContentHeight?: number;
   contentHeightShared?: SharedValue<number>;
   photoScrollOffsetsShared?: SharedValue<number[]>;
+  photoScrollHeightsShared?: SharedValue<number[]>;
+  photoAvailabilityShared?: SharedValue<number[]>;
   photoScrollEntriesShared?: SharedValue<number[]>;
+  isDraggingLoupeShared?: SharedValue<boolean>;
   refreshControl?: any;
   isPinchingShared?: SharedValue<boolean>;
   onMomentumScrollEnd?: (event: any) => void;
   onScrollEndDrag?: (event: any) => void;
+  onOffsetsCalculated?: (offsets: number[]) => void;
+  onMountForceUpdate?: (updateFn: (y: number, force: boolean) => void) => void;
 }
 
 // ─── Dynamic Layout Computation ───────────────────────────────────────────────
@@ -247,6 +267,7 @@ function assignSlots<T>(
   prevSlots: SlotState[],
   poolSize: number,
   headerHeight: number = 0,
+  scrollDirection: number = 1,
 ): SlotState[] {
   if (!items || !Array.isArray(items) || items.length === 0) {
     return prevSlots;
@@ -257,17 +278,26 @@ function assignSlots<T>(
   const maxY = gridScrollY + SCREEN_HEIGHT + OVERSCAN;
   const viewportCenter = gridScrollY + SCREEN_HEIGHT / 2;
 
-  // 1. Identify all candidate items in overscan range, separating on-screen vs overscan
+  // 1. Identify all candidate items in overscan range, separating on-screen vs overscan & priority tiers
   const candidates: number[] = [];
   const onScreenSet = new Set<number>();
+  const priorityMap = new Map<number, 'high' | 'normal' | 'low'>();
 
   for (let i = 0; i < items.length; i++) {
     const { topY, height } = items[i];
     if (topY > maxY) break; // Items are ordered vertically, stop scanning once past maxY
     if (topY + height >= minY) {
       candidates.push(i);
-      if (topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT) {
+      const isVisible = topY + height >= gridScrollY && topY <= gridScrollY + SCREEN_HEIGHT;
+      if (isVisible) {
         onScreenSet.add(i);
+        priorityMap.set(i, 'high'); // Priority 1: Currently visible
+      } else {
+        // Priority 2: Approaching in active scroll direction (within ~2 rows = 650px)
+        const isApproaching = scrollDirection >= 0
+          ? (topY > gridScrollY + SCREEN_HEIGHT && topY <= gridScrollY + SCREEN_HEIGHT + 650)
+          : (topY + height < gridScrollY && topY + height >= gridScrollY - 650);
+        priorityMap.set(i, isApproaching ? 'normal' : 'low');
       }
     }
   }
@@ -330,14 +360,21 @@ function assignSlots<T>(
       occupiedSlots.add(s);
       const currentItem = items[colItemIdx];
       const isOnScreen = onScreenSet.has(colItemIdx);
-      // Retain slot reference if geometry has not moved
-      if (slot.top !== currentItem.topY || slot.height !== currentItem.height) {
+      const priority = priorityMap.get(colItemIdx) || (isOnScreen ? 'high' : 'low');
+      // Retain slot reference if geometry and priority tier have not moved
+      if (
+        slot.top !== currentItem.topY ||
+        slot.height !== currentItem.height ||
+        slot.isOnScreen !== isOnScreen ||
+        slot.priority !== priority
+      ) {
         next[s] = {
           colItemIdx,
           top: currentItem.topY,
           height: currentItem.height,
           itemId: String(itemId),
           isOnScreen,
+          priority,
         };
       }
     }
@@ -362,7 +399,8 @@ function assignSlots<T>(
         const newH   = newItem.height;
         const newId  = String(getItemId(newItem) ?? itemIdx);
         const isOnScreen = onScreenSet.has(itemIdx);
-        next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId, isOnScreen };
+        const priority = priorityMap.get(itemIdx) || (isOnScreen ? 'high' : 'low');
+        next[slotIdx] = { colItemIdx: itemIdx, top: newTop, height: newH, itemId: newId, isOnScreen, priority };
       }
     }
   }
@@ -371,7 +409,7 @@ function assignSlots<T>(
   while (freeIdx < freeSlotIndices.length) {
     const slotIdx = freeSlotIndices[freeIdx++];
     if (next[slotIdx].colItemIdx !== -1) {
-      next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined, isOnScreen: false };
+      next[slotIdx] = { colItemIdx: -1, top: -30000, height: 0, itemId: undefined, isOnScreen: false, priority: 'low' };
     }
   }
 
@@ -396,6 +434,7 @@ function computeAllColumnSlots<T>(
   poolSize: number,
   headerHeight: number,
   prevAllSlots?: SlotState[][],
+  scrollDirection: number = 1,
 ): SlotState[][] {
   if (!layout || !layout.columns) return [];
   return layout.columns.map((col, cIdx) => {
@@ -405,8 +444,28 @@ function computeAllColumnSlots<T>(
       : Array.from({ length: poolSize }, (_, i): SlotState => (
           prevColSlots[i] || { colItemIdx: -1, top: -30000, height: 0, itemId: undefined }
         ));
-    return assignSlots(col.items, scrollY, base, poolSize, headerHeight);
+    return assignSlots(col.items, scrollY, base, poolSize, headerHeight, scrollDirection);
   });
+}
+
+function areColumnSlotsEqual(a?: SlotState[], b?: SlotState[]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const s1 = a[i];
+    const s2 = b[i];
+    if (
+      s1.colItemIdx !== s2.colItemIdx ||
+      s1.top !== s2.top ||
+      s1.height !== s2.height ||
+      s1.itemId !== s2.itemId ||
+      s1.isOnScreen !== s2.isOnScreen ||
+      s1.priority !== s2.priority
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ─── Apple Photos Focal-Point Touch Anchor ────────────────────────────────────
@@ -814,6 +873,7 @@ interface SlotViewProps {
     numColumns?: number;
     isOnScreen?: boolean;
     isHighPriority?: boolean;
+    priority?: 'high' | 'normal' | 'low';
   }) => React.ReactElement;
 }
 
@@ -841,6 +901,7 @@ const SlotView = React.memo(
               numColumns,
               isOnScreen,
               isHighPriority: isOnScreen,
+              priority: slot.priority || (isOnScreen ? 'high' : 'low'),
             })
           : null}
       </View>
@@ -855,6 +916,7 @@ const SlotView = React.memo(
     prev.isColumn0 === next.isColumn0 &&
     prev.columnIndex === next.columnIndex &&
     prev.numColumns === next.numColumns &&
+    prev.isOnScreen === next.isOnScreen &&
     prev.renderItem === next.renderItem,
 );
 
@@ -882,13 +944,31 @@ export function MasonryFlashList<T = any>({
   minContentHeight,
   contentHeightShared,
   photoScrollOffsetsShared,
+  photoScrollHeightsShared,
+  photoAvailabilityShared,
   photoScrollEntriesShared,
+  isDraggingLoupeShared,
   contentContainerStyle,
   refreshControl,
   isPinchingShared,
   onMomentumScrollEnd,
   onScrollEndDrag,
+  onOffsetsCalculated,
+  onMountForceUpdate,
 }: MasonryFlashListProps<T>) {
+  const onOffsetsCalculatedRef = useRef(onOffsetsCalculated);
+  onOffsetsCalculatedRef.current = onOffsetsCalculated;
+
+  const onMountForceUpdateRef = useRef(onMountForceUpdate);
+  onMountForceUpdateRef.current = onMountForceUpdate;
+
+  useEffect(() => {
+    // Expose updateSlotsFromY so parent can force a slot refresh on navigation settlement
+    onMountForceUpdateRef.current?.((y: number, force: boolean = false) => {
+      updateSlotsFromY(y, force);
+    });
+  }, []);
+
   // ─── Shared Values ─────────────────────────────────────────────────────────
   const pinchScale = useSharedValue(1);
   const focalXShared = useSharedValue(SCREEN_WIDTH / 2);
@@ -924,7 +1004,7 @@ export function MasonryFlashList<T = any>({
   const commitTransitionRef = useRef<(cols: number) => void>(() => {});
   const transitionCardsRef = useRef<TransitionCardData<T>[] | null>(null);
   // Layout cache: avoids re-running O(N) buildMasonryLayout for column counts we've already computed
-  const layoutCacheRef = useRef<Map<number, MasonryLayout<T>>>(new Map());
+  const layoutCacheRef = useRef<Map<any, MasonryLayout<T>>>(new Map());
 
   // ─── Stable callback refs for the pinch gesture (prevents gesture handler recreation) ───
   const startInteractiveTransitionRef = useRef<(cols: number, fX: number, fY: number) => void>(() => {});
@@ -1053,10 +1133,20 @@ export function MasonryFlashList<T = any>({
   const headerHeightRef = useRef(headerHeight);
   headerHeightRef.current = headerHeight;
 
-  const layout = useMemo(
-    () => buildMasonryLayout(data, currentCols, SCREEN_WIDTH),
-    [data, currentCols],
-  );
+  const layout = useMemo(() => {
+    const dataId = getDataIdentity(data);
+    const cacheKey = `${dataId}_${currentCols}_${SCREEN_WIDTH}_${data.length}`;
+    if (layoutCacheRef.current.has(cacheKey)) {
+      return layoutCacheRef.current.get(cacheKey)!;
+    }
+    const res = buildMasonryLayout(data, currentCols, SCREEN_WIDTH);
+    if (layoutCacheRef.current.size > 20) {
+      const firstKey = layoutCacheRef.current.keys().next().value;
+      if (firstKey !== undefined) layoutCacheRef.current.delete(firstKey);
+    }
+    layoutCacheRef.current.set(cacheKey, res);
+    return res;
+  }, [data, currentCols]);
 
   const layoutRef = useRef(layout);
   const dataRef = useRef(data);
@@ -1075,16 +1165,20 @@ export function MasonryFlashList<T = any>({
     layoutRef.current = layout;
     dataRef.current = data;
     if (isTransitioningRef.current) return;
-    const y = scrollYRef.current;
+    const y = Math.max(0, scrollYRef.current);
     const newSlots = computeAllColumnSlots(layout, y, poolSize, headerHeight, columnSlotsRef.current);
-    setColumnSlots(newSlots);
-    columnSlotsRef.current = newSlots;
+    const anyColChanged = !columnSlotsRef.current || newSlots.some((slots, idx) => !areColumnSlotsEqual(slots, columnSlotsRef.current[idx]));
+    if (anyColChanged) {
+      setColumnSlots(newSlots);
+      columnSlotsRef.current = newSlots;
+    }
   }, [layout, poolSize, headerHeight, data]);
 
   useEffect(() => {
     endReachedFiredRef.current = false;
     // Invalidate layout cache — data changed, cached layouts are stale
     layoutCacheRef.current.clear();
+    setContainerMinHeight(0);
   }, [data]);
 
   useEffect(() => {
@@ -1098,33 +1192,85 @@ export function MasonryFlashList<T = any>({
     }
   }, [layout.maxHeight, headerHeight, contentHeightShared, ListFooterComponent, containerMinHeight, minContentHeight]);
 
+  const pendingOffsetsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCalculatedLayoutRef = useRef<MasonryLayout<T> | null>(null);
+  const lastCalculatedHeaderHRef = useRef<number>(0);
+  const layoutSeqRef = useRef<number>(0);
+
   useEffect(() => {
     if (!photoScrollOffsetsShared) return;
-    const offsets: number[] = [];
-    const entries: Array<{ top: number; index: number }> = [];
-    layout.columns.forEach((column) => {
-      column.items.forEach((item) => {
-        const rawItem = item.item as any;
-        const hasExplicitPhotoIndex = typeof rawItem?.loupePhotoIndex === 'number';
-        if (!hasExplicitPhotoIndex && (
-          rawItem?.isVideo ||
-          rawItem?.videoUrl ||
-          String(rawItem?.tabName || '').trim().toUpperCase() === 'CINEMA'
-        )) {
-          return;
-        }
-        const photoIndex = hasExplicitPhotoIndex ? rawItem.loupePhotoIndex : item.originalIndex;
-        const top = item.topY + headerHeight;
-        offsets[photoIndex] = top;
-        entries.push({ top, index: photoIndex });
-      });
-    });
-    entries.sort((a, b) => a.top - b.top || a.index - b.index);
-    photoScrollOffsetsShared.value = offsets;
-    if (photoScrollEntriesShared) {
-      photoScrollEntriesShared.value = entries.flatMap((entry) => [entry.top, entry.index]);
+    // Skip recalculation only when the current layout reference and headerHeight
+    // both match the last successfully calculated values, and published arrays are valid.
+    if (
+      lastCalculatedLayoutRef.current === layout &&
+      lastCalculatedHeaderHRef.current === headerHeight &&
+      photoScrollOffsetsShared.value.length > 0
+    ) {
+      return;
     }
-  }, [data.length, layout, headerHeight, photoScrollOffsetsShared, photoScrollEntriesShared]);
+
+    if (pendingOffsetsTimerRef.current) {
+      clearTimeout(pendingOffsetsTimerRef.current);
+      pendingOffsetsTimerRef.current = null;
+    }
+
+    const thisSeq = ++layoutSeqRef.current;
+    // Capture the exact layout and headerHeight this calculation pass is executing for
+    const targetLayout = layout;
+    const targetHeaderH = headerHeight;
+
+    // Defer sorting and bridge transfer so it never blocks the 120fps scroll frame
+    pendingOffsetsTimerRef.current = setTimeout(() => {
+      if (layoutSeqRef.current !== thisSeq) {
+        return; // Superseded by a newer layout calculation pass!
+      }
+      const offsets: number[] = [];
+      const heights: number[] = [];
+      const availability: number[] = [];
+      const entries: Array<{ top: number; index: number }> = [];
+      targetLayout.columns.forEach((column) => {
+        column.items.forEach((item) => {
+          const rawItem = item.item as any;
+          const hasExplicitPhotoIndex = typeof rawItem?.loupePhotoIndex === 'number';
+          if (!hasExplicitPhotoIndex && (
+            rawItem?.isVideo ||
+            rawItem?.videoUrl ||
+            String(rawItem?.tabName || '').trim().toUpperCase() === 'CINEMA'
+          )) {
+            return;
+          }
+          const photoIndex = hasExplicitPhotoIndex ? rawItem.loupePhotoIndex : item.originalIndex;
+          const top = item.topY + targetHeaderH;
+          offsets[photoIndex] = top;
+          heights[photoIndex] = item.height;
+          availability[photoIndex] = rawItem?.isSkeleton ? 0 : 1;
+          entries.push({ top, index: photoIndex });
+        });
+      });
+      entries.sort((a, b) => a.top - b.top || a.index - b.index);
+      photoScrollOffsetsShared.value = offsets;
+      if (photoScrollHeightsShared) {
+        photoScrollHeightsShared.value = heights;
+      }
+      if (photoAvailabilityShared) {
+        photoAvailabilityShared.value = availability;
+      }
+      if (photoScrollEntriesShared) {
+        photoScrollEntriesShared.value = entries.flatMap((entry) => [entry.top, entry.index]);
+      }
+      // Update last-calculated references ONLY AFTER fresh arrays are published!
+      lastCalculatedLayoutRef.current = targetLayout;
+      lastCalculatedHeaderHRef.current = targetHeaderH;
+      onOffsetsCalculatedRef.current?.(offsets);
+    }, 100);
+
+    return () => {
+      if (pendingOffsetsTimerRef.current) {
+        clearTimeout(pendingOffsetsTimerRef.current);
+        pendingOffsetsTimerRef.current = null;
+      }
+    };
+  }, [layout, headerHeight, photoScrollOffsetsShared, photoScrollHeightsShared, photoAvailabilityShared, photoScrollEntriesShared]);
 
   const trailingUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRenderedYRef = useRef<number>(0);
@@ -1143,10 +1289,13 @@ export function MasonryFlashList<T = any>({
     // Use the ref guard — it's always synchronously correct unlike React state (isPinchingState, isTransitioning)
     if (isTransitioningRef.current) return;
 
-    scrollYRef.current = y;
+    const clampedY = Math.max(0, y);
+    scrollYRef.current = clampedY;
+    if (clampedY === 0 && lastRenderedYRef.current === 0 && !force) return;
+
     const now = Date.now();
     const timeDelta = now - lastUpdateRef.current;
-    const distDelta = Math.abs(y - lastRenderedYRef.current);
+    const distDelta = Math.abs(clampedY - lastRenderedYRef.current);
 
     // Smooth 16ms cadence (60/120fps sync) with 20px delta check
     const minTimeDelta = Platform.OS === 'android' ? 24 : 16;
@@ -1166,16 +1315,17 @@ export function MasonryFlashList<T = any>({
       trailingUpdateTimerRef.current = null;
     }
     lastUpdateRef.current = now;
-    lastRenderedYRef.current = y;
+    lastRenderedYRef.current = clampedY;
 
     const currentLayout = layoutRef.current;
     if (!currentLayout || !currentLayout.columns) return;
+    const scrollDir = clampedY >= lastRenderedYRef.current ? 1 : -1;
 
     setColumnSlots((prev) => {
       let anyChanged = false;
       const next = currentLayout.columns.map((col, cIdx) => {
         const prevSlots = (prev && prev[cIdx]) || [];
-        const updated = assignSlots(col.items, y, prevSlots, poolSize, headerHeight);
+        const updated = assignSlots(col.items, clampedY, prevSlots, poolSize, headerHeight, scrollDir);
         if (updated !== prevSlots) anyChanged = true;
         return updated;
       });
@@ -1186,7 +1336,7 @@ export function MasonryFlashList<T = any>({
     // Batch track visible impressions
     if (now - lastImpressionCheckRef.current > 600) {
       lastImpressionCheckRef.current = now;
-      const gridY = Math.max(0, y - headerHeight);
+      const gridY = Math.max(0, clampedY - headerHeight);
       const viewTop = gridY;
       const viewBottom = gridY + SCREEN_HEIGHT;
 
@@ -1214,12 +1364,14 @@ export function MasonryFlashList<T = any>({
     const totalHeight = currentLayout.maxHeight;
     if (onEndReached && !endReachedFiredRef.current && totalHeight > 0) {
       const thresholdY = totalHeight - SCREEN_HEIGHT * (1 + onEndReachedThreshold);
-      if (y >= thresholdY) {
+      if (clampedY >= thresholdY) {
         endReachedFiredRef.current = true;
         onEndReached();
       }
     }
   }, [headerHeight, onEndReached, onEndReachedThreshold, poolSize]);
+
+  const lastDispatchedScrollYShared = useSharedValue(0);
 
   useAnimatedReaction(
     () => {
@@ -1229,10 +1381,25 @@ export function MasonryFlashList<T = any>({
     (y) => {
       'worklet';
       if (!isPinching.value && !isTransitioningShared.value && !isScrollRestoringShared.value) {
-        runOnJS(updateSlotsFromY)(y);
+        // When user is scrubbing the film loupe, do NOT recalculate slots continuously
+        if (isDraggingLoupeShared?.value) return;
+
+        if (y <= 0) {
+          // At or above the top (overscroll / pull-down): clamp to 0 and only update once if coming from below
+          if (lastDispatchedScrollYShared.value !== 0) {
+            lastDispatchedScrollYShared.value = 0;
+            runOnJS(updateSlotsFromY)(0);
+          }
+          return;
+        }
+        const delta = Math.abs(y - lastDispatchedScrollYShared.value);
+        if (delta >= 16) {
+          lastDispatchedScrollYShared.value = y;
+          runOnJS(updateSlotsFromY)(y);
+        }
       }
     },
-    [updateSlotsFromY],
+    [updateSlotsFromY, isDraggingLoupeShared],
   );
 
 
@@ -1314,6 +1481,7 @@ export function MasonryFlashList<T = any>({
     if (isPinchingShared) isPinchingShared.value = false;
     isPinching.value = false;
     pinchDirection.value = 0;
+    setContainerMinHeight(0);
 
     // 1. Reveal base grid at 100% solid opacity UNDERNEATH the overlay.
     // The overlay is currently at 100% opacity on top of it, so this handoff is visually seamless.
@@ -1787,11 +1955,11 @@ export function MasonryFlashList<T = any>({
             }}
             refreshControl={refreshControl}
             onMomentumScrollEnd={(e) => {
-              updateSlotsFromY(e.nativeEvent.contentOffset.y, true);
+              updateSlotsFromY(Math.max(0, e.nativeEvent.contentOffset.y), true);
               onMomentumScrollEnd?.(e);
             }}
             onScrollEndDrag={(e) => {
-              updateSlotsFromY(e.nativeEvent.contentOffset.y, true);
+              updateSlotsFromY(Math.max(0, e.nativeEvent.contentOffset.y), true);
               onScrollEndDrag?.(e);
             }}
           >

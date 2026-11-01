@@ -8,6 +8,7 @@ import { savePhotoAspect, getPhotoCardAspect } from '../../../../utils/photoDime
 import { videoPreloadManager } from '../../../../services/videoPreloadManager';
 import { getResizedImageUrl } from '../../../../utils/imageUrl';
 import { getValidImageThumbnail } from '../../../cinema/CinemaVideoCard';
+import { useLikesStore } from '../../../../store/likesStore';
 
 export interface MasonryCardProps {
   img: any;
@@ -16,6 +17,7 @@ export interface MasonryCardProps {
   columnIndex?: number;
   numColumns?: number;
   isHighPriority?: boolean;
+  priority?: 'high' | 'normal' | 'low';
   onSelect: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
   onRegisterRef?: (cardId: string, ref: View | null) => void;
   onToggleLike?: (img: any, explicitLiked?: boolean) => void;
@@ -30,8 +32,8 @@ export function clearRevealedPhotosCache(): void {
   revealedPhotoIds.clear();
 }
 
-export const MasonryCard = React.memo(function MasonryCard({ 
-  img, index, isColumn0, columnIndex, numColumns = 2, isHighPriority, onSelect, onRegisterRef, onToggleLike
+export const MasonryCard = React.memo(function MasonryCard({
+  img, index, isColumn0, columnIndex, numColumns = 2, isHighPriority, priority, onSelect, onRegisterRef, onToggleLike
 }: MasonryCardProps) {
   const cardRef = useRef<View>(null);
   const cardId = String(img?.id || img?.uri || `idx-${index}`);
@@ -56,31 +58,12 @@ export const MasonryCard = React.memo(function MasonryCard({
   const cardAspect = getPhotoCardAspect(img, index, colIdx, numColumns);
 
   const lastHeartPressTimeRef = useRef<number>(0);
-  const [localLiked, setLocalLiked] = useState<boolean | null>(null);
-  const [localLikeCount, setLocalLikeCount] = useState<number | null>(null);
+  const photoIdStr = img?.id != null ? String(img.id) : null;
+  const storeLiked = useLikesStore((s) => (photoIdStr ? s.likes[photoIdStr] : undefined));
+  const storeCount = useLikesStore((s) => (photoIdStr ? s.likeCounts[photoIdStr] : undefined));
 
-  useEffect(() => {
-    setLocalLiked(null);
-    setLocalLikeCount(null);
-  }, [img?.isLiked, img?.likeCount]);
-
-  // Synchronize immediately if photo is liked/unliked from EditorialLightbox or another card
-  useEffect(() => {
-    const unsub = tabEvents.on(EVENT_PHOTO_LIKED, (data?: { photoId: string; isLiked: boolean; likeCount?: number }) => {
-      if (!data) return;
-      const myId = img?.id != null ? String(img.id) : (img?.r2Url || img?.uri || '');
-      if (myId && (myId === data.photoId || String(img?.id) === data.photoId)) {
-        setLocalLiked(data.isLiked);
-        if (typeof data.likeCount === 'number') {
-          setLocalLikeCount(data.likeCount);
-        }
-      }
-    });
-    return () => unsub();
-  }, [img?.id, img?.r2Url, img?.uri]);
-
-  const isLiked = localLiked !== null ? localLiked : (typeof img === 'object' && !!img.isLiked);
-  const likeCount = localLikeCount !== null ? localLikeCount : (typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0);
+  const isLiked = typeof storeLiked === 'boolean' ? storeLiked : (typeof img === 'object' && !!img.isLiked);
+  const likeCount = typeof storeCount === 'number' ? storeCount : (typeof img === 'object' && typeof img.likeCount === 'number' ? img.likeCount : 0);
 
   const handlePress = useCallback(() => {
     if (Date.now() - lastHeartPressTimeRef.current < 400) {
@@ -101,11 +84,11 @@ export const MasonryCard = React.memo(function MasonryCard({
 
   const handleHeartPress = useCallback(async (e: any) => {
     e?.stopPropagation?.();
+    if (Date.now() - lastHeartPressTimeRef.current < 250) {
+      return;
+    }
     lastHeartPressTimeRef.current = Date.now();
     const next = !isLiked;
-    const count = Math.max(0, likeCount + (next ? 1 : -1));
-    setLocalLiked(next);
-    setLocalLikeCount(count);
 
     try {
       if (next) {
@@ -118,7 +101,7 @@ export const MasonryCard = React.memo(function MasonryCard({
     if (onToggleLike) {
       onToggleLike(img, next);
     }
-  }, [onToggleLike, img, isLiked, likeCount]);
+  }, [onToggleLike, img, isLiked]);
 
   const loadStartTimeRef = useRef<number>(0);
 
@@ -132,9 +115,9 @@ export const MasonryCard = React.memo(function MasonryCard({
       ? { blurhash, width: 32, height: 32 }
       : (Platform.OS === 'ios' ? { blurhash: DEFAULT_NEUTRAL_BLURHASH, width: 32, height: 32 } : undefined);
 
-  const effectivePriority = typeof isHighPriority === 'boolean'
+  const effectivePriority = priority || (typeof isHighPriority === 'boolean'
     ? (isHighPriority ? "high" : "low")
-    : (index < 20 ? "high" : "normal");
+    : (index < 20 ? "high" : "normal"));
 
   const isVideo =
     !!img?.isVideo ||
@@ -245,11 +228,6 @@ export const MasonryCard = React.memo(function MasonryCard({
             loadStartTimeRef.current = Date.now();
           }}
           onLoad={(e) => {
-            const dur = loadStartTimeRef.current ? Date.now() - loadStartTimeRef.current : 0;
-            const priorityTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
-              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
-              : 'P3 (Original Full-Res)';
-            console.log(`[PERF ⏱️ MasonryCard #${index + 1}] Loaded in ${dur}ms via ${priorityTier} | ${imageDisplayUri?.substring(0, 80)}...`);
             if (e.source?.width && e.source?.height) {
               const aspect = e.source.width / e.source.height;
               if (cardId) savePhotoAspect(cardId, aspect);
@@ -257,10 +235,6 @@ export const MasonryCard = React.memo(function MasonryCard({
             }
           }}
           onError={() => {
-            const failedTier = imageDisplayUri?.includes('/thumbnails/') ? 'P1 (Direct CDN 600px)' 
-              : imageDisplayUri?.includes('/api/gallery/resize') ? 'P2 (Resize Fallback)' 
-              : 'P3 (Original Full-Res)';
-            console.warn(`[PERF ⚠️ MasonryCard #${index + 1}] FAILED on ${failedTier}: ${imageDisplayUri}`);
             if (imageDisplayUri && imageDisplayUri !== failedUri) {
               // First failure: try the fallback URI
               setFailedUri(imageDisplayUri);
@@ -330,6 +304,8 @@ export const MasonryCard = React.memo(function MasonryCard({
     prevProps.isColumn0 === nextProps.isColumn0 &&
     prevProps.columnIndex === nextProps.columnIndex &&
     prevProps.numColumns === nextProps.numColumns &&
+    prevProps.isHighPriority === nextProps.isHighPriority &&
+    prevProps.priority === nextProps.priority &&
     prevProps.img?.id === nextProps.img?.id &&
     prevProps.img?.uri === nextProps.img?.uri &&
     prevProps.img?.r2Url === nextProps.img?.r2Url &&
