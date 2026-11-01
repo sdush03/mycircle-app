@@ -148,53 +148,57 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setAuth: async (token, profile, userEvents = []) => {
     try {
-      // Increment session epoch to invalidate any pending in-flight token updates from previous sessions
-      if (!(global as any)._sessionEpoch) {
-        (global as any)._sessionEpoch = 1;
-      } else {
-        (global as any)._sessionEpoch++;
-      }
-      const sessionEpochAtStart = (global as any)._sessionEpoch;
-
-      const { selfieUrl, ...persistentProfile } = profile;
-      await SecureStore.setItemAsync(TOKEN_KEY, token);
-
-      // If epoch changed while saving, abort
-      if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
-
-      await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
-      if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
-
-      if (selfieUrl) {
-        userSelfieStorage.saveLocalSelfie(selfieUrl).then((localUri) => {
-          const current = get().profile;
-          if (current && current.selfieUrl !== localUri) {
-            set({ profile: { ...current, selfieUrl: localUri, hasSelfie: true } });
-          }
-        }).catch(() => {});
+      if (!(global as any)._tokenUpdateChain) {
+        (global as any)._tokenUpdateChain = Promise.resolve();
+        (global as any)._sessionEpoch = 0;
       }
 
-      import('./likesStore').then((m) => m.useLikesStore.getState().initForUser(profile.id)).catch(() => {});
+      (global as any)._tokenUpdateChain = (global as any)._tokenUpdateChain.then(async () => {
+        // Increment session epoch
+        (global as any)._sessionEpoch = ((global as any)._sessionEpoch || 0) + 1;
+        const sessionEpochAtStart = (global as any)._sessionEpoch;
 
-      const pending = get().pendingInvite;
-      if (pending && pending.slug) {
-        set({ 
-          token, 
-          profile, 
-          userEvents, 
-          isLoading: false, 
-          pendingInvite: null,
-          eventSlug: pending.slug,
-          passcode: pending.passcode,
-          openedFrom: 'mycircle',
-          initialTab: pending.tab || null,
-        });
-        import('../services/galleryPrefetch').then((m) => {
-          m.prefetchEventGalleryData(pending.slug, pending.passcode);
-        }).catch(() => {});
-      } else {
-        set({ token, profile, userEvents, isLoading: false });
-      }
+        const { selfieUrl, ...persistentProfile } = profile;
+        await SecureStore.setItemAsync(TOKEN_KEY, token);
+
+        if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
+
+        await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(persistentProfile));
+        if ((global as any)._sessionEpoch !== sessionEpochAtStart) return;
+
+        if (selfieUrl) {
+          userSelfieStorage.saveLocalSelfie(selfieUrl).then((localUri) => {
+            const current = get().profile;
+            if (current && current.selfieUrl !== localUri) {
+              set({ profile: { ...current, selfieUrl: localUri, hasSelfie: true } });
+            }
+          }).catch(() => {});
+        }
+
+        import('./likesStore').then((m) => m.useLikesStore.getState().initForUser(profile.id)).catch(() => {});
+
+        const pending = get().pendingInvite;
+        if (pending && pending.slug) {
+          set({
+            token,
+            profile,
+            userEvents,
+            isLoading: false,
+            pendingInvite: null,
+            eventSlug: pending.slug,
+            passcode: pending.passcode,
+            openedFrom: 'mycircle',
+            initialTab: pending.tab || null,
+          });
+          import('../services/galleryPrefetch').then((m) => {
+            m.prefetchEventGalleryData(pending.slug, pending.passcode);
+          }).catch(() => {});
+        } else {
+          set({ token, profile, userEvents, isLoading: false });
+        }
+      });
+
+      await (global as any)._tokenUpdateChain;
     } catch (e) {
       console.error('Error saving auth state', e);
     }
@@ -465,44 +469,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     try {
-      // Increment session epoch to immediately invalidate any pending in-flight token updates
-      if (!(global as any)._sessionEpoch) {
-        (global as any)._sessionEpoch = 1;
-      } else {
-        (global as any)._sessionEpoch++;
+      if (!(global as any)._tokenUpdateChain) {
+        (global as any)._tokenUpdateChain = Promise.resolve();
+        (global as any)._sessionEpoch = 0;
       }
 
-      await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
-      await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => {});
-      await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
-      await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
-      await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
-      await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
-      await AsyncStorage.removeItem(PROFILE_CACHE_KEY).catch(() => {});
-      await userSelfieStorage.clearLocalSelfie().catch(() => {});
-      import('./likesStore').then((m) => m.useLikesStore.getState().clearLikes()).catch(() => {});
+      (global as any)._tokenUpdateChain = (global as any)._tokenUpdateChain.then(async () => {
+        // Increment session epoch to immediately invalidate any pending in-flight token updates
+        (global as any)._sessionEpoch = ((global as any)._sessionEpoch || 0) + 1;
 
-      // Sign out of Google so the account picker is shown on next sign-in
-      try {
-        const { GoogleSignin } = require('@react-native-google-signin/google-signin');
-        await GoogleSignin.signOut();
-      } catch (_) {
-        // Native module may not be available in all environments (e.g. Expo Go)
-      }
-      set({
-        token: null,
-        profile: null,
-        userEvents: [],
-        galleryCache: {},
-        profileCache: null,
-        isLoading: false,
-        eventSlug: null,
-        passcode: null,
-        eventCoverUrl: null,
-        eventTitle: null,
-        openedFrom: null,
-        isPhoneSkipped: false,
+        await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
+        await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => {});
+        await SecureStore.deleteItemAsync('joined_events_list').catch(() => {});
+        await AsyncStorage.removeItem('@mycircle_user_events_cache').catch(() => {});
+        await AsyncStorage.removeItem('@mycircle_joined_events_list').catch(() => {});
+        await AsyncStorage.removeItem(GALLERY_CACHE_KEY).catch(() => {});
+        await AsyncStorage.removeItem(PROFILE_CACHE_KEY).catch(() => {});
+        await userSelfieStorage.clearLocalSelfie().catch(() => {});
+        import('./likesStore').then((m) => m.useLikesStore.getState().clearLikes()).catch(() => {});
+
+        // Sign out of Google so the account picker is shown on next sign-in
+        try {
+          const { GoogleSignin } = require('@react-native-google-signin/google-signin');
+          await GoogleSignin.signOut();
+        } catch (_) {
+          // Native module may not be available in all environments (e.g. Expo Go)
+        }
+        set({
+          token: null,
+          profile: null,
+          userEvents: [],
+          galleryCache: {},
+          profileCache: null,
+          isLoading: false,
+          eventSlug: null,
+          passcode: null,
+          eventCoverUrl: null,
+          eventTitle: null,
+          openedFrom: null,
+          isPhoneSkipped: false,
+        });
       });
+
+      await (global as any)._tokenUpdateChain;
     } catch (e) {
       console.error('Error deleting auth state', e);
     }

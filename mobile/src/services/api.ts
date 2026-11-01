@@ -55,6 +55,8 @@ api.interceptors.request.use(
         config.headers.Authorization = `Bearer ${token}`;
       }
     }
+    (config as any)._requestToken = config.headers.Authorization || useAuthStore.getState().token || '';
+    (config as any)._requestEpoch = (global as any)._sessionEpoch || 0;
     return config;
   },
   (error) => {
@@ -81,6 +83,13 @@ function decodeJwtRole(token: string): string | null {
 // Handle API responses — auto-refresh token if present, and auto-logout on 401 when session expires
 api.interceptors.response.use(
   (response) => {
+    // Guard against stale requests from a previous user/session after logout/login
+    const requestToken = (response.config as any)?._requestToken || '';
+    const currentToken = useAuthStore.getState().token;
+    if (requestToken && currentToken && requestToken !== currentToken) {
+      return response;
+    }
+
     // Only persist refreshed tokens from family endpoints (e.g. /api/gallery/family/events or /auth)
     // NEVER overwrite the global family token with event-specific guest tokens (e.g. /auth-from-family)
     const url: string = response.config?.url || '';
@@ -147,6 +156,14 @@ api.interceptors.response.use(
     }
 
     if (error.response && error.response.status === 401) {
+      // Guard against stale requests from a previous user/session triggering logout
+      const requestToken = (error.config as any)?._requestToken || '';
+      const currentToken = useAuthStore.getState().token;
+      if (requestToken && currentToken && requestToken !== currentToken) {
+        console.warn('[API 401] Ignoring 401 from stale request associated with prior session/user.');
+        return Promise.reject(error);
+      }
+
       const isInputPinError = url.includes('/download');
       const isAuthUrl = url.includes('/auth') && !url.includes('/session-check');
       const responseCode = error.response?.data?.code || '';
