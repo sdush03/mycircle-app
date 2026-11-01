@@ -3431,7 +3431,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   const isBrideOrGroom = React.useMemo(() => {
     // 1. Check global user profile (global role, if set)
     const pRole = (profile?.displayRole || (profile as any)?.role || (profile as any)?.userRole || '').toString().toUpperCase();
-    if (['BRIDE', 'GROOM', 'COUPLE'].includes(pRole)) {
+    if (['BRIDE', 'GROOM', 'COUPLE', 'ADMIN', 'UNIVERSAL_ADMIN'].includes(pRole)) {
       return true;
     }
 
@@ -3452,7 +3452,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
           thisEvent.guest?.role ||
           ''
         ).toString().toUpperCase();
-        if (['BRIDE', 'GROOM', 'COUPLE'].includes(evRole)) {
+        if (['BRIDE', 'GROOM', 'COUPLE', 'ADMIN', 'UNIVERSAL_ADMIN'].includes(evRole)) {
           return true;
         }
       }
@@ -3461,10 +3461,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // 3. Check event-specific guest object from SSO response
     if (eventGuest) {
       const gRole = (eventGuest.displayRole || eventGuest.role || eventGuest.relationship || eventGuest.type || '').toString().toUpperCase();
-      if (['BRIDE', 'GROOM', 'COUPLE'].includes(gRole)) {
+      if (['BRIDE', 'GROOM', 'COUPLE', 'ADMIN', 'UNIVERSAL_ADMIN'].includes(gRole)) {
         return true;
       }
-      if (eventGuest.isBride || eventGuest.isGroom || eventGuest.isCouple) {
+      if (eventGuest.isBride || eventGuest.isGroom || eventGuest.isCouple || eventGuest.isAdmin) {
         return true;
       }
     }
@@ -3472,10 +3472,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // 4. Check eventDetails (participants array, userRole, bride/groom metadata)
     if (eventDetails) {
       const eRole = (eventDetails.userRole || eventDetails.guestRole || eventDetails.role || '').toString().toUpperCase();
-      if (['BRIDE', 'GROOM', 'COUPLE'].includes(eRole)) {
+      if (['BRIDE', 'GROOM', 'COUPLE', 'ADMIN', 'UNIVERSAL_ADMIN'].includes(eRole)) {
         return true;
       }
-      if (eventDetails.isBride || eventDetails.isGroom) {
+      if (eventDetails.isBride || eventDetails.isGroom || eventDetails.isAdmin) {
         return true;
       }
       // Check participants list if present
