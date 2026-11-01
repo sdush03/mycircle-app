@@ -406,9 +406,12 @@ export default function LoginView({ onSuccess, startAnimation = true }: LoginVie
         throw new Error('Apple Sign-In failed to return an Identity Token');
       }
     } catch (error: any) {
-      console.error('Apple Sign-In error', error);
-      if (error.code !== 'ERR_REQUEST_CANCELED') {
+      const isCanceled = error.code === 'ERR_REQUEST_CANCELED' || (error.message || '').toLowerCase().includes('cancel');
+      if (!isCanceled) {
+        console.error('Apple Sign-In error', error);
         Alert.alert('Apple Sign-In Error', error.message || 'Apple authentication failed.');
+      } else {
+        console.log('[Apple Sign-In] User canceled authorization attempt.');
       }
     } finally {
       setIsLoggingIn(false);
