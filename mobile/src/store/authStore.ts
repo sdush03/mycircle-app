@@ -34,6 +34,7 @@ export interface GalleryCacheEntry {
   photos?: any[];
   headers?: any;
   total?: number;
+  totalMatched?: number;
   hasFullAccess?: boolean;
   matched?: any[];
   favorites?: any[];

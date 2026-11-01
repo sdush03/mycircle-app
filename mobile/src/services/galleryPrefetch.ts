@@ -86,6 +86,7 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
     let mappedFavorites: any[] = [];
     let mappedCinema: any[] = [];
     let totalCount: number = 0;
+    let totalMatchedCount: number | undefined = undefined;
 
     if (data) {
       mappedPhotos = Array.isArray(data.photos) ? data.photos.map(mapPhotoItem) : [];
@@ -93,6 +94,11 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
       mappedFavorites = Array.isArray(data.favorites) ? data.favorites.map(mapPhotoItem) : [];
       mappedCinema = Array.isArray(data.cinema) ? data.cinema.map(mapPhotoItem) : [];
       totalCount = typeof data.total === 'number' ? data.total : mappedPhotos.length;
+      totalMatchedCount = typeof data.totalMatched === 'number'
+        ? data.totalMatched
+        : (typeof data.matchedTotal === 'number'
+            ? data.matchedTotal
+            : (Array.isArray(data.matched) ? data.matched.length : undefined));
     } else {
       // Fallback prefetch using standard endpoints
       try {
@@ -164,6 +170,7 @@ export const prefetchEventGalleryData = async (eventSlug: string, passcode?: str
       favorites: mappedFavorites,
       headers: eventHeaders,
       total: totalCount,
+      totalMatched: totalMatchedCount,
       hasFullAccess: hasFullAccess,
       tabCache: tabCache,
     });

@@ -62,7 +62,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { usePathname } from 'expo-router';
-import { useAuthStore } from '../../store/authStore';
+import { useAuthStore, type GalleryCacheEntry } from '../../store/authStore';
 import { useLikesStore } from '../../store/likesStore';
 import { useScrollTabBarCollapse } from '../../hooks/useScrollTabBarCollapse';
 import api, { guestApi } from '../../services/api';
@@ -1514,7 +1514,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     return true;
   });
   const [hasMoreMatchedPhotos, setHasMoreMatchedPhotos] = useState<boolean>(true);
-  const [totalMatchedPhotosCount, setTotalMatchedPhotosCount] = useState<number | null>(null);
+  const [totalMatchedPhotosCount, setTotalMatchedPhotosCount] = useState<number | null>(() => {
+    if (typeof cachedInitial?.totalMatched === 'number') {
+      return cachedInitial.totalMatched;
+    }
+    if (Array.isArray(cachedInitial?.matched) && cachedInitial.matched.length > 0) {
+      return cachedInitial.matched.length;
+    }
+    return null;
+  });
+  const [isInitialFetchComplete, setIsInitialFetchComplete] = useState<boolean>(false);
+  const [isMatchedFetchComplete, setIsMatchedFetchComplete] = useState<boolean>(false);
+  const [isAllFetchComplete, setIsAllFetchComplete] = useState<boolean>(false);
+  const hasServerDataArrivedRef = useRef<boolean>(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isMoreDrawerOpen, setIsMoreDrawerOpen] = useState(false);
   const [isScrolledPastHero, setIsScrolledPastHero] = useState(false);
@@ -1613,6 +1625,56 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       });
     }
   }, [cachedInitial]);
+
+  // Cold-start hydration guard: If GalleryView mounted before AsyncStorage finished reading
+  // into useAuthStore, hydrate local state as soon as storeCache becomes available.
+  const storeCache = useAuthStore((state) => (eventSlug ? state.galleryCache[eventSlug] : null));
+  useEffect(() => {
+    if (!storeCache || hasServerDataArrivedRef.current) return;
+
+    if (allPhotosRef.current.length === 0 && storeCache.photos && storeCache.photos.length > 0) {
+      const mapped = storeCache.photos.map(mapPhotoItem);
+      setAllPhotos(mapped);
+      setAllPhotosOffset(mapped.length);
+      allPhotosOffsetRef.current = mapped.length;
+      if (typeof storeCache.total === 'number') {
+        setTotalAllPhotosCount(storeCache.total);
+        setHasMorePhotos(mapped.length < storeCache.total);
+      }
+      if (!tabSparsePhotosRef.current['ALL']) {
+        tabSparsePhotosRef.current['ALL'] = new Map();
+      }
+      mapped.forEach((p: any, idx: number) => {
+        tabSparsePhotosRef.current['ALL'].set(idx, p);
+      });
+      setSparseVersion((v) => v + 1);
+    }
+
+    if (photosRef.current.length === 0 && storeCache.matched && storeCache.matched.length > 0) {
+      const mapped = storeCache.matched.map(mapPhotoItem);
+      setPhotos(mapped);
+      const totalM = typeof storeCache.totalMatched === 'number' ? storeCache.totalMatched : mapped.length;
+      setTotalMatchedPhotosCount(totalM);
+    } else if (totalMatchedPhotosCount === null && typeof storeCache.totalMatched === 'number') {
+      setTotalMatchedPhotosCount(storeCache.totalMatched);
+    }
+
+    if (!eventDetails?.tabCounts && storeCache.details) {
+      setEventDetailsData(storeCache.details);
+    }
+
+    if (guestAccessLevel === null && typeof storeCache.hasFullAccess === 'boolean') {
+      setGuestAccessLevel(storeCache.hasFullAccess);
+    }
+
+    if (Object.keys(tabCacheRef.current).length === 0 && storeCache.tabCache) {
+      const normalized: Record<string, Photo[]> = {};
+      Object.keys(storeCache.tabCache).forEach((k) => {
+        normalized[k] = (storeCache.tabCache![k] || []).map(mapPhotoItem);
+      });
+      setTabCache((prev) => ({ ...prev, ...normalized }));
+    }
+  }, [storeCache, eventDetails, guestAccessLevel, totalMatchedPhotosCount]);
 
   const tabOffsetsRef = useRef<Record<string, number>>({});
   const tabItemCountsRef = useRef<Record<string, number>>({});
@@ -2380,10 +2442,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         if (currentYRef.current > 150) {
           saveResumeScrollPosition(currentYRef.current);
         }
-        if (eventSlug && allPhotosRef.current && allPhotosRef.current.length > 60) {
+        if (eventSlug && allPhotosRef.current && allPhotosRef.current.length > 0) {
           useAuthStore.getState().setGalleryCache(eventSlug, {
             photos: allPhotosRef.current,
             tabCache: tabCacheRef.current,
+            matched: photosRef.current,
+            ...(totalMatchedPhotosCount !== null ? { totalMatched: totalMatchedPhotosCount } : {}),
+            ...(totalAllPhotosCount !== null ? { total: totalAllPhotosCount } : {}),
           });
         }
       }
@@ -2393,10 +2458,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       if (currentYRef.current > 150) {
         saveResumeScrollPosition(currentYRef.current);
       }
-      if (eventSlug && allPhotosRef.current && allPhotosRef.current.length > 60) {
+      if (eventSlug && allPhotosRef.current && allPhotosRef.current.length > 0) {
         useAuthStore.getState().setGalleryCache(eventSlug, {
           photos: allPhotosRef.current,
           tabCache: tabCacheRef.current,
+          matched: photosRef.current,
+          ...(totalMatchedPhotosCount !== null ? { totalMatched: totalMatchedPhotosCount } : {}),
+          ...(totalAllPhotosCount !== null ? { total: totalAllPhotosCount } : {}),
         });
       }
     };
@@ -2543,16 +2611,16 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const initialFetchLimit = (galleryColumnsRef.current || 2) >= 4 ? 120 : ((galleryColumnsRef.current || 2) === 3 ? 90 : PAGE_SIZE);
       const [matchedRes, allRes, favRes, cinemaRes] = await Promise.all([
         guestApi.get(`/api/gallery/public/events/${eventSlug}/matched-photos`, { headers: eventHeaders }).catch((e) => {
-          return { data: [], status: e?.response?.status };
+          return { data: null, status: e?.response?.status, isError: true };
         }),
         guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?limit=${initialFetchLimit}&offset=0`, { headers: eventHeaders }).catch((e) => {
-          return { data: [], status: e?.response?.status };
+          return { data: null, status: e?.response?.status, isError: true };
         }),
         guestApi.get(`/api/gallery/public/events/${eventSlug}/favorites`, { headers: eventHeaders }).catch((e) => {
-          return { data: [], status: e?.response?.status };
+          return { data: null, status: e?.response?.status, isError: true };
         }),
         guestApi.get(`/api/gallery/public/events/${eventSlug}/photos?tab=Cinema&limit=60&offset=0`, { headers: eventHeaders }).catch((e) => {
-          return { data: [], status: e?.response?.status };
+          return { data: null, status: e?.response?.status, isError: true };
         }),
       ]);
       const initialFetchDuration = Date.now() - tStartInitial;
@@ -2565,28 +2633,42 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         return;
       }
 
-      const matchedList = matchedRes.data?.photos || matchedRes.data?.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
-      const mappedMatched = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
-      setPhotos(mappedMatched);
-      if (typeof matchedRes.data?.total === 'number') {
-        setTotalMatchedPhotosCount(matchedRes.data.total);
-        setHasMoreMatchedPhotos(mappedMatched.length < matchedRes.data.total);
+      const isMatchedSuccess = Boolean(matchedRes.data !== null && !('isError' in matchedRes));
+      const isAllSuccess = Boolean(allRes.data !== null && !('isError' in allRes));
+      const isFavSuccess = Boolean(favRes.data !== null && !('isError' in favRes));
+      const isCinemaSuccess = Boolean(cinemaRes.data !== null && !('isError' in cinemaRes));
+
+      let mappedMatched: Photo[] = photosRef.current;
+      let mappedTotalMatched: number | null = totalMatchedPhotosCount;
+      if (isMatchedSuccess) {
+        const matchedList = matchedRes.data?.photos || matchedRes.data?.matchedPhotos || (Array.isArray(matchedRes.data) ? matchedRes.data : []);
+        mappedMatched = Array.isArray(matchedList) ? matchedList.map(mapPhotoItem) : [];
+        setPhotos(mappedMatched);
+        mappedTotalMatched = typeof matchedRes.data?.total === 'number' ? matchedRes.data.total : mappedMatched.length;
+        setTotalMatchedPhotosCount(mappedTotalMatched);
+        setHasMoreMatchedPhotos(typeof mappedTotalMatched === 'number' ? mappedMatched.length < mappedTotalMatched : false);
+        setIsMatchedFetchComplete(true);
+        hasServerDataArrivedRef.current = true;
+      } else {
+        setIsMatchedFetchComplete(true);
       }
 
-      const favList = favRes.data?.photos || (Array.isArray(favRes.data) ? favRes.data : []);
+      const favList = isFavSuccess ? (favRes.data?.photos || (Array.isArray(favRes.data) ? favRes.data : [])) : [];
       const mappedFavs = Array.isArray(favList) ? favList.map(mapPhotoItem) : [];
 
-      const cinemaList = cinemaRes.data?.photos || (Array.isArray(cinemaRes.data) ? cinemaRes.data : []);
+      const cinemaList = isCinemaSuccess ? (cinemaRes.data?.photos || (Array.isArray(cinemaRes.data) ? cinemaRes.data : [])) : [];
       const mappedCinema = Array.isArray(cinemaList) ? cinemaList.map(mapPhotoItem) : [];
 
       const newTabCache: Record<string, Photo[]> = {};
-      if (mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
-      if (mappedCinema.length > 0) newTabCache['CINEMA'] = mappedCinema;
+      if (isFavSuccess && mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
+      if (isCinemaSuccess && mappedCinema.length > 0) newTabCache['CINEMA'] = mappedCinema;
 
-      setTabCache((prev) => ({
-        ...prev,
-        ...newTabCache,
-      }));
+      if (Object.keys(newTabCache).length > 0) {
+        setTabCache((prev) => ({
+          ...prev,
+          ...newTabCache,
+        }));
+      }
 
       // Cinema video preloading (top 3 highest priority)
       if (mappedCinema.length > 0) {
@@ -2613,9 +2695,38 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         });
       }
 
-      const allList = allRes.data?.photos || (Array.isArray(allRes.data) ? allRes.data : []);
-      const mappedPhotos = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
-      const total = typeof allRes.data?.total === 'number' ? allRes.data.total : mappedPhotos.length;
+      let mappedPhotos: Photo[] = allPhotosRef.current;
+      let total: number = typeof totalAllPhotosCount === 'number' ? totalAllPhotosCount : allPhotosRef.current.length;
+
+      if (isAllSuccess) {
+        const allList = allRes.data?.photos || (Array.isArray(allRes.data) ? allRes.data : []);
+        mappedPhotos = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
+        total = typeof allRes.data?.total === 'number' ? allRes.data.total : mappedPhotos.length;
+        setTotalAllPhotosCount(total);
+        const prevAllFallback = allPhotosRef.current;
+        const deduppedFallback = prevAllFallback.length > mappedPhotos.length
+          ? mergePhotoArrays(mappedPhotos, prevAllFallback.slice(mappedPhotos.length))
+          : mappedPhotos;
+        const nextOffsetFallback = deduppedFallback.length;
+        allPhotosOffsetRef.current = nextOffsetFallback;
+        setAllPhotosOffset(nextOffsetFallback);
+        setAllPhotos(deduppedFallback);
+        setHasMorePhotos(nextOffsetFallback < total);
+        setIsAllFetchComplete(true);
+        hasServerDataArrivedRef.current = true;
+
+        if (!tabSparsePhotosRef.current['ALL']) {
+          tabSparsePhotosRef.current['ALL'] = new Map();
+        }
+        mappedPhotos.forEach((p, idx) => {
+          tabSparsePhotosRef.current['ALL'].set(idx, p);
+        });
+        setSparseVersion((v) => v + 1);
+
+        scheduleBatchPrefetch(mappedPhotos);
+      } else {
+        setIsAllFetchComplete(true);
+      }
 
       console.log(`\n================== [GALLERY OPEN DEBUG (FALLBACK) 🏛️] ==================`);
       console.log(`📸 EVENT SLUG: ${eventSlug}`);
@@ -2627,48 +2738,42 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       console.log(`========================================================================\n`);
 
       // Synchronize batch likes with centralized likesStore
-      useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
-
-      setTotalAllPhotosCount(total);
-      const prevAllFallback = allPhotosRef.current;
-      const deduppedFallback = prevAllFallback.length > mappedPhotos.length
-        ? mergePhotoArrays(mappedPhotos, prevAllFallback.slice(mappedPhotos.length))
-        : mappedPhotos;
-      const nextOffsetFallback = deduppedFallback.length;
-      allPhotosOffsetRef.current = nextOffsetFallback;
-      setAllPhotosOffset(nextOffsetFallback);
-      setAllPhotos(deduppedFallback);
-      setHasMorePhotos(nextOffsetFallback < total);
-
-      // Save to cache
-      useAuthStore.getState().setGalleryCache(eventSlug, {
-        details: fetchedEventDetails || undefined,
-        photos: allPhotosRef.current && allPhotosRef.current.length > mappedPhotos.length ? allPhotosRef.current : mappedPhotos,
-        headers: eventHeadersRef.current,
-        total: total,
-        hasFullAccess: guestAccessLevel ?? true,
-        matched: mappedMatched,
-        favorites: mappedFavs,
-        tabCache: {
-          ...tabCacheRef.current,
-          ...(mappedFavs.length > 0 ? { 'MY FAVOURITES': mappedFavs } : {}),
-          ...(mappedCinema.length > 0 ? { 'CINEMA': mappedCinema } : {}),
-        },
-      });
-
-      if (!tabSparsePhotosRef.current['ALL']) {
-        tabSparsePhotosRef.current['ALL'] = new Map();
+      if (mappedPhotos.length > 0 || mappedMatched.length > 0 || mappedFavs.length > 0) {
+        useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
       }
-      mappedPhotos.forEach((p, idx) => {
-        tabSparsePhotosRef.current['ALL'].set(idx, p);
-      });
-      setSparseVersion((v) => v + 1);
 
-      scheduleBatchPrefetch(mappedPhotos);
+      // Save to cache only when valid data was received — never overwrite with empty arrays on failure
+      const cacheUpdate: Partial<GalleryCacheEntry> = {
+        headers: eventHeadersRef.current,
+        hasFullAccess: guestAccessLevel ?? true,
+      };
+      if (fetchedEventDetails) {
+        cacheUpdate.details = fetchedEventDetails;
+      }
+      if (isAllSuccess) {
+        cacheUpdate.photos = allPhotosRef.current && allPhotosRef.current.length > mappedPhotos.length ? allPhotosRef.current : mappedPhotos;
+        cacheUpdate.total = total;
+      }
+      if (isMatchedSuccess) {
+        cacheUpdate.matched = mappedMatched;
+        if (mappedTotalMatched !== null) {
+          cacheUpdate.totalMatched = mappedTotalMatched;
+        }
+      }
+      if (isFavSuccess) {
+        cacheUpdate.favorites = mappedFavs;
+      }
+      if (Object.keys(newTabCache).length > 0) {
+        cacheUpdate.tabCache = {
+          ...tabCacheRef.current,
+          ...newTabCache,
+        };
+      }
+      useAuthStore.getState().setGalleryCache(eventSlug, cacheUpdate);
 
       // Issue 4 fix: priority-fetch photos around saved resume position
       const savedResumeY = resumeTargetYRef.current;
-      if (savedResumeY && savedResumeY > 200) {
+      if (savedResumeY && savedResumeY > 200 && isAllSuccess) {
         setTimeout(() => {
           fastCatchupPhotosRef.current?.(savedResumeY, activeTab);
         }, 300);
@@ -2677,6 +2782,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       console.warn('[MYCIRCLE FALLBACK ⚠️] Photo fetch error:', e);
     } finally {
       setIsLoading(false);
+      setIsInitialFetchComplete(true);
+      setIsMatchedFetchComplete(true);
+      setIsAllFetchComplete(true);
     }
   };
 
@@ -2836,12 +2944,25 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       }
 
       const total = typeof bundleData.total === 'number' ? bundleData.total : mappedPhotos.length;
+      const totalMatched = typeof bundleData.totalMatched === 'number'
+        ? bundleData.totalMatched
+        : (typeof bundleData.matchedTotal === 'number'
+            ? bundleData.matchedTotal
+            : mappedMatched.length);
+
+      hasServerDataArrivedRef.current = true;
+      setTotalAllPhotosCount(total);
+      setTotalMatchedPhotosCount(totalMatched);
+      setHasMoreMatchedPhotos(mappedMatched.length < totalMatched);
+      setIsAllFetchComplete(true);
+      setIsMatchedFetchComplete(true);
+      setIsInitialFetchComplete(true);
 
       console.log(`\n================== [GALLERY OPEN DEBUG (BUNDLE) 🏛️] ==================`);
       console.log(`📸 EVENT SLUG: ${eventSlug}`);
       console.log(`📊 TOTAL PHOTOS ON SERVER: ${total}`);
       console.log(`📥 INITIAL BATCH PHOTOS RECEIVED: ${mappedPhotos.length}`);
-      console.log(`👤 MATCHED PHOTOS: ${mappedMatched.length}`);
+      console.log(`👤 MATCHED PHOTOS: ${mappedMatched.length} (total: ${totalMatched})`);
       console.log(`❤️ FAVORITES: ${mappedFavs.length}`);
       console.log(`🎬 CINEMA VIDEOS: ${mappedCinema.length}`);
       console.log(`📑 TAB COUNTS:`, bundleData?.event?.tabCounts || 'none');
@@ -2850,7 +2971,6 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       // Synchronize batch likes with centralized likesStore
       useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
 
-      setTotalAllPhotosCount(total);
       const prevAllBundle = allPhotosRef.current;
       const deduppedBundle = prevAllBundle.length > mappedPhotos.length
         ? mergePhotoArrays(mappedPhotos, prevAllBundle.slice(mappedPhotos.length))
@@ -2867,6 +2987,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         photos: allPhotosRef.current && allPhotosRef.current.length > mappedPhotos.length ? allPhotosRef.current : mappedPhotos,
         headers: eventHeadersRef.current,
         total: total,
+        totalMatched: totalMatched,
         hasFullAccess: newFullAccess,
         matched: mappedMatched,
         favorites: mappedFavs,
@@ -2903,6 +3024,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       console.warn('[MYCIRCLE REVALIDATE ⚠️] fetchPhotos error:', err);
     } finally {
       setIsLoading(false);
+      setIsInitialFetchComplete(true);
+      setIsMatchedFetchComplete(true);
+      setIsAllFetchComplete(true);
     }
   };
 
@@ -2979,6 +3103,10 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
             setHasMoreMatchedPhotos(false);
           }
           setPhotos(nextPhotos);
+          useAuthStore.getState().setGalleryCache(eventSlug, {
+            matched: nextPhotos,
+            totalMatched: typeof matchedRes.data?.total === 'number' ? matchedRes.data.total : nextPhotos.length,
+          });
         } else {
           pageStatesRef.current.set(pageKey, 'loaded');
           setHasMoreMatchedPhotos(false);
@@ -4199,33 +4327,147 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
   // Canonical Expected Photo Count for any tab (known synchronously from memory/cache)
   const getTabPhotoCount = useCallback((tabName: string): number | null => {
     const norm = tabName.trim().toUpperCase();
+
+    // 1. LOCKED Tab: Locally persisted locked photo IDs are the source of truth
     if (norm.includes('LOCKED')) {
       return lockedPhotoIds.size;
     }
+
+    // 2. MY PHOTOS Tab
     if (norm === 'MY PHOTOS') {
+      const lockedInPhotos = photos.filter((p: any) => p && lockedPhotoIds.has(Number(p.id))).length;
+      // Prefer authoritative totalMatchedPhotosCount
       if (typeof totalMatchedPhotosCount === 'number') {
-        const lockedInPhotos = photos.filter((p: any) => p && lockedPhotoIds.has(Number(p.id))).length;
         return Math.max(0, totalMatchedPhotosCount - lockedInPhotos);
       }
-      const lockedInPhotos = photos.filter((p: any) => p && lockedPhotoIds.has(Number(p.id))).length;
-      return Math.max(0, photos.length - lockedInPhotos);
+      // Otherwise use cached matched count as a provisional value
+      if (photos.length > 0) {
+        return Math.max(0, photos.length - lockedInPhotos);
+      }
+      // Return null when no cached count exists and loading is in progress
+      if (!isMatchedFetchComplete && (isLoading || !isInitialFetchComplete)) {
+        return null;
+      }
+      // Return zero only after the matched-photo fetch confirms zero
+      if (isMatchedFetchComplete) {
+        return 0;
+      }
+      return null;
     }
+
+    // 3. MY FAVOURITES Tab
     if (norm === 'MY FAVOURITES') {
       const lockedInFavs = [...allPhotos, ...photos].filter((p: any) => p && p.isLiked && lockedPhotoIds.has(Number(p.id))).length;
-      return Math.max(0, favoritesCount - lockedInFavs);
+      if (favoritesCount > 0) {
+        return Math.max(0, favoritesCount - lockedInFavs);
+      }
+      if (!isInitialFetchComplete && isLoading) {
+        return null;
+      }
+      return 0;
     }
+
     const tabCountsSource = eventDetails?.tabCounts || eventDetails?.tab_counts;
+
+    // 4. ALL Tab
     if (norm === 'ALL') {
       const comingSoonCount = allPhotos.filter((p: any) => p && isVideoComingSoon(p)).length;
       const allCount = getKnownTabCount(tabCountsSource, 'ALL');
-      const rawAll = typeof allCount === 'number' ? allCount : (totalAllPhotosCount !== null ? totalAllPhotosCount : allPhotos.length);
-      return Math.max(0, rawAll - comingSoonCount - lockedPhotoIds.size);
+      // Prefer cached/server tabCounts.ALL
+      if (typeof allCount === 'number') {
+        return Math.max(0, allCount - comingSoonCount - lockedPhotoIds.size);
+      }
+      // Otherwise use totalAllPhotosCount when available
+      if (typeof totalAllPhotosCount === 'number') {
+        return Math.max(0, totalAllPhotosCount - comingSoonCount - lockedPhotoIds.size);
+      }
+      // Return null if neither exists and initial loading is still in progress
+      if (!isAllFetchComplete && (isLoading || !isInitialFetchComplete)) {
+        return null;
+      }
+      // Return zero only when the server confirms zero
+      if (isAllFetchComplete && totalAllPhotosCount === 0) {
+        return 0;
+      }
+      if (!hasMorePhotos && isAllFetchComplete) {
+        return Math.max(0, allPhotos.length - comingSoonCount - lockedPhotoIds.size);
+      }
+      return null;
     }
+
+    // 5. HIGHLIGHTS Tab
+    if (norm === 'HIGHLIGHTS') {
+      const lockedInHighlights = allPhotos.filter(
+        (p: any) => p && (p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS')) && lockedPhotoIds.has(Number(p.id))
+      ).length;
+      // Use existing highlightsCount logic as canonical source
+      if (highlightsCount > 0) {
+        return Math.max(0, highlightsCount - lockedInHighlights);
+      }
+      if (!isInitialFetchComplete && isLoading) {
+        return null;
+      }
+      return 0;
+    }
+
+    // 6. CINEMA Tab
+    if (norm === 'CINEMA') {
+      if (activeCinemaVideos.length > 0) {
+        return activeCinemaVideos.length;
+      }
+      if (!isInitialFetchComplete && isLoading) {
+        return null;
+      }
+      return 0;
+    }
+
+    // 7. Individual Ceremony Tabs
     const tabCountVal = getKnownTabCount(tabCountsSource, norm);
-    const rawCount = typeof tabCountVal === 'number' ? tabCountVal : allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm).length;
     const lockedInTab = allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm && lockedPhotoIds.has(Number(p.id))).length;
-    return Math.max(0, rawCount - lockedInTab);
-  }, [lockedPhotoIds, photos, favoritesCount, allPhotos, eventDetails?.tabCounts, totalAllPhotosCount, totalMatchedPhotosCount]);
+
+    // Prefer authoritative eventDetails.tabCounts
+    if (typeof tabCountVal === 'number') {
+      return Math.max(0, tabCountVal - lockedInTab);
+    }
+
+    // Use a complete locally cached collection only when completeness is established
+    const isCeremonyComplete = tabHasMoreRef.current[norm] === false ||
+      (!hasMorePhotos && typeof totalAllPhotosCount === 'number' && allPhotos.length >= totalAllPhotosCount && isAllFetchComplete);
+
+    if (isCeremonyComplete) {
+      const cachedTabPhotos = tabCache[norm] || allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm);
+      return Math.max(0, cachedTabPhotos.length - lockedInTab);
+    }
+
+    // Never treat a partially loaded allPhotos array as the final tab count. Return null when count is not yet known.
+    if (!isInitialFetchComplete && (isLoading || isTabLoading)) {
+      return null;
+    }
+
+    if (isInitialFetchComplete && tabCountsSource) {
+      return 0;
+    }
+
+    return null;
+  }, [
+    lockedPhotoIds,
+    photos,
+    totalMatchedPhotosCount,
+    isMatchedFetchComplete,
+    isLoading,
+    isInitialFetchComplete,
+    isAllFetchComplete,
+    allPhotos,
+    favoritesCount,
+    eventDetails?.tabCounts,
+    eventDetails?.tab_counts,
+    totalAllPhotosCount,
+    hasMorePhotos,
+    highlightsCount,
+    activeCinemaVideos,
+    isTabLoading,
+    tabCache,
+  ]);
 
   // Canonical Expected Browseable Media Count for UI display (header badge, drawer count, lightbox denominator)
   const getTabBrowseableMediaCount = useCallback((tabName: string): number | null => {
@@ -4234,17 +4476,27 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // 1. CINEMA Tab: contains valid cinema videos (not coming soon, with actual video file)
     if (norm === 'CINEMA') {
       const validCinema = activeCinemaVideos.filter((v: any) => !isVideoComingSoon(v) && hasActualVideoFile(v));
-      return validCinema.length;
+      if (validCinema.length > 0) {
+        return validCinema.length;
+      }
+      if (!isInitialFetchComplete && isLoading) {
+        return null;
+      }
+      return 0;
     }
 
     // 2. Base Photo Count (strictly photographs)
     const photoCount = getTabPhotoCount(tabName);
 
+    // If photo count is unknown / loading, browseable media count is also unknown / loading
+    if (photoCount === null) {
+      return null;
+    }
+
     // 3. In ALL and HIGHLIGHTS, curated cinema videos are injected into the grid
     if (norm === 'ALL' || norm === 'HIGHLIGHTS') {
       const { eligibleTotal } = getEligibleCuratedCinemaVideos(activeCinemaVideos);
-      const baseCount = typeof photoCount === 'number' ? photoCount : 0;
-      return baseCount + eligibleTotal;
+      return photoCount + eligibleTotal;
     }
 
     // 4. For other tabs, if photoCount is valid and > 0, return it
@@ -4255,11 +4507,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     // 5. If a tab contains zero photos but has actual browseable videos, include those videos
     const cachedTabVideos = (tabCache[norm] || []).filter((p: any) => (isVideoMedia(p) || isCinemaVideoItem(p)) && !isVideoComingSoon(p) && hasActualVideoFile(p));
     if (cachedTabVideos.length > 0) {
-      return (photoCount || 0) + cachedTabVideos.length;
+      return photoCount + cachedTabVideos.length;
     }
 
     return photoCount;
-  }, [getTabPhotoCount, activeCinemaVideos, tabCache]);
+  }, [getTabPhotoCount, activeCinemaVideos, isInitialFetchComplete, isLoading, tabCache]);
 
   const currentTabExpectedCount = useMemo(() => {
     return getTabBrowseableMediaCount(currentPhotoTab);
@@ -5480,8 +5732,19 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
               style={styles.compactTabActiveTitleCentered}
               numberOfLines={1}
             >
-              {currentPhotoTab} {activeTabCount !== null ? `(${activeTabCount})` : ''}
+              {currentPhotoTab}
             </Text>
+            {activeTabCount !== null ? (
+              <Text style={styles.compactTabActiveTitleCentered}>
+                ({activeTabCount})
+              </Text>
+            ) : (
+              <ActivityIndicator
+                size="small"
+                color="#8c867e"
+                style={{ transform: [{ scale: 0.65 }], marginHorizontal: 2 }}
+              />
+            )}
             <Text style={styles.downArrowIcon}>▾</Text>
           </View>
         </TouchableOpacity>
@@ -5558,7 +5821,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
   const renderEmptyState = useCallback(() => {
     // If the tab expects photos (> 0 or unknown) and is currently loading, wait for items to load
-    if ((isLoading || isTabLoading) && (currentTabExpectedCount === null || currentTabExpectedCount > 0)) {
+    if ((isLoading || isTabLoading || !isInitialFetchComplete) && (currentTabExpectedCount === null || currentTabExpectedCount > 0)) {
       return null;
     }
 
@@ -5611,7 +5874,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         </Text>
       </View>
     );
-  }, [isLoading, isTabLoading, currentTabExpectedCount, activeTab]);
+  }, [isLoading, isTabLoading, isInitialFetchComplete, currentTabExpectedCount, activeTab]);
 
   const handleDeletePhoto = useCallback(async (photoItem: any) => {
     if (!photoItem || !photoItem.id) return;
@@ -5930,7 +6193,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
                         <Text style={[styles.drawerItemCount, isActive && styles.drawerItemCountActive]}>
                           ({tabCount})
                         </Text>
-                      ) : null}
+                      ) : (
+                        <ActivityIndicator
+                          size="small"
+                          color="#8c867e"
+                          style={{ transform: [{ scale: 0.65 }], marginLeft: 4 }}
+                        />
+                      )}
                     </View>
                   </TouchableOpacity>
                 );
