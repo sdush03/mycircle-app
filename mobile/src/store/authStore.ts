@@ -187,12 +187,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  // Serialized mutex queue & iat/sequence token ordering to prevent rotation races
+  // Serialized mutex queue & 15s throttle window to prevent parallel rotation races
   updateToken: async (token: string) => {
     try {
       if (!token || typeof token !== 'string') return;
 
-      // Helper to extract JWT iat and exp
       const getJwtMeta = (t: string) => {
         try {
           const parts = t.split('.');
@@ -209,20 +208,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (!(global as any)._tokenUpdateChain) {
         (global as any)._tokenUpdateChain = Promise.resolve();
-        (global as any)._lastTokenSeq = 0;
-        (global as any)._lastTokenIat = 0;
+        (global as any)._lastTokenUpdateAt = 0;
       }
 
       (global as any)._tokenUpdateChain = (global as any)._tokenUpdateChain.then(async () => {
         const currentToken = get().token;
         if (currentToken === token) return;
 
+        const now = Date.now();
+        const lastUpdate = (global as any)._lastTokenUpdateAt || 0;
+        // Throttle automatic rolling token refreshes to at most once every 15 seconds
+        // to completely eliminate out-of-order race conditions from parallel gallery fetch bursts.
+        if (now - lastUpdate < 15000) {
+          return;
+        }
+
         const incomingMeta = getJwtMeta(token);
         const currentMeta = getJwtMeta(currentToken || '');
 
-        const nextSeq = ((global as any)._lastTokenSeq || 0) + 1;
-
-        // Token ordering rule: incoming iat must be >= current iat, and if equal, sequence must be newer
         if (incomingMeta.iat > 0 && currentMeta.iat > 0) {
           if (incomingMeta.iat < currentMeta.iat) {
             console.warn('[AUTH 🛡️] Discarding obsolete token (incoming iat older than current iat)');
@@ -233,9 +236,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Attempt SecureStore persistence first — if this throws, we do NOT update Zustand state
         await SecureStore.setItemAsync(TOKEN_KEY, token);
 
-        // Persistence succeeded, update in-memory state and sequence tracker
-        (global as any)._lastTokenSeq = nextSeq;
-        (global as any)._lastTokenIat = incomingMeta.iat;
+        // Persistence succeeded, update in-memory state and timestamp tracker
+        (global as any)._lastTokenUpdateAt = now;
         set({ token });
       });
 
