@@ -2701,12 +2701,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       if (isAllSuccess) {
         const allList = allRes.data?.photos || (Array.isArray(allRes.data) ? allRes.data : []);
         mappedPhotos = Array.isArray(allList) ? allList.map(mapPhotoItem) : [];
-        total = typeof allRes.data?.total === 'number' ? allRes.data.total : mappedPhotos.length;
+        const initialAllFallback = mergePhotoArrays(mappedPhotos, mappedMatched);
+        total = typeof allRes.data?.total === 'number'
+          ? Math.max(allRes.data.total, initialAllFallback.length)
+          : initialAllFallback.length;
         setTotalAllPhotosCount(total);
         const prevAllFallback = allPhotosRef.current;
-        const deduppedFallback = prevAllFallback.length > mappedPhotos.length
-          ? mergePhotoArrays(mappedPhotos, prevAllFallback.slice(mappedPhotos.length))
-          : mappedPhotos;
+        const deduppedFallback = prevAllFallback.length > initialAllFallback.length
+          ? mergePhotoArrays(initialAllFallback, prevAllFallback.slice(initialAllFallback.length))
+          : initialAllFallback;
         const nextOffsetFallback = deduppedFallback.length;
         allPhotosOffsetRef.current = nextOffsetFallback;
         setAllPhotosOffset(nextOffsetFallback);
@@ -2906,12 +2909,27 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       const mappedMatched = Array.isArray(bundleData.matched) ? bundleData.matched.map(mapPhotoItem) : [];
       const mappedFavs = Array.isArray(bundleData.favorites) ? bundleData.favorites.map(mapPhotoItem) : [];
       const mappedCinema = Array.isArray(bundleData.cinema) ? bundleData.cinema.map(mapPhotoItem) : [];
+      const mappedLocked = Array.isArray(bundleData.locked) ? bundleData.locked.map(mapPhotoItem) : [];
 
       setPhotos(mappedMatched);
 
       const newTabCache: Record<string, Photo[]> = {};
       if (mappedFavs.length > 0) newTabCache['MY FAVOURITES'] = mappedFavs;
       if (mappedCinema.length > 0) newTabCache['CINEMA'] = mappedCinema;
+      if (Array.isArray(bundleData.locked)) {
+        newTabCache['LOCKED 🔐'] = mappedLocked;
+        newTabCache['LOCKED'] = mappedLocked;
+        const serverLockedSet = new Set<number>(mappedLocked.map((p: any) => Number(p.id)));
+        setLockedPhotoIds(serverLockedSet);
+        const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+        AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(serverLockedSet))).catch(() => {});
+        if (!tabSparsePhotosRef.current['LOCKED 🔐']) {
+          tabSparsePhotosRef.current['LOCKED 🔐'] = new Map();
+        }
+        mappedLocked.forEach((p: any, idx: number) => {
+          tabSparsePhotosRef.current['LOCKED 🔐'].set(idx, p);
+        });
+      }
 
       setTabCache((prev) => ({
         ...prev,
@@ -2943,7 +2961,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         });
       }
 
-      const total = typeof bundleData.total === 'number' ? bundleData.total : mappedPhotos.length;
+      const initialAllBundle = mergePhotoArrays(
+        mergePhotoArrays(mappedPhotos, mappedMatched),
+        mappedLocked
+      );
+      const total = typeof bundleData.total === 'number'
+        ? Math.max(bundleData.total, initialAllBundle.length)
+        : initialAllBundle.length;
       const totalMatched = typeof bundleData.totalMatched === 'number'
         ? bundleData.totalMatched
         : (typeof bundleData.matchedTotal === 'number'
@@ -2972,9 +2996,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       useLikesStore.getState().setLikesBatch([...mappedPhotos, ...mappedMatched, ...mappedFavs]);
 
       const prevAllBundle = allPhotosRef.current;
-      const deduppedBundle = prevAllBundle.length > mappedPhotos.length
-        ? mergePhotoArrays(mappedPhotos, prevAllBundle.slice(mappedPhotos.length))
-        : mappedPhotos;
+      const deduppedBundle = prevAllBundle.length > initialAllBundle.length
+        ? mergePhotoArrays(initialAllBundle, prevAllBundle.slice(initialAllBundle.length))
+        : initialAllBundle;
       const nextOffsetBundle = deduppedBundle.length;
       allPhotosOffsetRef.current = nextOffsetBundle;
       setAllPhotosOffset(nextOffsetBundle);
@@ -3429,6 +3453,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
 
   const isBrideOrGroom = React.useMemo(() => {
+    // 0. Direct check for Universal Admin flag
+    if (
+      (profile as any)?.isUniversalAdmin ||
+      (eventGuest as any)?.isUniversalAdmin ||
+      (eventDetails as any)?.isUniversalAdmin
+    ) {
+      return true;
+    }
+
     // 1. Check global user profile (global role, if set)
     const pRole = (profile?.displayRole || (profile as any)?.role || (profile as any)?.userRole || '').toString().toUpperCase();
     if (['BRIDE', 'GROOM', 'COUPLE', 'ADMIN', 'UNIVERSAL_ADMIN'].includes(pRole)) {
@@ -3442,6 +3475,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         return slug === eventSlug;
       });
       if (thisEvent) {
+        if (thisEvent.isUniversalAdmin || thisEvent.guestInfo?.isUniversalAdmin) {
+          return true;
+        }
         const evRole = (
           thisEvent.guestInfo?.displayRole ||
           thisEvent.displayRole ||
@@ -3501,6 +3537,11 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     return false;
   }, [profile, userEvents, eventSlug, eventGuest, eventDetails]);
+
+  const isBrideOrGroomRef = useRef(isBrideOrGroom);
+  useEffect(() => {
+    isBrideOrGroomRef.current = isBrideOrGroom;
+  }, [isBrideOrGroom]);
 
 
   // Load locked photo IDs: Populate from API-returned photos (isPrivate flag) when photos load,
@@ -3659,6 +3700,52 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (norm === 'ALL' || norm === 'MY PHOTOS' || norm === 'MY FAVOURITES' || norm === 'CINEMA') return;
     if (!eventSlug) return;
 
+    // Handle LOCKED tab separately: fetch all locked photos for authorized user
+    if (norm.includes('LOCKED')) {
+      if (!isBrideOrGroomRef.current && !isBrideOrGroom) return;
+      if (inFlightTabsRef.current.has('LOCKED')) return;
+      inFlightTabsRef.current.add('LOCKED');
+      try {
+        const familyToken = useAuthStore.getState().token;
+        const eventHeaders = eventHeadersRef.current.Authorization
+          ? eventHeadersRef.current
+          : (familyToken ? { Authorization: `Bearer ${familyToken}` } : {});
+        const res = await guestApi.get(
+          `/api/gallery/public/events/${eventSlug}/photos?tab=LOCKED&limit=1000`,
+          { headers: eventHeaders }
+        );
+        const rawList = res.data.photos || (Array.isArray(res.data) ? res.data : []);
+        const mapped = Array.isArray(rawList) ? rawList.map(mapPhotoItem) : [];
+        setTabCache((prev) => ({
+          ...prev,
+          'LOCKED 🔐': mapped,
+          'LOCKED': mapped,
+        }));
+        tabItemCountsRef.current['LOCKED 🔐'] = mapped.length;
+        tabItemCountsRef.current['LOCKED'] = mapped.length;
+        const lockedSet = new Set(mapped.map((p: any) => Number(p.id)));
+        setLockedPhotoIds(lockedSet);
+        const storageKey = `@mycircle_locked_photos_${eventSlug || 'default'}`;
+        AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(lockedSet))).catch(() => {});
+        if (mapped.length > 0) {
+          setAllPhotos((prev) => mergePhotoArrays(prev, mapped));
+        }
+        if (!tabSparsePhotosRef.current['LOCKED 🔐']) {
+          tabSparsePhotosRef.current['LOCKED 🔐'] = new Map();
+        }
+        mapped.forEach((p, idx) => {
+          tabSparsePhotosRef.current['LOCKED 🔐'].set(idx, p);
+        });
+        setSparseVersion((v) => v + 1);
+      } catch (err) {
+        console.warn('[LOCKED TAB FETCH ERROR]', err);
+      } finally {
+        inFlightTabsRef.current.delete('LOCKED');
+        setIsTabLoading(false);
+      }
+      return;
+    }
+
     // 1. In-flight guard: prevent duplicate concurrent requests for the exact same ceremony tab
     if (inFlightTabsRef.current.has(norm)) {
       return;
@@ -3733,6 +3820,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
         tabItemCountsRef.current[norm] = merged.length;
         setTabCache((prev) => ({ ...prev, [norm]: merged }));
 
+        // Ensure allPhotos contains any newly discovered photos from this tab so ALL tab has everything
+        setAllPhotos((prev) => mergePhotoArrays(prev, mapped));
+
         if (!tabSparsePhotosRef.current[norm]) {
           tabSparsePhotosRef.current[norm] = new Map();
         }
@@ -3750,7 +3840,7 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
       inFlightTabsRef.current.delete(norm);
       setIsTabLoading(false);
     }
-  }, [eventSlug, eventDetails?.tabCounts, scheduleBatchPrefetch]);
+  }, [eventSlug, eventDetails?.tabCounts, scheduleBatchPrefetch, isBrideOrGroom]);
 
   useEffect(() => {
     if (activeTab && activeTab !== 'ALL' && activeTab !== 'MY PHOTOS' && activeTab !== 'MY FAVOURITES') {
@@ -4253,8 +4343,15 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     if (isLockedTab) {
       const combined: Photo[] = [];
       const seenIds = new Set<number>();
-      [...allPhotos, ...photos, ...Object.values(tabCache).flat()].forEach((p) => {
-        if (isPhotoLocked(p) && !seenIds.has(p.id)) {
+      const candidateList = [
+        ...(tabCache['LOCKED 🔐'] || []),
+        ...(tabCache['LOCKED'] || []),
+        ...allPhotos,
+        ...photos,
+        ...Object.values(tabCache).flat(),
+      ];
+      candidateList.forEach((p) => {
+        if ((isPhotoLocked(p) || p.isLocked || p.isPrivate) && !seenIds.has(p.id)) {
           seenIds.add(p.id);
           combined.push({
             ...p,
@@ -4369,40 +4466,110 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     const tabCountsSource = eventDetails?.tabCounts || eventDetails?.tab_counts;
 
-    // 4. ALL Tab
-    if (norm === 'ALL') {
+    // Helper: ALL counts EVERYTHING in the celebration except locked photos
+    const computeAllPhotoCount = (): number | null => {
       const comingSoonCount = allPhotos.filter((p: any) => p && isVideoComingSoon(p)).length;
       const allCount = getKnownTabCount(tabCountsSource, 'ALL');
-      // Prefer cached/server tabCounts.ALL
-      if (typeof allCount === 'number') {
-        return Math.max(0, allCount - comingSoonCount - lockedPhotoIds.size);
+
+      // Top-level event totals from eventDetails
+      const detailsTotal = typeof eventDetails?.totalPhotos === 'number'
+        ? eventDetails.totalPhotos
+        : (typeof eventDetails?.total_photos === 'number'
+            ? eventDetails.total_photos
+            : (typeof eventDetails?.photosUploaded === 'number'
+                ? eventDetails.photosUploaded
+                : (typeof eventDetails?.photos_uploaded === 'number'
+                    ? eventDetails.photos_uploaded
+                    : (typeof eventDetails?.totalPhotoCount === 'number'
+                        ? eventDetails.totalPhotoCount
+                        : (typeof eventDetails?.total_photo_count === 'number'
+                            ? eventDetails.total_photo_count
+                            : undefined)))));
+
+      // Highest single tab count & sum of ceremony tabs from server tabCounts
+      let maxTabCount = 0;
+      let ceremonyTabSum = 0;
+      if (tabCountsSource && typeof tabCountsSource === 'object') {
+        for (const [key, val] of Object.entries(tabCountsSource)) {
+          const upperKey = key.trim().toUpperCase();
+          if (upperKey !== 'ALL' && typeof val === 'number') {
+            if (val > maxTabCount) maxTabCount = val;
+            if (upperKey !== 'HIGHLIGHTS' && upperKey !== 'CINEMA' && !upperKey.includes('LOCKED')) {
+              ceremonyTabSum += val;
+            }
+          }
+        }
       }
-      // Otherwise use totalAllPhotosCount when available
-      if (typeof totalAllPhotosCount === 'number') {
-        return Math.max(0, totalAllPhotosCount - comingSoonCount - lockedPhotoIds.size);
-      }
-      // Return null if neither exists and initial loading is still in progress
-      if (!isAllFetchComplete && (isLoading || !isInitialFetchComplete)) {
+
+      // Unique non-video, non-coming-soon photos loaded in memory across all sources
+      const uniqueLoadedPhotoIds = new Set<string | number>();
+      const addPhotoToSet = (p: any) => {
+        if (p && p.id && !isVideoMedia(p) && !isCinemaVideoItem(p) && !isVideoComingSoon(p)) {
+          uniqueLoadedPhotoIds.add(p.id);
+        }
+      };
+      allPhotos.forEach(addPhotoToSet);
+      photos.forEach(addPhotoToSet);
+      Object.values(tabCache).forEach((arr) => {
+        if (Array.isArray(arr)) arr.forEach(addPhotoToSet);
+      });
+
+      // Gather candidate totals representing "everything" before locked deduction
+      const candidates: number[] = [];
+      if (typeof allCount === 'number') candidates.push(allCount);
+      if (typeof detailsTotal === 'number') candidates.push(detailsTotal);
+      if (typeof totalAllPhotosCount === 'number') candidates.push(totalAllPhotosCount);
+      if (maxTabCount > 0) candidates.push(maxTabCount);
+      if (ceremonyTabSum > 0) candidates.push(ceremonyTabSum);
+      if (highlightsCount > 0) candidates.push(highlightsCount);
+      if (uniqueLoadedPhotoIds.size > 0) candidates.push(uniqueLoadedPhotoIds.size);
+
+      // If initial loading is still in progress and no candidate has been established yet
+      if (candidates.length === 0) {
+        if (!isAllFetchComplete && (isLoading || !isInitialFetchComplete)) {
+          return null;
+        }
+        if (isAllFetchComplete && totalAllPhotosCount === 0) {
+          return 0;
+        }
         return null;
       }
-      // Return zero only when the server confirms zero
-      if (isAllFetchComplete && totalAllPhotosCount === 0) {
-        return 0;
-      }
-      if (!hasMorePhotos && isAllFetchComplete) {
-        return Math.max(0, allPhotos.length - comingSoonCount - lockedPhotoIds.size);
-      }
-      return null;
+
+      const rawTotal = Math.max(...candidates);
+
+      // ALL counts EVERYTHING except locked
+      return Math.max(0, rawTotal - comingSoonCount - lockedPhotoIds.size);
+    };
+
+    // 4. ALL Tab
+    if (norm === 'ALL') {
+      return computeAllPhotoCount();
     }
 
     // 5. HIGHLIGHTS Tab
     if (norm === 'HIGHLIGHTS') {
-      const lockedInHighlights = allPhotos.filter(
-        (p: any) => p && (p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS')) && lockedPhotoIds.has(Number(p.id))
-      ).length;
+      const allLoadedHighlights = [
+        ...allPhotos.filter((p: any) => p && (p.isHighlight || (p.tabName && p.tabName.trim().toUpperCase() === 'HIGHLIGHTS'))),
+        ...(tabCache['HIGHLIGHTS'] || []),
+      ];
+      const lockedInHighlightsSet = new Set<number>();
+      allLoadedHighlights.forEach((p: any) => {
+        if (p && p.id && lockedPhotoIds.has(Number(p.id))) {
+          lockedInHighlightsSet.add(Number(p.id));
+        }
+      });
+      // If the celebration only has Highlights (or all photos are highlights), all locked photos are highlight photos
+      const hasOnlyHighlightsTab = !Array.isArray(eventDetails?.tabs) ||
+        eventDetails.tabs.filter((t: string) => t && t.trim().toUpperCase() !== 'HIGHLIGHTS').length === 0;
+      const lockedInHighlights = hasOnlyHighlightsTab
+        ? lockedPhotoIds.size
+        : lockedInHighlightsSet.size;
+
       // Use existing highlightsCount logic as canonical source
       if (highlightsCount > 0) {
-        return Math.max(0, highlightsCount - lockedInHighlights);
+        const netHl = Math.max(0, highlightsCount - lockedInHighlights);
+        const allCap = computeAllPhotoCount();
+        return typeof allCap === 'number' ? Math.min(netHl, allCap) : netHl;
       }
       if (!isInitialFetchComplete && isLoading) {
         return null;
@@ -4423,11 +4590,23 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     // 7. Individual Ceremony Tabs
     const tabCountVal = getKnownTabCount(tabCountsSource, norm);
-    const lockedInTab = allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm && lockedPhotoIds.has(Number(p.id))).length;
+    const ceremonyPhotos = [
+      ...allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm),
+      ...(tabCache[norm] || []),
+    ];
+    const lockedInCeremonySet = new Set<number>();
+    ceremonyPhotos.forEach((p: any) => {
+      if (p && p.id && lockedPhotoIds.has(Number(p.id))) {
+        lockedInCeremonySet.add(Number(p.id));
+      }
+    });
+    const lockedInTab = lockedInCeremonySet.size;
 
     // Prefer authoritative eventDetails.tabCounts
     if (typeof tabCountVal === 'number') {
-      return Math.max(0, tabCountVal - lockedInTab);
+      const netCeremony = Math.max(0, tabCountVal - lockedInTab);
+      const allCap = computeAllPhotoCount();
+      return typeof allCap === 'number' ? Math.min(netCeremony, allCap) : netCeremony;
     }
 
     // Use a complete locally cached collection only when completeness is established
@@ -4436,7 +4615,9 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
 
     if (isCeremonyComplete) {
       const cachedTabPhotos = tabCache[norm] || allPhotos.filter((p: any) => p && p.tabName && p.tabName.trim().toUpperCase() === norm);
-      return Math.max(0, cachedTabPhotos.length - lockedInTab);
+      const netCached = Math.max(0, cachedTabPhotos.length - lockedInTab);
+      const allCap = computeAllPhotoCount();
+      return typeof allCap === 'number' ? Math.min(netCached, allCap) : netCached;
     }
 
     // Never treat a partially loaded allPhotos array as the final tab count. Return null when count is not yet known.
@@ -4461,6 +4642,13 @@ const GalleryView = React.memo(function GalleryView({ onLogout, onChangeEvent, o
     favoritesCount,
     eventDetails?.tabCounts,
     eventDetails?.tab_counts,
+    eventDetails?.totalPhotos,
+    eventDetails?.total_photos,
+    eventDetails?.photosUploaded,
+    eventDetails?.photos_uploaded,
+    eventDetails?.totalPhotoCount,
+    eventDetails?.total_photo_count,
+    eventDetails?.tabs,
     totalAllPhotosCount,
     hasMorePhotos,
     highlightsCount,
